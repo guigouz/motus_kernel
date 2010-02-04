@@ -28,6 +28,7 @@ unsigned int __machine_arch_type;
 
 #include <asm/unaligned.h>
 
+
 static void putstr(const char *ptr);
 extern void error(char *x);
 
@@ -101,6 +102,7 @@ static void putstr(const char *ptr)
 	flush();
 }
 
+
 void *memcpy(void *__dest, __const void *__src, size_t __n)
 {
 	int i = 0;
@@ -168,6 +170,7 @@ asmlinkage void __div0(void)
 }
 
 extern void do_decompress(u8 *input, int len, u8 *output, void (*error)(char *x));
+
 
 unsigned long
 decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
