@@ -446,6 +446,21 @@ config MACH_PCM990_BASEBOARD
 	select HAVE_PWM
 	depends on MACH_PCM027
 
+config PXA_SHARPSL_DETECT_MACH_ID
+	bool "Detect machine ID at run-time in the decompressor"
+	depends on PXA_SHARPSL
+	help
+	  Say Y here if you want the zImage decompressor to detect
+	  the Zaurus machine ID at run-time. For latest kexec-based
+	  boot loader, this is not necessary.
+
+config MACH_POODLE
+	bool "Enable Sharp SL-5600 (Poodle) Support"
+	depends on PXA_SHARPSL
+	select PXA25x
+	select SHARP_LOCOMO
+	select PXA_HAVE_BOARD_IRQS
+
 choice
 	prompt "display on pcm990"
 	depends on MACH_PCM990_BASEBOARD
