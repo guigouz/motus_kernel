@@ -18,13 +18,13 @@
 #include <asm/ia32.h>
 
 /* ia32/sys_ia32.c */
-asmlinkage long sys32_truncate64(char __user *, unsigned long, unsigned long);
+asmlinkage long sys32_truncate64(const char __user *, unsigned long, unsigned long);
 asmlinkage long sys32_ftruncate64(unsigned int, unsigned long, unsigned long);
 
-asmlinkage long sys32_stat64(char __user *, struct stat64 __user *);
-asmlinkage long sys32_lstat64(char __user *, struct stat64 __user *);
+asmlinkage long sys32_stat64(const char __user *, struct stat64 __user *);
+asmlinkage long sys32_lstat64(const char __user *, struct stat64 __user *);
 asmlinkage long sys32_fstat64(unsigned int, struct stat64 __user *);
-asmlinkage long sys32_fstatat(unsigned int, char __user *,
+asmlinkage long sys32_fstatat(unsigned int, const char __user *,
 			      struct stat64 __user *, int);
 struct mmap_arg_struct;
 asmlinkage long sys32_mmap(struct mmap_arg_struct __user *);
@@ -57,7 +57,7 @@ asmlinkage long sys32_sysctl(struct sysctl_ia32 __user *);
 #endif
 
 asmlinkage long sys32_pread(unsigned int, char __user *, u32, u32, u32);
-asmlinkage long sys32_pwrite(unsigned int, char __user *, u32, u32, u32);
+asmlinkage long sys32_pwrite(unsigned int, const char __user *, u32, u32, u32);
 
 asmlinkage long sys32_personality(unsigned long);
 asmlinkage long sys32_sendfile(int, int, compat_off_t __user *, s32);
@@ -67,7 +67,7 @@ struct old_utsname;
 asmlinkage long sys32_olduname(struct oldold_utsname __user *);
 long sys32_uname(struct old_utsname __user *);
 
-asmlinkage long sys32_execve(char __user *, compat_uptr_t __user *,
+asmlinkage long sys32_execve(const char __user *, compat_uptr_t __user *,
 			     compat_uptr_t __user *, struct pt_regs *);
 asmlinkage long sys32_clone(unsigned int, unsigned int, struct pt_regs *);
 
