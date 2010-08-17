@@ -228,7 +228,15 @@ static int ____call_usermodehelper(void *data)
 	 */
 	set_user_nice(current, 0);
 
-	retval = kernel_execve(sub_info->path, sub_info->argv, sub_info->envp);
+	/*if (sub_info->init) {
+		retval = sub_info->init(sub_info);
+		if (retval)
+			goto fail;
+	}*/
+
+	retval = kernel_execve(sub_info->path,
+			       (const char *const *)sub_info->argv,
+			       (const char *const *)sub_info->envp);
 
 	/* Exec failed? */
 	sub_info->retval = retval;
