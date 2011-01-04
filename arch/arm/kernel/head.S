@@ -27,14 +27,6 @@
 #include <mach/debug-macro.S>
 #endif
 
-#if (PHYS_OFFSET & 0x001fffff)
-#error "PHYS_OFFSET must be at an even 2MiB boundary!"
-#endif
-
-#define KERNEL_RAM_VADDR	(PAGE_OFFSET + TEXT_OFFSET)
-#define KERNEL_RAM_PADDR	(PHYS_OFFSET + TEXT_OFFSET)
-
-
 /*
  * swapper_pg_dir is the virtual address of the initial page table.
  * We place the page tables 16K below KERNEL_RAM_VADDR.  Therefore, we must
@@ -42,6 +34,7 @@
  * the least significant 16 bits to be 0x8000, but we could probably
  * relax this restriction to KERNEL_RAM_VADDR >= PAGE_OFFSET + 0x4000.
  */
+#define KERNEL_RAM_VADDR	(PAGE_OFFSET + TEXT_OFFSET)
 #if (KERNEL_RAM_VADDR & 0xffff) != 0x8000
 #error KERNEL_RAM_VADDR must start at 0xXXXX8000
 #endif
@@ -49,8 +42,8 @@
 	.globl	swapper_pg_dir
 	.equ	swapper_pg_dir, KERNEL_RAM_VADDR - 0x4000
 
-	.macro	pgtbl, rd
-	ldr	\rd, =(KERNEL_RAM_PADDR - 0x4000)
+	.macro	pgtbl, rd, phys
+	add	\rd, \phys, #TEXT_OFFSET - 0x4000
 	.endm
 
 #ifdef CONFIG_XIP_KERNEL
@@ -96,9 +89,18 @@ ENTRY(stext)
 	movs	r10, r5				@ invalid processor (r5=0)?
 	beq	__error_p			@ yes, error 'p'
 
+#ifndef CONFIG_XIP_KERNEL
+	adr	r3, 2f
+	ldmia	r3, {r4, r8}
+	sub	r4, r3, r4			@ (PHYS_OFFSET - PAGE_OFFSET)
+	add	r8, r8, r4			@ PHYS_OFFSET
+#else
+	ldr	r8, =PLAT_PHYS_OFFSET
+#endif
+
 	/*
 	 * r1 = machine no, r2 = atags,
-	 * r9 = cpuid, r10 = procinfo
+	 * r8 = phys_offset, r9 = cpuid, r10 = procinfo
 	 */
 	bl	__vet_atags
 	bl	__create_page_tables
@@ -118,130 +120,25 @@ ENTRY(stext)
  THUMB(	mov	pc, r12				)
 1:	b	__enable_mmu
 ENDPROC(stext)
-
-#if defined(CONFIG_SMP)
-ENTRY(secondary_startup)
-	/*
-	 * Common entry point for secondary CPUs.
-	 *
-	 * Ensure that we're in SVC mode, and IRQs are disabled.  Lookup
-	 * the processor type - there is no need to check the machine type
-	 * as it has already been validated by the primary processor.
-	 */
-	setmode	PSR_F_BIT | PSR_I_BIT | SVC_MODE, r9
-	mrc	p15, 0, r9, c0, c0		@ get processor id
-	bl	__lookup_processor_type
-	movs	r10, r5				@ invalid processor?
-	moveq	r0, #'p'			@ yes, error 'p'
-	beq	__error
-
-	/*
-	 * Use the page tables supplied from  __cpu_up.
-	 */
-	adr	r4, __secondary_data
-	ldmia	r4, {r5, r7, r12}		@ address to jump to after
-	sub	r4, r4, r5			@ mmu has been enabled
-	ldr	r4, [r7, r4]			@ get secondary_data.pgdir
-	adr	lr, BSYM(__enable_mmu)		@ return address
-	mov	r13, r12			@ __secondary_switched address
- ARM(	add	pc, r10, #PROCINFO_INITFUNC	) @ initialise processor
-						  @ (return control reg)
- THUMB(	add	r12, r10, #PROCINFO_INITFUNC	)
- THUMB(	mov	pc, r12				)
-ENDPROC(secondary_startup)
-
-	/*
-	 * r6  = &secondary_data
-	 */
-ENTRY(__secondary_switched)
-	ldr	sp, [r7, #4]			@ get secondary_data.stack
-	mov	fp, #0
-	b	secondary_start_kernel
-ENDPROC(__secondary_switched)
-
-	.type	__secondary_data, %object
-__secondary_data:
-	.long	.
-	.long	secondary_data
-	.long	__secondary_switched
-#endif /* defined(CONFIG_SMP) */
-
-
-
-/*
- * Setup common bits before finally enabling the MMU.  Essentially
- * this is just loading the page table pointer and domain access
- * registers.
- */
-__enable_mmu:
-#ifdef CONFIG_ALIGNMENT_TRAP
-	orr	r0, r0, #CR_A
-#else
-	bic	r0, r0, #CR_A
+	.ltorg
+#ifndef CONFIG_XIP_KERNEL
+2:	.long	.
+	.long	PAGE_OFFSET
 #endif
-#ifdef CONFIG_CPU_DCACHE_DISABLE
-	bic	r0, r0, #CR_C
-#endif
-#ifdef CONFIG_CPU_BPREDICT_DISABLE
-	bic	r0, r0, #CR_Z
-#endif
-#ifdef CONFIG_CPU_ICACHE_DISABLE
-	bic	r0, r0, #CR_I
-#endif
-#ifdef CONFIG_EMULATE_DOMAIN_MANAGER_V7
-	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_CLIENT) | \
-		      domain_val(DOMAIN_KERNEL, DOMAIN_CLIENT) | \
-		      domain_val(DOMAIN_TABLE, DOMAIN_CLIENT) | \
-		      domain_val(DOMAIN_IO, DOMAIN_CLIENT))
-#else
-	mov	r5, #(domain_val(DOMAIN_USER, DOMAIN_MANAGER) | \
-		      domain_val(DOMAIN_KERNEL, DOMAIN_MANAGER) | \
-		      domain_val(DOMAIN_TABLE, DOMAIN_MANAGER) | \
-		      domain_val(DOMAIN_IO, DOMAIN_CLIENT))
-#endif
-	mcr	p15, 0, r5, c3, c0, 0		@ load domain access register
-	mcr	p15, 0, r4, c2, c0, 0		@ load page table pointer
-	b	__turn_mmu_on
-ENDPROC(__enable_mmu)
-
-/*
- * Enable the MMU.  This completely changes the structure of the visible
- * memory space.  You will not be able to trace execution through this.
- * If you have an enquiry about this, *please* check the linux-arm-kernel
- * mailing list archives BEFORE sending another post to the list.
- *
- *  r0  = cp#15 control register
- *  r13 = *virtual* address to jump to upon completion
- *
- * other registers depend on the function called upon completion
- */
-	.align	5
-__turn_mmu_on:
-	mov	r0, r0
-	instr_sync
-	mcr	p15, 0, r0, c1, c0, 0		@ write control reg
-	mrc	p15, 0, r3, c0, c0, 0		@ read id reg
-	instr_sync
-	mov	r3, r3
-	mov	r3, r13
-	mov	pc, r3
-ENDPROC(__turn_mmu_on)
-
 
 /*
  * Setup the initial page tables.  We only setup the barest
  * amount which are required to get the kernel running, which
  * generally means mapping in the kernel code.
  *
- * r9  = cpuid
- * r10 = procinfo
+ * r8 = phys_offset, r9 = cpuid, r10 = procinfo
  *
  * Returns:
  *  r0, r3, r6, r7 corrupted
  *  r4 = physical page table address
  */
 __create_page_tables:
-	pgtbl	r4				@ page table address
+	pgtbl	r4, r8				@ page table address
 
 	/*
 	 * Clear the 16K level 1 swapper page table
@@ -287,10 +184,8 @@ __create_page_tables:
 	/*
 	 * Map some ram to cover our .data and .bss areas.
 	 */
-	orr	r3, r7, #(KERNEL_RAM_PADDR & 0xff000000)
-	.if	(KERNEL_RAM_PADDR & 0x00f00000)
-	orr	r3, r3, #(KERNEL_RAM_PADDR & 0x00f00000)
-	.endif
+	add	r3, r8, #TEXT_OFFSET
+	orr	r3, r3, r7
 	add	r0, r4,  #(KERNEL_RAM_VADDR & 0xff000000) >> 18
 	str	r3, [r0, #(KERNEL_RAM_VADDR & 0x00f00000) >> 18]!
 	ldr	r6, =(_end - 1)
@@ -306,10 +201,7 @@ __create_page_tables:
 	 * Then map first 1MB of ram in case it contains our boot params.
 	 */
 	add	r0, r4, #PAGE_OFFSET >> 18
-	orr	r6, r7, #(PHYS_OFFSET & 0xff000000)
-	.if	(PHYS_OFFSET & 0x00f00000)
-	orr	r6, r6, #(PHYS_OFFSET & 0x00f00000)
-	.endif
+	orr	r6, r7, r8
 	str	r6, [r0]
 
 #ifdef CONFIG_DEBUG_LL
