@@ -95,25 +95,28 @@ ENTRY(stext)
 	bl	__lookup_processor_type		@ r5=procinfo r9=cpuid
 	movs	r10, r5				@ invalid processor (r5=0)?
 	beq	__error_p			@ yes, error 'p'
-	bl	__lookup_machine_type		@ r5=machinfo
-	movs	r8, r5				@ invalid machine (r5=0)?
-	beq	__error_a			@ yes, error 'a'
+
+	/*
+	 * r1 = machine no, r2 = atags,
+	 * r9 = cpuid, r10 = procinfo
+	 */
 	bl	__vet_atags
 	bl	__create_page_tables
 
 	/*
 	 * The following calls CPU specific code in a position independent
 	 * manner.  See arch/arm/mm/proc-*.S for details.  r10 = base of
-	 * xxx_proc_info structure selected by __lookup_machine_type
+	 * xxx_proc_info structure selected by __lookup_processor_type
 	 * above.  On return, the CPU will be ready for the MMU to be
 	 * turned on, and r0 will hold the CPU control register value.
 	 */
-	ldr	r13, __switch_data		@ address to jump to after
+	ldr	r13, =__mmap_switched		@ address to jump to after
 						@ mmu has been enabled
-	adr	lr, BSYM(__enable_mmu)		@ return (PIC) address
+	adr	lr, BSYM(1f)			@ return (PIC) address
  ARM(	add	pc, r10, #PROCINFO_INITFUNC	)
  THUMB(	add	r12, r10, #PROCINFO_INITFUNC	)
  THUMB(	mov	pc, r12				)
+1:	b	__enable_mmu
 ENDPROC(stext)
 
 #if defined(CONFIG_SMP)
@@ -230,7 +233,6 @@ ENDPROC(__turn_mmu_on)
  * amount which are required to get the kernel running, which
  * generally means mapping in the kernel code.
  *
- * r8  = machinfo
  * r9  = cpuid
  * r10 = procinfo
  *
