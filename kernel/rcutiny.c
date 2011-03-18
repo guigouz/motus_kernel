@@ -164,7 +164,10 @@ static void __rcu_process_callbacks(struct rcu_ctrlblk *rcp)
 	while (list) {
 		next = list->next;
 		prefetch(next);
-		list->func(list);
+		debug_rcu_head_unqueue(list);
+		local_bh_disable();
+		__rcu_reclaim(list);
+		local_bh_enable();
 		list = next;
 	}
 }
