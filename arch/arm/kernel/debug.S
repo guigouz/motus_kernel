@@ -22,7 +22,10 @@
 #if defined(CONFIG_DEBUG_ICEDCC)
 		@@ debug using ARM EmbeddedICE DCC channel
 
-#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K)
+		.macro	addruart, rp, rv
+		.endm
+
+#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K) || defined(CONFIG_CPU_V7)
 
 		.macro	senduart, rd, rx
 		mcr	p14, 0, \rd, c0, c5, 0
@@ -47,9 +50,6 @@
 		.endm
 
 #elif defined(CONFIG_CPU_XSCALE)
-
-		.macro	addruart, rx
-		.endm
 
 		.macro	senduart, rd, rx
 		mcr	p14, 0, \rd, c8, c0, 0
