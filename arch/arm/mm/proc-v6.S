@@ -135,10 +135,6 @@ cpu_v6_name:
 	.asciz	"ARMv6-compatible processor"
 	.align
 
-cpu_pj4_name:
-	.asciz	"Marvell PJ4 processor"
-	.align
-
 	__INIT
 
 /*
@@ -246,26 +242,3 @@ __v6_proc_info:
 	.long	v6_user_fns
 	.long	v6_cache_fns
 	.size	__v6_proc_info, . - __v6_proc_info
-
-	.type	__pj4_v6_proc_info, #object
-__pj4_v6_proc_info:
-	.long	0x560f5810
-	.long	0xff0ffff0
-	.long   PMD_TYPE_SECT | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ | \
-		PMD_FLAGS
-	.long   PMD_TYPE_SECT | \
-		PMD_SECT_XN | \
-		PMD_SECT_AP_WRITE | \
-		PMD_SECT_AP_READ
-	b	__v6_setup
-	.long	cpu_arch_name
-	.long	cpu_elf_name
-	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP|HWCAP_TLS
-	.long	cpu_pj4_name
-	.long	v6_processor_functions
-	.long	v6wbi_tlb_fns
-	.long	v6_user_fns
-	.long	v6_cache_fns
-	.size	__pj4_v6_proc_info, . - __pj4_v6_proc_info
