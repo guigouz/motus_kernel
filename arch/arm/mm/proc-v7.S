@@ -32,15 +32,13 @@
 #define TTB_IRGN_WT	((1 << 0) | (0 << 6))
 #define TTB_IRGN_WB	((1 << 0) | (1 << 6))
 
-#ifndef CONFIG_SMP
 /* PTWs cacheable, inner WB not shareable, outer WB not shareable */
-#define TTB_FLAGS	TTB_IRGN_WB|TTB_RGN_OC_WB
-#define PMD_FLAGS	PMD_SECT_WB
-#else
+#define TTB_FLAGS_UP	TTB_IRGN_WB|TTB_RGN_OC_WB
+#define PMD_FLAGS_UP	PMD_SECT_WB
+
 /* PTWs cacheable, inner WBWA shareable, outer WBWA not shareable */
-#define TTB_FLAGS	TTB_IRGN_WBWA|TTB_S|TTB_NOS|TTB_RGN_OC_WBWA
-#define PMD_FLAGS	PMD_SECT_WBWA|PMD_SECT_S
-#endif
+#define TTB_FLAGS_SMP	TTB_IRGN_WBWA|TTB_S|TTB_NOS|TTB_RGN_OC_WBWA
+#define PMD_FLAGS_SMP	PMD_SECT_WBWA|PMD_SECT_S
 
 ENTRY(cpu_v7_proc_init)
 	mov	pc, lr
@@ -240,40 +238,13 @@ __v7_setup:
 #ifdef CONFIG_MMU
 	mcr	p15, 0, r10, c8, c7, 0		@ invalidate I + D TLBs
 	mcr	p15, 0, r10, c2, c0, 2		@ TTB control register
-	orr	r4, r4, #TTB_FLAGS
-	mcr	p15, 0, r4, c2, c0, 1		@ load TTB1
-	mov	r10, #0x1f			@ domains 0, 1 = manager
-	mcr	p15, 0, r10, c3, c0, 0		@ load domain access register
-	/*
-	 * Memory region attributes with SCTLR.TRE=1
-	 *
-	 *   n = TEX[0],C,B
-	 *   TR = PRRR[2n+1:2n]		- memory type
-	 *   IR = NMRR[2n+1:2n]		- inner cacheable property
-	 *   OR = NMRR[2n+17:2n+16]	- outer cacheable property
-	 *
-	 *			n	TR	IR	OR
-	 *   UNCACHED		000	00
-	 *   BUFFERABLE		001	10	00	00
-	 *   WRITETHROUGH	010	10	10	10
-	 *   WRITEBACK		011	10	11	11
-	 *   reserved		110
-	 *   WRITEALLOC		111	10	01	01
-	 *   DEV_SHARED		100	01
-	 *   DEV_NONSHARED	100	01
-	 *   DEV_WC		001	10
-	 *   DEV_CACHED		011	10
-	 *
-	 * Other attributes:
-	 *
-	 *   DS0 = PRRR[16] = 0		- device shareable property
-	 *   DS1 = PRRR[17] = 1		- device shareable property
-	 *   NS0 = PRRR[18] = 0		- normal shareable property
-	 *   NS1 = PRRR[19] = 1		- normal shareable property
-	 *   NOS = PRRR[24+n] = 1	- not outer shareable
-	 */
-	ldr	r5, =0xff0a81a8			@ PRRR
-	ldr	r6, =0x40e040e0			@ NMRR
+	ALT_SMP(orr	r4, r4, #TTB_FLAGS_SMP)
+	ALT_UP(orr	r4, r4, #TTB_FLAGS_UP)
+	ALT_SMP(orr	r8, r8, #TTB_FLAGS_SMP)
+	ALT_UP(orr	r8, r8, #TTB_FLAGS_UP)
+	mcr	p15, 0, r8, c2, c0, 1		@ load TTB1
+	ldr	r5, =PRRR			@ PRRR
+	ldr	r6, =NMRR			@ NMRR
 	mcr	p15, 0, r5, c10, c2, 0		@ write PRRR
 	mcr	p15, 0, r6, c10, c2, 1		@ write NMRR
 #endif

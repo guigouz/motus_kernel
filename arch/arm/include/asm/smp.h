@@ -77,6 +77,7 @@ extern void platform_secondary_init(unsigned int cpu);
  */
 struct secondary_data {
 	unsigned long pgdir;
+	unsigned long swapper_pg_dir;
 	void *stack;
 };
 extern struct secondary_data secondary_data;
