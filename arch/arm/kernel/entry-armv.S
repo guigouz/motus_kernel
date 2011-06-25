@@ -187,12 +187,9 @@ ENDPROC(__und_invalid)
 __dabt_svc:
 	svc_entry
 
-	@
-	@ get ready to re-enable interrupts if appropriate
-	@
-	mrs	r9, cpsr
-	tst	r3, #PSR_I_BIT
-	biceq	r9, r9, #PSR_I_BIT
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_off
+#endif
 
 	@
 	@ Call the processor-specific abort handler:
@@ -212,9 +209,8 @@ __dabt_svc:
 #endif
 
 	@
-	@ set desired IRQ state, then call main handler
+	@ call main handler
 	@
-	msr	cpsr_c, r9
 	mov	r2, sp
 	bl	do_DataAbort
 
@@ -226,8 +222,14 @@ __dabt_svc:
 	@
 	@ restore SPSR and restart the instruction
 	@
-	ldr	r2, [sp, #S_PSR]
-	svc_exit r2				@ return from exception
+	ldr	r5, [sp, #S_PSR]
+#ifdef CONFIG_TRACE_IRQFLAGS
+	tst	r5, #PSR_I_BIT
+	bleq	trace_hardirqs_on
+	tst	r5, #PSR_I_BIT
+	blne	trace_hardirqs_off
+#endif
+	svc_exit r5				@ return from exception
  UNWIND(.fnend		)
 ENDPROC(__dabt_svc)
 
@@ -322,22 +324,11 @@ ENDPROC(__und_svc)
 __pabt_svc:
 	svc_entry
 
-	@
-	@ re-enable interrupts if appropriate
-	@
-	mrs	r9, cpsr
-	tst	r3, #PSR_I_BIT
-	biceq	r9, r9, #PSR_I_BIT
-
-	mov	r0, r2			@ pass address of aborted instruction.
-#ifdef MULTI_PABORT
-	ldr	r4, .LCprocfns
-	mov	lr, pc
-	ldr	pc, [r4, #PROCESSOR_PABT_FUNC]
-#else
-	bl	CPU_PABORT_HANDLER
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	trace_hardirqs_off
 #endif
-	msr	cpsr_c, r9			@ Maybe enable interrupts
+
+	pabt_helper
 	mov	r2, sp				@ regs
 	bl	do_PrefetchAbort		@ call abort handler
 
@@ -349,8 +340,14 @@ __pabt_svc:
 	@
 	@ restore SPSR and restart the instruction
 	@
-	ldr	r2, [sp, #S_PSR]
-	svc_exit r2				@ return from exception
+	ldr	r5, [sp, #S_PSR]
+#ifdef CONFIG_TRACE_IRQFLAGS
+	tst	r5, #PSR_I_BIT
+	bleq	trace_hardirqs_on
+	tst	r5, #PSR_I_BIT
+	blne	trace_hardirqs_off
+#endif
+	svc_exit r5				@ return from exception
  UNWIND(.fnend		)
 ENDPROC(__pabt_svc)
 
@@ -451,10 +448,6 @@ __dabt_usr:
 	bl	CPU_DABORT_HANDLER
 #endif
 
-	@
-	@ IRQs on, then call the main handler
-	@
-	enable_irq
 	mov	r2, sp
 	adr	lr, BSYM(ret_from_exception)
 	b	do_DataAbort
@@ -713,16 +706,7 @@ ENDPROC(__und_usr_unknown)
 	.align	5
 __pabt_usr:
 	usr_entry
-
-	mov	r0, r2			@ pass address of aborted instruction.
-#ifdef MULTI_PABORT
-	ldr	r4, .LCprocfns
-	mov	lr, pc
-	ldr	pc, [r4, #PROCESSOR_PABT_FUNC]
-#else
-	bl	CPU_PABORT_HANDLER
-#endif
-	enable_irq				@ Enable interrupts
+	pabt_helper
 	mov	r2, sp				@ regs
 	bl	do_PrefetchAbort		@ call abort handler
  UNWIND(.fnend		)
