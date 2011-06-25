@@ -44,6 +44,39 @@
 9997:
 	.endm
 
+	.macro	pabt_helper
+	@ PABORT handler takes fault address in r4
+#ifdef MULTI_PABORT
+	ldr	ip, .LCprocfns
+	mov	lr, pc
+	ldr	pc, [ip, #PROCESSOR_PABT_FUNC]
+#else
+	bl	CPU_PABORT_HANDLER
+#endif
+	.endm
+
+	.macro	dabt_helper
+	mov	r2, r4
+	mov	r3, r5
+
+	@
+	@ Call the processor-specific abort handler:
+	@
+	@  r2 - aborted context pc
+	@  r3 - aborted context cpsr
+	@
+	@ The abort handler must return the aborted address in r0, and
+	@ the fault status register in r1.  r9 must be preserved.
+	@
+#ifdef MULTI_DABORT
+	ldr	ip, .LCprocfns
+	mov	lr, pc
+	ldr	pc, [ip, #PROCESSOR_DABT_FUNC]
+#else
+	bl	CPU_DABORT_HANDLER
+#endif
+	.endm
+
 #ifdef CONFIG_KPROBES
 	.section	.kprobes.text,"ax",%progbits
 #else
