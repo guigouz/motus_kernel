@@ -7,7 +7,21 @@
 #include <asm/thread_info.h>
 #include <asm/memory.h>
 #include <asm/page.h>
-	
+
+#ifdef CONFIG_HOTPLUG_CPU
+#define ARM_CPU_DISCARD(x)
+#define ARM_CPU_KEEP(x)		x
+#else
+#define ARM_CPU_DISCARD(x)	x
+#define ARM_CPU_KEEP(x)
+#endif
+
+#if defined(CONFIG_SMP_ON_UP) && !defined(CONFIG_DEBUG_SPINLOCK)
+#define ARM_EXIT_KEEP(x)	x
+#else
+#define ARM_EXIT_KEEP(x)
+#endif
+
 OUTPUT_ARCH(arm)
 ENTRY(stext)
 
@@ -24,14 +38,12 @@ SECTIONS
 #else
 	. = PAGE_OFFSET + TEXT_OFFSET;
 #endif
-	.text.head : {
+	.init : {			/* Init code and data		*/
 		_stext = .;
 		_sinittext = .;
-		*(.text.head)
-	}
-
-	.init : {			/* Init code and data		*/
+			HEAD_TEXT
 			INIT_TEXT
+			ARM_EXIT_KEEP(EXIT_TEXT)
 		_einittext = .;
 		__proc_info_begin = .;
 			*(.proc.info.init)
