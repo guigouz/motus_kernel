@@ -13,11 +13,7 @@
 
 #include <asm/hardware/clps7111.h>
 
-		.macro	addruart,rx
-		mrc	p15, 0, \rx, c1, c0
-		tst	\rx, #1			@ MMU enabled?
-		moveq	\rx, #CLPS7111_PHYS_BASE
-		movne	\rx, #CLPS7111_VIRT_BASE
+		.macro	addruart, rp, rv, tmp
 #ifndef CONFIG_DEBUG_CLPS711X_UART2
 		add	\rx, \rx, #0x0000	@ UART1
 #else

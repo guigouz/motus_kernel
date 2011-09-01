@@ -12,11 +12,11 @@
 */
 #include <mach/hardware.h>
 
-		.macro	addruart,rx
-		mrc	p15, 0, \rx, c1, c0
-		tst	\rx, #1			@ MMU enabled?
-		moveq	\rx, #0x80000000	@ physical base address
-		movne	\rx, #0xf8000000	@ virtual address
+		.macro	addruart, rp, rv, tmp
+		mrc	p15, 0, \rp, c1, c0
+		tst	\rp, #1			@ MMU enabled?
+		moveq	\rp, #0x80000000	@ physical base address
+		movne	\rp, #0xf8000000	@ virtual address
 
 		@ We probe for the active serial port here, coherently with
 		@ the comment in arch/arm/mach-sa1100/include/mach/uncompress.h.

@@ -52,11 +52,20 @@
 #define UART_PADDR	MXC91231_UART2_BASE_ADDR
 #define UART_VADDR	MXC91231_AIPS1_IO_ADDRESS(MXC91231_UART2_BASE_ADDR)
 #endif
-		.macro	addruart,rx
-		mrc	p15, 0, \rx, c1, c0
-		tst	\rx, #1			@ MMU enabled?
-		ldreq	\rx, =UART_PADDR	@ physical
-		ldrne	\rx, =UART_VADDR	@ virtual
+
+/* iMX50/53 have same addresses, but not iMX51 */
+#if defined(CONFIG_SOC_IMX50) || defined(CONFIG_SOC_IMX53)
+#ifdef UART_PADDR
+#error "CONFIG_DEBUG_LL is incompatible with multiple archs"
+#endif
+#define UART_PADDR	MX53_UART1_BASE_ADDR
+#endif
+
+#define UART_VADDR	IMX_IO_ADDRESS(UART_PADDR)
+
+		.macro	addruart, rp, rv, tmp
+		ldr	\rp, =UART_PADDR	@ physical
+		ldr	\rv, =UART_VADDR	@ virtual
 		.endm
 
 		.macro	senduart,rd,rx
