@@ -455,7 +455,6 @@ extern int arch_io_remap_pfn_range(struct vm_area_struct *vma, unsigned long add
 	arch_io_remap_pfn_range(vma,from,pfn,size,prot)
 #endif
 
-
 #define pgtable_cache_init() do { } while (0)
 
 #endif /* !__ASSEMBLY__ */

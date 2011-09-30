@@ -1110,6 +1110,7 @@ void __init paging_init(struct machine_desc *mdesc)
 	flush_dcache_page(empty_zero_page);
 }
 
+#if 0
 /*
  * In order to soft-boot, we need to insert a 1:1 mapping in place of
  * the user-mode pages.  This will then ensure that we have predictable
@@ -1140,3 +1141,4 @@ void setup_mm_for_reboot(char mode)
 		flush_pmd_entry(pmd);
 	}
 }
+#endif
