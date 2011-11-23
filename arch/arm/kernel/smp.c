@@ -74,8 +74,6 @@ int __cpuinit __cpu_up(unsigned int cpu)
 {
 	struct cpuinfo_arm *ci = &per_cpu(cpu_data, cpu);
 	struct task_struct *idle = ci->idle;
-	pgd_t *pgd;
-	pmd_t *pmd;
 	int ret;
 
 	/*
@@ -92,24 +90,14 @@ int __cpuinit __cpu_up(unsigned int cpu)
 	}
 
 	/*
-	 * Allocate initial page tables to allow the new CPU to
-	 * enable the MMU safely.  This essentially means a set
-	 * of our "standard" page tables, with the addition of
-	 * a 1:1 mapping for the physical address of the kernel.
-	 */
-	pgd = pgd_alloc(&init_mm);
-	pmd = pmd_offset(pgd + pgd_index(PHYS_OFFSET), PHYS_OFFSET);
-	*pmd = __pmd((PHYS_OFFSET & PGDIR_MASK) |
-		     PMD_TYPE_SECT | PMD_SECT_AP_WRITE);
-	flush_pmd_entry(pmd);
-
-	/*
 	 * We need to tell the secondary core where to find
 	 * its stack and the page tables.
 	 */
 	secondary_data.stack = task_stack_page(idle) + THREAD_START_SP;
-	secondary_data.pgdir = virt_to_phys(pgd);
-	wmb();
+	secondary_data.pgdir = virt_to_phys(idmap_pgd);
+	secondary_data.swapper_pg_dir = virt_to_phys(swapper_pg_dir);
+	__cpuc_flush_dcache_area(&secondary_data, sizeof(secondary_data));
+	outer_clean_range(__pa(&secondary_data), __pa(&secondary_data + 1));
 
 	/*
 	 * Now bring the CPU into our world.
@@ -137,18 +125,6 @@ int __cpuinit __cpu_up(unsigned int cpu)
 
 	secondary_data.stack = NULL;
 	secondary_data.pgdir = 0;
-
-	*pmd = __pmd(0);
-	clean_pmd_entry(pmd);
-	pgd_free(&init_mm, pgd);
-
-	if (ret) {
-		printk(KERN_CRIT "CPU%u: processor failed to boot\n", cpu);
-
-		/*
-		 * FIXME: We need to clean up the new idle thread. --rmk
-		 */
-	}
 
 	return ret;
 }
