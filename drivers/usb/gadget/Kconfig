@@ -320,15 +320,9 @@ config USB_GADGET_IMX
 	   dynamically linked module called "imx_udc" and force all
 	   gadget drivers to also be dynamically linked.
 
-config USB_IMX
-	tristate
-	depends on USB_GADGET_IMX
-	default USB_GADGET
-	select USB_GADGET_SELECTED
-
-config USB_GADGET_S3C2410
-	boolean "S3C2410 USB Device Controller"
-	depends on ARCH_S3C2410
+config USB_S3C2410
+	tristate "S3C2410 USB Device Controller"
+	depends on ARCH_S3C24XX
 	help
 	  Samsung's S3C2410 is an ARM-4 processor with an integrated
 	  full speed USB 1.1 device controller.  It has 4 configurable
@@ -337,15 +331,28 @@ config USB_GADGET_S3C2410
 	  This driver has been tested on the S3C2410, S3C2412, and
 	  S3C2440 processors.
 
-config USB_S3C2410
-	tristate
-	depends on USB_GADGET_S3C2410
-	default USB_GADGET
-	select USB_GADGET_SELECTED
-
 config USB_S3C2410_DEBUG
 	boolean "S3C2410 udc debug messages"
-	depends on USB_GADGET_S3C2410
+	depends on USB_S3C2410
+
+config USB_S3C_HSUDC
+	tristate "S3C2416, S3C2443 and S3C2450 USB Device Controller"
+	depends on ARCH_S3C24XX
+	select USB_GADGET_DUALSPEED
+	help
+	  Samsung's S3C2416, S3C2443 and S3C2450 is an ARM9 based SoC
+	  integrated with dual speed USB 2.0 device controller. It has
+	  8 endpoints, as well as endpoint zero.
+
+	  This driver has been tested on S3C2416 and S3C2450 processors.
+
+config USB_MV_UDC
+	tristate "Marvell USB2.0 Device Controller"
+	select USB_GADGET_DUALSPEED
+	help
+	  Marvell Socs (including PXA and MMP series) include a high speed
+	  USB2.0 OTG controller, which can be configured as high speed or
+	  full speed USB peripheral.
 
 #
 # Controllers available in both integrated and discrete versions
