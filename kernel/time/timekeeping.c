@@ -1042,6 +1042,22 @@ ktime_t ktime_get_update_offsets(ktime_t *real)
 #endif
 
 /**
+ * ktime_get_monotonic_offset() - get eall_to_monotonic in ktime_t format
+ */
+
+ktime_t ktime_get_monotonic_offset(void)
+{
+	unsigned long seq;
+	struct timespec wtom;
+
+	do {
+		seq = read_seqbegin(&xtime_lock);
+		wtom = wall_to_monotonic;
+	} while (read_seqretry(&xtime_lock, seq));
+	return timespec_to_ktime(wtom);
+}
+
+/**
  * get_xtime_and_monotonic_and_sleep_offset() - get xtime, wall_to_monotonic
  *	and sleep offsets.
  * @xtim:	pointer to timespec to be set with xtime
