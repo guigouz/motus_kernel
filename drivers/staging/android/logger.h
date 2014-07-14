@@ -33,6 +33,7 @@ struct logger_entry {
 
 #define LOGGER_LOG_RADIO	"log_radio"	/* radio-related messages */
 #define LOGGER_LOG_EVENTS	"log_events"	/* system/hardware events */
+#define LOGGER_LOG_SYSTEM	"log_system"	/* system/framework messages */
 #define LOGGER_LOG_MAIN		"log_main"	/* everything else */
 
 #define LOGGER_ENTRY_MAX_LEN		(4*1024)
@@ -45,6 +46,10 @@ struct logger_entry {
 #define LOGGER_GET_LOG_LEN		_IO(__LOGGERIO, 2) /* used log len */
 #define LOGGER_GET_NEXT_ENTRY_LEN	_IO(__LOGGERIO, 3) /* next entry len */
 #define LOGGER_FLUSH_LOG		_IO(__LOGGERIO, 4) /* flush log */
+/* enable Mot internal log filter*/
+#define LOGGER_FILTER_MOT_LOG_ENABLE    _IO(__LOGGERIO, 5)
+/* disable Mot internal log filter*/
+#define LOGGER_FILTER_MOT_LOG_DISABLE   _IO(__LOGGERIO, 6)
 
 #ifdef __KERNEL__
 enum {

@@ -261,9 +261,9 @@ struct vb6801_work_t *vb6801_sensorw;
 struct i2c_client *vb6801_client;
 
 struct vb6801_ctrl_t {
-	struct msm_camera_sensor_info *sensordata;
+	const struct msm_camera_sensor_info *sensordata;
 
-	enum sensor_mode_t sensormode;
+	int sensormode;
 	uint32_t factor_fps;	/* init to 1 * 0x00000400 */
 	uint16_t curr_fps;
 	uint16_t max_fps;
@@ -289,17 +289,17 @@ static int vb6801_i2c_rxdata(unsigned short saddr,
 {
 	struct i2c_msg msgs[] = {
 		{
-		 .addr = saddr,
-		 .flags = 0,
-		 .len = 2,
-		 .buf = rxdata,
-		 },
+			.addr = saddr,
+			.flags = 0,
+			.len = 2,
+			.buf = rxdata,
+		},
 		{
-		 .addr = saddr,
-		 .flags = I2C_M_RD,
-		 .len = length,
-		 .buf = rxdata,
-		 },
+			.addr = saddr,
+			.flags = I2C_M_RD,
+			.len = length,
+			.buf = rxdata,
+		},
 	};
 
 	if (i2c_transfer(vb6801_client->adapter, msgs, 2) < 0) {
@@ -365,11 +365,11 @@ static int32_t vb6801_i2c_txdata(unsigned short saddr,
 {
 	struct i2c_msg msg[] = {
 		{
-		 .addr = saddr,
-		 .flags = 0,
-		 .len = length,
-		 .buf = txdata,
-		 },
+			.addr = saddr,
+			.flags = 0,
+			.len = length,
+			.buf = txdata,
+		},
 	};
 
 	if (i2c_transfer(vb6801_client->adapter, msg, 1) < 0) {
@@ -446,7 +446,7 @@ static int32_t vb6801_i2c_write_table(struct vb6801_i2c_reg_conf_t *regs,
 	return rc;
 }
 
-static int32_t vb6801_reset(struct msm_camera_sensor_info *data)
+static int32_t vb6801_reset(const struct msm_camera_sensor_info *data)
 {
 	int rc;
 	rc = gpio_request(data->sensor_pwd, "vb6801");
@@ -681,8 +681,7 @@ static int32_t vb6801_go_to_position(uint32_t target_vcm_dac_code,
 	return rc;
 }
 
-static int32_t vb6801_move_focus(enum sensor_move_focus_t direction,
-				 int32_t num_steps)
+static int32_t vb6801_move_focus(int direction, int32_t num_steps)
 {
 	int16_t step_direction;
 	int16_t actual_step;
@@ -1245,7 +1244,7 @@ static int vb6801_config_sensor(int32_t ext_clk_freq_mhz,
 	return rc;
 }
 
-static int vb6801_sensor_init_done(struct msm_camera_sensor_info *data)
+static int vb6801_sensor_init_done(const struct msm_camera_sensor_info *data)
 {
 	gpio_free(data->sensor_reset);
 	gpio_free(data->sensor_pwd);
@@ -1259,8 +1258,7 @@ static int vb6801_init_client(struct i2c_client *client)
 	return 0;
 }
 
-static int32_t vb6801_video_config(enum sensor_mode_t mode,
-				   enum sensor_resolution_t res)
+static int32_t vb6801_video_config(int mode, int res)
 {
 	int32_t rc = 0;
 
@@ -1285,8 +1283,7 @@ static int32_t vb6801_video_config(enum sensor_mode_t mode,
 	return rc;
 }
 
-static int32_t vb6801_snapshot_config(enum sensor_mode_t mode,
-				      enum sensor_resolution_t res)
+static int32_t vb6801_snapshot_config(int mode, int res)
 {
 	int32_t rc = 0;
 
@@ -1310,8 +1307,7 @@ static int32_t vb6801_snapshot_config(enum sensor_mode_t mode,
 	return rc;
 }
 
-static int32_t vb6801_set_sensor_mode(enum sensor_mode_t mode,
-				      enum sensor_resolution_t res)
+static int32_t vb6801_set_sensor_mode(int mode, int res)
 {
 	int32_t rc = 0;
 
@@ -1335,11 +1331,11 @@ static int32_t vb6801_set_sensor_mode(enum sensor_mode_t mode,
 
 int vb6801_sensor_config(void __user *argp)
 {
-	struct sensor_cfg_data_t cdata;
+	struct sensor_cfg_data cdata;
 	long rc = 0;
 
 	if (copy_from_user(&cdata,
-			   (void *)argp, sizeof(struct sensor_cfg_data_t)))
+			   (void *)argp, sizeof(struct sensor_cfg_data)))
 		return -EFAULT;
 
 	mutex_lock(&vb6801_mut);
@@ -1352,7 +1348,7 @@ int vb6801_sensor_config(void __user *argp)
 				    &(cdata.cfg.gfps.pictfps));
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1360,7 +1356,7 @@ int vb6801_sensor_config(void __user *argp)
 		cdata.cfg.prevl_pf = vb6801_get_prev_lines_pf();
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1368,7 +1364,7 @@ int vb6801_sensor_config(void __user *argp)
 		cdata.cfg.prevp_pl = vb6801_get_prev_pixels_pl();
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1376,7 +1372,7 @@ int vb6801_sensor_config(void __user *argp)
 		cdata.cfg.pictl_pf = vb6801_get_pict_lines_pf();
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1384,7 +1380,7 @@ int vb6801_sensor_config(void __user *argp)
 		cdata.cfg.pictp_pl = vb6801_get_pict_pixels_pl();
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1392,7 +1388,7 @@ int vb6801_sensor_config(void __user *argp)
 		cdata.cfg.pict_max_exp_lc = vb6801_get_pict_max_exp_lc();
 
 		if (copy_to_user((void *)argp,
-				 &cdata, sizeof(struct sensor_cfg_data_t)))
+				 &cdata, sizeof(struct sensor_cfg_data)))
 			rc = -EFAULT;
 		break;
 
@@ -1452,8 +1448,8 @@ static int vb6801_sensor_release(void)
 	return rc;
 }
 
-static int vb6801_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+static int vb6801_i2c_probe(struct i2c_client *client,
+			    const struct i2c_device_id *id)
 {
 	int rc = 0;
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
@@ -1483,7 +1479,7 @@ probe_failure:
 	return rc;
 }
 
-static int vb6801_remove(struct i2c_client *client)
+static int __exit vb6801_i2c_remove(struct i2c_client *client)
 {
 	struct vb6801_work_t *sensorw = i2c_get_clientdata(client);
 	free_irq(client->irq, sensorw);
@@ -1492,36 +1488,21 @@ static int vb6801_remove(struct i2c_client *client)
 	return 0;
 }
 
-static const struct i2c_device_id vb6801_id[] = {
+static const struct i2c_device_id vb6801_i2c_id[] = {
 	{"vb6801", 0},
 	{}
 };
 
-static struct i2c_driver vb6801_driver = {
-	.id_table = vb6801_id,
-	.probe = vb6801_probe,
-	.remove = vb6801_remove,
+static struct i2c_driver vb6801_i2c_driver = {
+	.id_table = vb6801_i2c_id,
+	.probe = vb6801_i2c_probe,
+	.remove = __exit_p(vb6801_i2c_remove),
 	.driver = {
 		   .name = "vb6801",
 		   },
 };
 
-int32_t vb6801_init(void)
-{
-	int32_t rc = 0;
-
-	rc = i2c_add_driver(&vb6801_driver);
-	if (IS_ERR_VALUE(rc))
-		goto init_failure;
-
-	return rc;
-
-init_failure:
-	CDBG("vb6801_init failed\n");
-	return rc;
-}
-
-static int vb6801_probe_init_sensor(struct msm_camera_sensor_info *data)
+static int vb6801_probe_init_sensor(const struct msm_camera_sensor_info *data)
 {
 	int rc;
 
@@ -1550,7 +1531,7 @@ init_probe_done:
 	return rc;
 }
 
-int vb6801_sensor_open_init(struct msm_camera_sensor_info *data)
+int vb6801_sensor_open_init(const struct msm_camera_sensor_info *data)
 {
 	int32_t rc;
 	struct vb6801_i2c_reg_conf_t wreg[] = {
@@ -1621,17 +1602,14 @@ open_init_done:
 	return rc;
 }
 
-int vb6801_probe_init(void *dev, void *ctrl)
+static int vb6801_sensor_probe(const struct msm_camera_sensor_info *info,
+			       struct msm_sensor_ctrl *s)
 {
-	int rc = 0;
-	struct msm_camera_sensor_info *info =
-	    (struct msm_camera_sensor_info *)dev;
-
-	struct msm_sensor_ctrl_t *s = (struct msm_sensor_ctrl_t *)ctrl;
-
-	rc = vb6801_init();
-	if (rc < 0)
+	int rc = i2c_add_driver(&vb6801_i2c_driver);
+	if (rc < 0 || vb6801_client == NULL) {
+		rc = -ENOTSUPP;
 		goto probe_done;
+	}
 
 	/* enable mclk first */
 	msm_camio_clk_rate_set(VB6801_DEFAULT_CLOCK_RATE);
@@ -1648,4 +1626,28 @@ int vb6801_probe_init(void *dev, void *ctrl)
 
 probe_done:
 	return rc;
+}
+
+static int __vb6801_probe(struct platform_device *pdev)
+{
+	return msm_camera_drv_start(pdev, vb6801_sensor_probe);
+}
+
+static struct platform_driver msm_camera_driver = {
+	.probe = __vb6801_probe,
+	.driver = {
+		   .name = "msm_camera_vb6801",
+		   .owner = THIS_MODULE,
+		   },
+};
+
+static int __init vb6801_init(void)
+{
+	return platform_driver_register(&msm_camera_driver);
+}
+
+module_init(vb6801_init);
+void vb6801_exit(void)
+{
+	i2c_del_driver(&vb6801_i2c_driver);
 }

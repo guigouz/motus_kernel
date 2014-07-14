@@ -30,7 +30,8 @@
  * the terms of the GNU General Public License version 2 and only version 2 as
  * published by the Free Software Foundation.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
+ * This program is distributed in the hope that it will #define DIAG_DEBUG	// enable debugging
+be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
  * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
  * details.
@@ -59,9 +60,10 @@
 #include <linux/module.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
-#include <linux/sched.h>
 #include <linux/workqueue.h>
 #include <linux/diagchar.h>
+#include <linux/sched.h>
+#include <linux/wait.h>
 #include <mach/usbdiag.h>
 #include <mach/msm_smd.h>
 #include "diagmem.h"
@@ -69,6 +71,7 @@
 #include "diagfwd.h"
 #include "diagchar_hdlc.h"
 
+//#define DIAG_DEBUG	// enable debugging
 
 MODULE_DESCRIPTION("Diag Char Driver");
 MODULE_LICENSE("GPL v2");
@@ -80,6 +83,7 @@ MODULE_VERSION("1.0");
 
 #define CHK_OVERFLOW(bufStart, start, end, length) \
 ((bufStart <= start) && (end - start >= length)) ? 1 : 0
+
 
 static void diag_smd_send_req(void)
 {
@@ -100,6 +104,12 @@ static void diag_smd_send_req(void)
 			} else {
 				smd_read_from_cb(driver->ch, buf, r);
 				driver->in_busy = 1;
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+#ifdef DIAG_DEBUG
+				pretty_hex_dump ("IN", buf, r);
+#endif
+				diagchar_mot_ftm_reply (buf, r);
+#endif
 				diag_write(buf, r);
 			}
 		}
@@ -125,6 +135,12 @@ static void diag_smd_qdsp_send_req(void)
 			} else {
 				smd_read_from_cb(driver->chqdsp, buf, r);
 				driver->in_busy_qdsp = 1;
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+#ifdef DIAG_DEBUG
+				pretty_hex_dump ("IN", buf, r);
+#endif
+				diagchar_mot_ftm_reply (buf, r);
+#endif
 				diag_write(buf, r);
 			}
 		}
@@ -283,6 +299,7 @@ void diag_update_sleeping_process(int process_id)
 	mutex_unlock(&driver->diagchar_mutex);
 }
 
+
 static int diag_process_apps_pkt(unsigned char *buf, int len)
 {
 	uint16_t start;
@@ -300,8 +317,7 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 	else if (*buf == 0x82) {
 		buf += 4;
 		diag_update_event_mask(buf, 1, *(uint16_t *)buf);
-		diag_update_userspace_clients(
-		EVENT_MASKS_TYPE);
+		diag_update_userspace_clients(EVENT_MASKS_TYPE);
 	}
 	/* log mask */
 	else if (*buf == 0x73) {
@@ -333,9 +349,13 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 		temp++;
 		subsys_id = (int)(*(char *)temp);
 		temp++;
-		subsys_cmd_code = *(uint16_t *)temp;
+		memcpy (&subsys_cmd_code, temp, sizeof(subsys_cmd_code));
 		temp += 2;
 
+#ifdef DIAG_DEBUG1
+		printk(KERN_INFO "diagfwd: cmd_code=%d, subsys_id=%d, subsys_cmd_code=%u\n",
+			cmd_code, subsys_id, (unsigned int)subsys_cmd_code);
+#endif
 		for (i = 0; i < REG_TABLE_SIZE; i++) {
 			if (driver->table[i].process_id != 0) {
 				if (driver->table[i].cmd_code ==
@@ -387,6 +407,24 @@ static int diag_process_apps_pkt(unsigned char *buf, int len)
 		return packet_type;
 }
 
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+void diagchar_mot_ftm_reply (unsigned char *buf, int len)
+{
+	int i;
+	for (i = 0; i < driver->num_clients; i++)
+	   if (driver->tcmd_client_map[i] != 0) {
+		// TODO: should CRC and 7e get removed here???
+		driver->pkt_length = len;
+		diag_update_pkt_buffer (buf);
+		diag_update_sleeping_process (driver->tcmd_client_map[i]);
+#ifdef DIAG_DEBUG
+		printk(KERN_INFO "diagchar_mot_ftm_reply: TCMD index %d, %d bytes\n", i, len);
+#endif
+		break;
+	   }
+}
+#endif
+
 static void diag_process_hdlc(void *data, unsigned len)
 {
 	struct diag_hdlc_decode_type hdlc;
@@ -407,12 +445,24 @@ static void diag_process_hdlc(void *data, unsigned len)
 					      hdlc.dest_idx - 3);
 
 	/* ignore 2 bytes for CRC, one for 7E and send */
-	if ((driver->ch) && (ret) && (type) && (hdlc.dest_idx > 3))
+	if ((driver->ch) && (ret) && (type) && (hdlc.dest_idx > 3)) 
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+	{
+#endif
 		smd_write(driver->ch, driver->hdlc_buf, hdlc.dest_idx - 3);
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+#ifdef DIAG_DEBUG
+		pretty_hex_dump ("OUT", driver->hdlc_buf, hdlc.dest_idx - 3);
+#endif
+	}
+#endif
 }
 
 int diagfwd_connect(void)
 {
+#ifdef DIAG_DEBUG
+	printk(KERN_INFO "diagfwd connect\n");
+#endif
 	diag_open(driver->poolsize + 3); /* 2 for A9 ; 1 for q6*/
 
 	driver->usb_connected = 1;
@@ -425,6 +475,9 @@ int diagfwd_connect(void)
 
 int diagfwd_disconnect(void)
 {
+#ifdef DIAG_DEBUG
+	printk(KERN_INFO "diagfwd disconnect\n");
+#endif
 	driver->usb_connected = 0;
 	driver->in_busy = 1;
 	driver->in_busy_qdsp = 1;
@@ -445,7 +498,7 @@ int diagfwd_write_complete(unsigned char *buf, int len, int status)
 		driver->in_busy_qdsp = 0;
 		diag_smd_qdsp_send_req();
 	} else
-		diagmem_free(driver, buf);
+		diagmem_free(driver, buf, POOL_TYPE_HDLC);
 
 	return 0;
 }
@@ -505,7 +558,6 @@ static int diag_smd_probe(struct platform_device *pdev)
 	}
 #endif
 	printk(KERN_INFO "diag opened SMD port ; r = %d\n", r);
-
 err:
 	return 0;
 }
@@ -527,29 +579,36 @@ void diag_read_work_fn(struct work_struct *work)
 
 void diagfwd_init(void)
 {
+	int where=0;
 
 	if (driver->usb_buf_out  == NULL &&
 	     (driver->usb_buf_out = kzalloc(USB_MAX_OUT_BUF,
 					 GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->hdlc_buf == NULL
 	    && (driver->hdlc_buf = kzalloc(HDLC_MAX, GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->msg_masks == NULL
 	    && (driver->msg_masks = kzalloc(MSG_MASK_SIZE,
 					     GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->log_masks == NULL &&
 	    (driver->log_masks = kzalloc(LOG_MASK_SIZE, GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->event_masks == NULL &&
 	    (driver->event_masks = kzalloc(EVENT_MASK_SIZE,
 					    GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->client_map == NULL &&
 	    (driver->client_map = kzalloc
 	     (driver->num_clients, GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->data_ready == NULL &&
 	     (driver->data_ready = kzalloc(driver->num_clients,
 					    GFP_KERNEL)) == NULL)
@@ -559,11 +618,18 @@ void diagfwd_init(void)
 				      sizeof(struct diag_master_table),
 				       GFP_KERNEL)) == NULL)
 		goto err;
+	where++;
 	if (driver->pkt_buf == NULL &&
 	     (driver->pkt_buf = kzalloc(PKT_SIZE,
 					 GFP_KERNEL)) == NULL)
 		goto err;
-
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+	if (driver->tcmd_client_map == NULL &&
+	     (driver->tcmd_client_map = kzalloc 
+		(driver->num_clients, GFP_KERNEL)) == NULL)
+		goto err;
+	where++;
+#endif
 	driver->diag_wq = create_singlethread_workqueue("diag_wq");
 	INIT_WORK(&(driver->diag_read_work), diag_read_work_fn);
 
@@ -573,7 +639,10 @@ void diagfwd_init(void)
 
 	return;
 err:
-		printk(KERN_INFO "\n Could not initialize diag buffers \n");
+		printk(KERN_INFO "\n Could not initialize diag buffers %d\n", where);
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+		kfree(driver->tcmd_client_map);
+#endif
 		kfree(driver->usb_buf_out);
 		kfree(driver->hdlc_buf);
 		kfree(driver->msg_masks);
@@ -599,6 +668,9 @@ void diagfwd_exit(void)
 
 	diag_usb_unregister();
 
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+	kfree(driver->tcmd_client_map);
+#endif
 	kfree(driver->usb_buf_in);
 	kfree(driver->usb_buf_in_qdsp);
 	kfree(driver->usb_buf_out);

@@ -146,6 +146,7 @@ static struct wake_lock rpcrouter_wake_lock;
 static int rpcrouter_need_len;
 
 static atomic_t next_xid = ATOMIC_INIT(1);
+static atomic_t pm_mid = ATOMIC_INIT(1);
 
 static void do_read_data(struct work_struct *work);
 static void do_create_pdevs(struct work_struct *work);
@@ -154,6 +155,7 @@ static void do_create_rpcrouter_pdev(struct work_struct *work);
 static DECLARE_WORK(work_read_data, do_read_data);
 static DECLARE_WORK(work_create_pdevs, do_create_pdevs);
 static DECLARE_WORK(work_create_rpcrouter_pdev, do_create_rpcrouter_pdev);
+static atomic_t rpcrouter_pdev_created = ATOMIC_INIT(0);
 
 #define RR_STATE_IDLE    0
 #define RR_STATE_HEADER  1
@@ -636,9 +638,9 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 
 	case RPCROUTER_CTRL_CMD_NEW_SERVER:
 		if (msg->srv.vers == 0) {
-			printk(KERN_ERR
-			"rpcrouter:Server create rejected, version = 0"
-			"program (%08x)\n", msg->srv.prog);
+			pr_err(
+			"rpcrouter: Server create rejected, version = 0, "
+			"program = %08x\n", msg->srv.prog);
 			break;
 		}
 
@@ -710,6 +712,10 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 		rc = -ENOSYS;
 
 		break;
+	case RPCROUTER_CTRL_CMD_PING:
+		/* No action needed for ping messages received */
+		RR("o PING\n");
+		break;
 	default:
 		RR("o UNKNOWN(%08x)\n", msg->cmd);
 		rc = -ENOSYS;
@@ -720,7 +726,8 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 
 static void do_create_rpcrouter_pdev(struct work_struct *work)
 {
-	platform_device_register(&rpcrouter_pdev);
+	if (atomic_cmpxchg(&rpcrouter_pdev_created, 0, 1) == 0)
+		platform_device_register(&rpcrouter_pdev);
 }
 
 static void do_create_pdevs(struct work_struct *work)
@@ -828,7 +835,9 @@ static void do_read_data(struct work_struct *work)
 	struct rr_packet *pkt;
 	struct rr_fragment *frag;
 	struct msm_rpc_endpoint *ept;
+#if defined(CONFIG_MSM_ONCRPCROUTER_DEBUG)
 	struct rpc_request_hdr *rq;
+#endif
 	uint32_t pm, mid;
 	unsigned long flags;
 
@@ -890,7 +899,7 @@ static void do_read_data(struct work_struct *work)
 				       pm >> 30 & 0x1,
 				       pm >> 31 & 0x1,
 				       pm >> 16 & 0xF,
-				       pm & 0xFF, hdr.dst_cid);
+				       pm & 0xFFFF, hdr.dst_cid);
 	}
 
 	if (smd_rpcrouter_debug_mask & SMEM_LOG) {
@@ -1027,10 +1036,13 @@ static int msm_rpc_write_pkt(
 	void *buffer,
 	int count,
 	int first,
-	int last
+	int last,
+	uint32_t mid
 	)
 {
+#if defined(CONFIG_MSM_ONCRPCROUTER_DEBUG)
 	struct rpc_request_hdr *rq = buffer;
+#endif
 	uint32_t pacmark;
 	unsigned long flags;
 	int needed;
@@ -1118,15 +1130,7 @@ static int msm_rpc_write_pkt(
 #endif
 
 	}
-
-	/* bump pacmark while interrupts disabled to avoid race
-	 * probably should be atomic op instead
-	 */
-	/* Pacmark maintained by ept and incremented for next
-	*  messages when last fragment is set.
-	*/
-	pacmark = PACMARK(count, ept->next_pm, first, last);
-	ept->next_pm += last;
+	pacmark = PACMARK(count, mid, first, last);
 
 	spin_unlock_irqrestore(&r_ept->quota_lock, flags);
 
@@ -1171,13 +1175,17 @@ static int msm_rpc_write_pkt(
 		if (pacmark >> 30 & 0x1)
 			xid = ntohl(rq->xid);
 		if ((pacmark >> 31 & 0x1) || (pacmark >> 30 & 0x1))
-			RAW_PMW_NOMASK("xid:0x%03x first=%i,last=%i,mid=%3i,"
+			RAW_PMW_NOMASK("xid:0x%03x first=%i,last=%i,mid=%2i,"
 				       "len=%3i,src_cid=%x\n",
 				       xid,
 				       pacmark >> 30 & 0x1,
 				       pacmark >> 31 & 0x1,
+#ifdef CONFIG_MACH_MOT
+				       pacmark >> 16 & 0xFF,
+#else
 				       pacmark >> 16 & 0xF,
-				       pacmark & 0xFF, hdr->src_cid);
+#endif
+				       pacmark & 0xFFFF, hdr->src_cid);
 	}
 #endif
 
@@ -1220,6 +1228,30 @@ static struct msm_rpc_reply *get_pend_reply(struct msm_rpc_endpoint *ept,
 	}
 	spin_unlock_irqrestore(&ept->reply_q_lock, flags);
 	return NULL;
+}
+
+void get_requesting_client(struct msm_rpc_endpoint *ept, uint32_t xid,
+			   struct msm_rpc_client_info *clnt_info)
+{
+	unsigned long flags;
+	struct msm_rpc_reply *reply;
+
+	if (!clnt_info)
+		return;
+
+	spin_lock_irqsave(&ept->reply_q_lock, flags);
+	list_for_each_entry(reply, &ept->reply_pend_q, list) {
+		if (reply->xid == xid) {
+			clnt_info->pid = reply->pid;
+			clnt_info->cid = reply->cid;
+			clnt_info->prog = reply->prog;
+			clnt_info->vers = reply->vers;
+			spin_unlock_irqrestore(&ept->reply_q_lock, flags);
+			return;
+		}
+	}
+	spin_unlock_irqrestore(&ept->reply_q_lock, flags);
+	return;
 }
 
 static void set_avail_reply(struct msm_rpc_endpoint *ept,
@@ -1281,6 +1313,7 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 	char *tx_buf;
 	int rc;
 	int first_pkt = 1;
+	uint32_t mid;
 
 	/* snoop the RPC packet and enforce permissions */
 
@@ -1343,7 +1376,7 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 
 	tx_cnt = count;
 	tx_buf = buffer;
-
+	mid = atomic_add_return(1, &pm_mid) & 0xFF;
 	/* The modem's router can only take 500 bytes of data. The
 	   first 8 bytes it uses on the modem side for addressing,
 	   the next 4 bytes are for the pacmark header. */
@@ -1353,18 +1386,22 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 	while (tx_cnt > 0) {
 		if (tx_cnt > max_tx) {
 			rc = msm_rpc_write_pkt(&hdr, ept, r_ept,
-					      tx_buf, max_tx, first_pkt, 0);
+					       tx_buf, max_tx,
+					       first_pkt, 0, mid);
 			if (rc < 0)
 				return rc;
-			IO("Wrote %d bytes First %d, Last 0\n", rc, first_pkt);
+			IO("Wrote %d bytes First %d, Last 0 mid %d\n",
+			   rc, first_pkt, mid);
 			tx_cnt -= max_tx;
 			tx_buf += max_tx;
 		} else {
 			rc = msm_rpc_write_pkt(&hdr, ept, r_ept,
-					      tx_buf, tx_cnt, first_pkt, 1);
+					       tx_buf, tx_cnt,
+					       first_pkt, 1, mid);
 			if (rc < 0)
 				return rc;
-			IO("Wrote %d bytes First %d Last 1 \n", rc, first_pkt);
+			IO("Wrote %d bytes First %d Last 1 mid %d\n",
+			   rc, first_pkt, mid);
 			break;
 		}
 		first_pkt = 0;
@@ -1586,6 +1623,8 @@ int __msm_rpc_read(struct msm_rpc_endpoint *ept,
 		reply->cid = pkt->hdr.src_cid;
 		reply->pid = pkt->hdr.src_pid;
 		reply->xid = rq->xid;
+		reply->prog = rq->prog;
+		reply->vers = rq->vers;
 		set_pend_reply(ept, reply);
 	}
 
@@ -2081,8 +2120,6 @@ static int dump_msm_rpc_endpoint(char *buf, int max)
 			       be32_to_cpu(ept->dst_vers));
 		i += scnprintf(buf + i, max - i, "reply_cnt: %i\n",
 			       ept->reply_cnt);
-		i += scnprintf(buf + i, max - i, "next_pm: %i\n",
-			       ept->next_pm);
 		i += scnprintf(buf + i, max - i, "restart_state: %i\n",
 			       ept->restart_state);
 

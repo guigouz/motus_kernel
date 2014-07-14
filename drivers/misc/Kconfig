@@ -25,7 +25,7 @@ config ANDROID_PMEM_DEBUG
 config ANDROID_PMEM_KAPI_TEST
 	tristate "Simple module to test Android pmem kernel API"
 	depends on ANDROID_PMEM
-	default m
+	default n
 
 config ATMEL_PWM
 	tristate "Atmel AT32/AT91 PWM support"
@@ -164,6 +164,29 @@ config ATMEL_SSC
 
 	  If unsure, say N.
 
+config OMAP_MODEM_CONTROL
+   bool "OMAP device driver to interface with a modem co-processor"
+   default n
+   ---help---
+         This option enables the omap device driver to control and
+         interface with a modem co-processor.  This module is needed to
+         monitor for modem panics, interact with the modem during master
+         clear, and allow modem power down/up support.
+
+config OMAP_STI
+	bool "Serial Trace Interface support"
+	depends on ARCH_OMAP16XX || ARCH_OMAP24XX || ARCH_OMAP34XX
+	default n
+	help
+	  Serial Trace Interface. The protocols suported for OMAP1/2/3 are
+	  STI/CSTI/XTIv2 correspondingly.
+
+config OMAP_STI_CONSOLE
+	bool "STI console support"
+	depends on OMAP_STI
+	help
+	  This enables a console driver by way of STI/XTI.
+
 config ENCLOSURE_SERVICES
 	tristate "Enclosure Services"
 	default n
@@ -248,7 +271,128 @@ config UID_STAT
 	bool "UID based statistics tracking exported to /proc/uid_stat"
 	default n
 
+config UID_STAT_INET_ONLY
+	bool "Include only AF_INET and AF_INET6 counts for /proc/uid_stat"
+	depends on UID_STAT
+	default n
+
+config VIB_PWM
+	bool "PWM Vibrator"
+	default n
+
+config VIB_GPIO
+	bool "GPIO Vibrator"
+	default n
+
+config SENSORS_AKM8973
+	tristate "AKM8973 Magnetometer"
+	default n
+	depends on I2C
+	help
+	 Support for the AKM8973 tri-axis magnetometer
+
+config SENSORS_AKM8973_AKMD
+	tristate "AKM8973 Magnetometer"
+	default n
+	depends on I2C
+	help
+	 Support for the AKM8973 tri-axis magnetometer (compass)
+
+config SENSORS_AIRC
+	tristate "Motorola AIRC"
+	default n
+	depends on I2C
+	help
+	 Support for the AIRC driver
+
+config SENSORS_LIS331DLH
+	tristate "LIS331DLH Accelerometer"
+	default n
+	depends on I2C
+	help
+	 Say yes here if you wish to include the STI Micro
+	 LIS331DLH accelerometer driver.
+
+config SENSORS_KXTF9
+	tristate "KXTF9 Accelerometer"
+	default n
+	depends on I2C
+	help
+	 Say yes here if you wish to include the Kionix
+	 KXTF9 accelerometer driver.
+
+config UMTS_SYSPANIC
+        tristate "Motorola UMTS phone syspanic driver"
+	default n
+        help 
+         This option enables support to detect BP panic from AP, with the syspanic IRQ.
+         Only available on SAM-OMAP platform.
+         say y if your BP support this feature (needed for panic daemon)
+
+config TSIF
+	depends on ARCH_MSM
+	tristate "TSIF (Transport Stream InterFace) support"
+	default n
+	---help---
+	  This driver supports low level TSIF interface. It provides API
+	  for upper layer drivers. If you have a TSIF hardware, say
+	  Y here and read <file:Documentation/arm/msm/tsif.txt>.
+
+	  To compile this driver as module, choose M here: the
+	  module will be called msm_tsif.
+
+config TSIF_CHRDEV
+	tristate "TSIF character device"
+	depends on TSIF
+	default n
+	---help---
+	  This driver uses low level TSIF interface. It provides character
+	  device useable from user space programs: one can read TSIF stream
+	  from this device.
+
+	  This driver may be used as example for TSIF API usage.
+
+	  To compile this driver as module, choose M here: the
+	  module will be called tsif_chrdev.
+
+config WL127X_RFKILL
+	tristate "Bluetooth power control driver for TI wl127x"
+	depends on RFKILL
+	default n
+	---help---
+	 Creates an rfkill entry in sysfs for power control of Bluetooth
+	 TI wl127x chips.
+
+config WL127X_TEST
+	tristate "TI wl127x Bluetooth GPIO test driver for board-sholes"
+	depends on (MACH_SHOLES || MACH_MAPPHONE || MACH_SHOLEST) && WL127X_RFKILL && BT
+	default n
+	---help---
+	 Creates sysfs GPIO entries for testing TI wl127x BT on board-sholes.
+
+config APANIC
+	bool "Android kernel panic diagnostics driver"
+	default n
+	---help---
+	 Driver which handles kernel panics and attempts to write
+	 critical debugging data to flash.
+
+config APANIC_PLABEL
+	string "Android panic dump flash partition label"
+	default "kpanic"
+	---help---
+	 If your platform uses a different flash partition label for storing
+ 	 crashdumps, enter it here.
+
+source "drivers/misc/mot_camera_misc/Kconfig"
+source "drivers/misc/mot_camera_misc_msm/Kconfig"
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
+source "drivers/misc/ts27010mux/Kconfig"
+source "drivers/misc/netmux/Kconfig"
+source "drivers/misc/netmux_linkdriver/Kconfig"
+source "drivers/misc/modem_pm_driver/Kconfig"
+source "drivers/misc/smc/Kconfig"
+source "drivers/misc/sec/Kconfig"
 
 endif # MISC_DEVICES

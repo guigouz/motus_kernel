@@ -20,7 +20,8 @@
 
 #include <linux/types.h>
 
-#define PHY_TYPE_MASK		0xFF
+#define PHY_TYPE_MASK		0x0F
+#define PHY_TYPE_MODE		0xF0
 #define PHY_MODEL_MASK		0xFF00
 #define PHY_TYPE(x)		((x) & PHY_TYPE_MASK)
 #define PHY_MODEL(x)		((x) & PHY_MODEL_MASK)
@@ -31,6 +32,11 @@
 #define USB_PHY_UNDEFINED	0x00
 #define USB_PHY_INTEGRATED	0x01
 #define USB_PHY_EXTERNAL	0x02
+#define USB_PHY_SERIAL_PMIC     0x04
+
+#define REQUEST_STOP		0
+#define REQUEST_START		1
+#define REQUEST_RESUME		2
 
 enum hsusb_phy_type {
 	UNDEFINED,
@@ -48,17 +54,39 @@ struct usb_function_map {
 struct usb_composition {
 	__u16   product_id;
 	unsigned long functions;
+#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+        char *config;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+	
 };
 #endif
 
-struct msm_hsusb_platform_data {
-	__u16   version;
-#ifdef CONFIG_USB_ANDROID
+enum chg_type {
+	CHG_TYPE_HOSTPC,
+	CHG_TYPE_WALL_CHARGER,
+	CHG_TYPE_INVALID
+};
+
+struct msm_hsusb_gadget_platform_data {
+	/* for notification when USB is connected or disconnected */
+	void (*usb_connected)(int);
+
 	int *phy_init_seq;
 	void (*phy_reset)(void);
-#endif
+
+	/*charging apis*/
+	int  (*chg_init)(int);
+	void (*chg_connected)(enum chg_type);
+	void (*chg_vbus_draw)(unsigned);
+};
+
+struct msm_hsusb_platform_data {
+	__u16   version;
 	unsigned phy_info;
 	__u16   vendor_id;
+#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+	__u16   product_id;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	char   	*product_name;
 	char   	*serial_number;
 	char   	*manufacturer_name;
@@ -79,6 +107,24 @@ struct msm_hsusb_platform_data {
 	int (*phy_reset)(void __iomem *addr);
 
 	unsigned int max_axi_khz;
+	unsigned int core_clk;
+
+	int vreg5v_required;
+
+	u32 swfi_latency;
+};
+
+struct msm_otg_platform_data {
+	int (*rpc_connect)(int);
+	int (*phy_reset)(void);
+};
+
+struct msm_usb_host_platform_data {
+	unsigned phy_info;
+	unsigned int max_axi_khz;
+	int (*phy_reset)(void __iomem *addr);
+	void (*config_gpio)(unsigned int config);
+	void (*vbus_power) (unsigned phy_info, int on);
 };
 
 #endif

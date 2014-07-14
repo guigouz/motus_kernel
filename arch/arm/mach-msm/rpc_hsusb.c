@@ -25,8 +25,13 @@
 static struct msm_rpc_endpoint *usb_ep;
 static struct msm_rpc_endpoint *chg_ep;
 
+#define MSM_RPC_CHG_PROG 0x3000001a
+
+#if defined(CONFIG_KERNEL_MOTOROLA)
+extern int get_factory_cable_status(void);
+static int factory_cable_attached = 0;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 struct msm_chg_rpc_ids {
-	unsigned long	prog;
 	unsigned long	vers_comp;
 	unsigned	chg_usb_charger_connected_proc;
 	unsigned	chg_usb_charger_disconnected_proc;
@@ -86,23 +91,23 @@ static int msm_hsusb_init_rpc_ids(unsigned long vers)
 	}
 }
 
-static int msm_chg_init_rpc_ids(unsigned long vers)
+static int msm_chg_init_rpc(unsigned long vers)
 {
-	if (vers == 0x00010001) {
-		chg_rpc_ids.prog	 			= 0x3000001a;
-		chg_rpc_ids.vers_comp				= 0x00010001;
+	if (((vers & RPC_VERSION_MAJOR_MASK) == 0x00010000) ||
+	    ((vers & RPC_VERSION_MAJOR_MASK) == 0x00020000)) {
+		chg_ep = msm_rpc_connect_compatible(MSM_RPC_CHG_PROG, vers,
+						     MSM_RPC_UNINTERRUPTIBLE);
+		if (IS_ERR(chg_ep))
+			return -ENODATA;
+		chg_rpc_ids.vers_comp				= vers;
 		chg_rpc_ids.chg_usb_charger_connected_proc 	= 7;
 		chg_rpc_ids.chg_usb_charger_disconnected_proc 	= 8;
 		chg_rpc_ids.chg_usb_i_is_available_proc 	= 9;
 		chg_rpc_ids.chg_usb_i_is_not_available_proc 	= 10;
 		return 0;
-	} else {
-		printk(KERN_INFO "%s: no matches found for version\n",
-			__func__);
+	} else
 		return -ENODATA;
-	}
 }
-EXPORT_SYMBOL(msm_chg_init_rpc_ids);
 
 /* rpc connect for hsusb */
 int msm_hsusb_rpc_connect(void)
@@ -121,7 +126,8 @@ int msm_hsusb_rpc_connect(void)
 	}
 
 	usb_ep = msm_rpc_connect_compatible(usb_rpc_ids.prog,
-					usb_rpc_ids.vers_comp, 0);
+					usb_rpc_ids.vers_comp,
+					MSM_RPC_UNINTERRUPTIBLE);
 
 	if (IS_ERR(usb_ep)) {
 		printk(KERN_ERR "%s: connect compatible failed vers = %lx\n",
@@ -134,7 +140,8 @@ int msm_hsusb_rpc_connect(void)
 			return -ENODATA;
 		}
 		usb_ep = msm_rpc_connect_compatible(usb_rpc_ids.prog,
-					usb_rpc_ids.vers_comp, 0);
+					usb_rpc_ids.vers_comp,
+					MSM_RPC_UNINTERRUPTIBLE);
 	}
 
 	if (IS_ERR(usb_ep)) {
@@ -152,6 +159,7 @@ EXPORT_SYMBOL(msm_hsusb_rpc_connect);
 /* rpc connect for charging */
 int msm_chg_rpc_connect(void)
 {
+	uint32_t chg_vers;
 
 	if (machine_is_msm7201a_surf() || machine_is_msm7x27_surf() ||
 	    machine_is_qsd8x50_surf())
@@ -162,24 +170,21 @@ int msm_chg_rpc_connect(void)
 		return 0;
 	}
 
-	/* Initialize rpc ids */
-	if (msm_chg_init_rpc_ids(0x00010001)) {
-		printk(KERN_ERR "%s: rpc ids initialization failed\n"
-			, __func__);
-		return -ENODATA;
-	}
+	chg_vers = 0x00020001;
+	if (!msm_chg_init_rpc(chg_vers))
+		goto chg_found;
 
-	chg_ep = msm_rpc_connect_compatible(chg_rpc_ids.prog,
-				chg_rpc_ids.vers_comp, 0);
+	chg_vers = 0x00010001;
+	if (!msm_chg_init_rpc(chg_vers))
+		goto chg_found;
 
-	if (IS_ERR(chg_ep)) {
-		printk(KERN_ERR "%s: connect compatible failed vers = %lx\n",
-				__func__, chg_rpc_ids.vers_comp);
-		return -EAGAIN;
-	} else
-		printk(KERN_INFO "%s: rpc connect success vers = %lx\n",
-				__func__, chg_rpc_ids.vers_comp);
+	printk(KERN_ERR "%s: connect compatible failed \n",
+			__func__);
+	return -EAGAIN;
 
+chg_found:
+	printk(KERN_INFO "%s: connected to rpc vers = %x\n",
+			__func__, chg_vers);
 	return 0;
 }
 EXPORT_SYMBOL(msm_chg_rpc_connect);
@@ -365,6 +370,11 @@ int msm_chg_usb_charger_connected(uint32_t device)
 		uint32_t otg_dev;
 	} req;
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	factory_cable_attached = get_factory_cable_status();
+	if(factory_cable_attached)
+		printk("%s: factory cable connected\n", __func__);
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	if (!chg_ep || IS_ERR(chg_ep))
 		return -EAGAIN;
 	req.otg_dev = cpu_to_be32(device);
@@ -389,6 +399,12 @@ int msm_chg_usb_i_is_available(uint32_t sample)
 		uint32_t i_ma;
 	} req;
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if(factory_cable_attached) {
+		printk("%s: will not charge because factory cable connected\n", __func__);
+		return 0;
+	}
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	if (!chg_ep || IS_ERR(chg_ep))
 		return -EAGAIN;
 	req.i_ma = cpu_to_be32(sample);
@@ -412,6 +428,12 @@ int msm_chg_usb_i_is_not_available(void)
 		struct rpc_request_hdr hdr;
 	} req;
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if(factory_cable_attached) {
+		printk("%s: did not charge because factory cable connected\n", __func__);
+		return 0;
+	}
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	if (!chg_ep || IS_ERR(chg_ep))
 		return -EAGAIN;
 	rc = msm_rpc_call(chg_ep, chg_rpc_ids.chg_usb_i_is_not_available_proc,
@@ -433,6 +455,9 @@ int msm_chg_usb_charger_disconnected(void)
 	struct hsusb_start_req {
 		struct rpc_request_hdr hdr;
 	} req;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	factory_cable_attached = 0;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 
 	if (!chg_ep || IS_ERR(chg_ep))
 		return -EAGAIN;

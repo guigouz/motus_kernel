@@ -24,7 +24,9 @@
 #include <linux/io.h>
 
 #include <mach/msm_otg.h>
+#include <mach/msm_hsusb.h>
 #include <mach/msm_hsusb_hw.h>
+#include <mach/board.h>
 
 #define MSM_USB_BASE (xceiv->regs)
 
@@ -64,25 +66,29 @@ static void msm_otg_set_clk(int on)
 static inline int is_host(void)
 {
 	int ret;
-	msm_otg_set_clk(1);
+
 	ret = (OTGSC_ID & readl(USB_OTGSC)) ? 0 : 1;
-	msm_otg_set_clk(0);
 	return ret;
 }
 
 static void msm_otg_enable(void)
 {
+	msm_otg_set_clk(1);
+	/* Enable ID interrupts */
+	writel(readl(USB_OTGSC) | OTGSC_IDIE, USB_OTGSC);
 
 	if (is_host()) {
 		pr_info("%s: configuring USB in host mode\n", __func__);
-		xceiv->hcd_ops->status_change(1);
+		xceiv->hcd_ops->request(xceiv->hcd_ops->handle, REQUEST_START);
 		xceiv->state = A_HOST;
 	} else {
 		pr_info("%s: configuring USB in device mode\n", __func__);
-		xceiv->dcd_ops->status_change(1);
+		xceiv->dcd_ops->request(xceiv->dcd_ops->handle, REQUEST_START);
 		xceiv->state = B_DEVICE;
 	}
+	msm_otg_set_clk(0);
 	xceiv->active = 1;
+	wake_lock_timeout(&xceiv->wlock, HZ/2);
 	enable_irq(xceiv->irq);
 }
 
@@ -103,7 +109,8 @@ static void msm_otg_disable(int mode)
 		if (xceiv->state == A_HOST) {
 			pr_info("%s: configuring USB in device mode\n",
 					__func__);
-			xceiv->dcd_ops->status_change(1);
+			xceiv->dcd_ops->request(xceiv->dcd_ops->handle,
+							REQUEST_START);
 			xceiv->state = B_DEVICE;
 		}
 		break;
@@ -111,7 +118,8 @@ static void msm_otg_disable(int mode)
 		if (xceiv->state == B_DEVICE) {
 			pr_info("%s: configuring USB in host mode\n",
 					__func__);
-			xceiv->hcd_ops->status_change(1);
+			xceiv->hcd_ops->request(xceiv->hcd_ops->handle,
+							REQUEST_START);
 			xceiv->state = A_HOST;
 		}
 		break;
@@ -124,31 +132,28 @@ static void msm_otg_do_work(struct work_struct *w)
 	switch (xceiv->state) {
 	case A_HOST:
 		if (xceiv->flags == A_TO_B) {
-			xceiv->hcd_ops->status_change(0);
-			/* Give some delay to clear VBUS*/
-			msleep(20);
-			/* long pause in host suspend */
-			if (is_host()) {
-				xceiv->hcd_ops->status_change(1);
-				enable_irq(xceiv->irq);
-				return;
-			}
+			xceiv->hcd_ops->request(xceiv->hcd_ops->handle,
+							REQUEST_STOP);
 			pr_info("%s: configuring USB in device mode\n",
 					__func__);
-			xceiv->dcd_ops->status_change(1);
+			xceiv->dcd_ops->request(xceiv->dcd_ops->handle,
+							REQUEST_START);
 			xceiv->state = B_DEVICE;
 		}
 		break;
 	case B_DEVICE:
 		if (xceiv->flags == B_TO_A) {
-			xceiv->dcd_ops->status_change(0);
+			xceiv->dcd_ops->request(xceiv->dcd_ops->handle,
+							REQUEST_STOP);
 			pr_info("%s: configuring USB in host mode\n",
 					__func__);
-			xceiv->hcd_ops->status_change(1);
+			xceiv->hcd_ops->request(xceiv->hcd_ops->handle,
+							REQUEST_START);
 			xceiv->state = A_HOST;
 		}
 		break;
 	}
+	wake_lock_timeout(&xceiv->wlock, HZ/2);
 	enable_irq(xceiv->irq);
 }
 
@@ -166,6 +171,7 @@ static irqreturn_t msm_otg_irq(int irq, void *data)
 	otgsc = readl(USB_OTGSC);
 	temp = otgsc & ~OTGSC_INTR_STS_MASK;
 	if (otgsc & OTGSC_IDIS) {
+		wake_lock(&xceiv->wlock);
 		if (is_host()) {
 			xceiv->flags = B_TO_A;
 			schedule_work(&xceiv->work);
@@ -206,7 +212,7 @@ static int msm_otg_set_peripheral(struct msm_otg_transceiver *xceiv,
 	}
 
 	xceiv->dcd_ops = ops;
-	xceiv->dcd_ops->status_change(0);
+	xceiv->dcd_ops->request(xceiv->dcd_ops->handle, REQUEST_STOP);
 	if (xceiv->hcd_ops)
 		msm_otg_enable();
 unlock:
@@ -215,7 +221,7 @@ unlock:
 }
 
 static int msm_otg_set_host(struct msm_otg_transceiver *xceiv,
-				struct msm_otg_ops *ops)
+				struct msm_otg_ops *hcd_ops)
 {
 	int ret = 0;
 
@@ -224,7 +230,7 @@ static int msm_otg_set_host(struct msm_otg_transceiver *xceiv,
 		ret = -EINVAL;
 		goto unlock;
 	}
-	if (!ops) {
+	if (!hcd_ops) {
 		xceiv->hcd_ops = NULL;
 		pr_info("%s: Host driver is deregistered with OTG\n",
 				__func__);
@@ -236,8 +242,8 @@ static int msm_otg_set_host(struct msm_otg_transceiver *xceiv,
 		goto unlock;
 	}
 
-	xceiv->hcd_ops = ops;
-	xceiv->hcd_ops->status_change(0);
+	xceiv->hcd_ops = hcd_ops;
+	xceiv->hcd_ops->request(xceiv->hcd_ops->handle, REQUEST_STOP);
 	if (xceiv->dcd_ops)
 		msm_otg_enable();
 
@@ -304,6 +310,8 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 
 	INIT_WORK(&xceiv->work, msm_otg_do_work);
 	spin_lock_init(&xceiv->lock);
+	wake_lock_init(&xceiv->wlock, WAKE_LOCK_SUSPEND, "usb_otg");
+	wake_lock(&xceiv->wlock);
 
 	xceiv->set_host = msm_otg_set_host;
 	xceiv->set_peripheral = msm_otg_set_peripheral;

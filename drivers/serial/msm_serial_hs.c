@@ -1,6 +1,6 @@
 /* drivers/serial/msm_serial_hs.c
  *
- * MSM 7k High speed uart driver
+ * MSM 7k/8k High speed uart driver
  *
  * Copyright (c) 2008 Google Inc.
  * Copyright (c) 2007-2009, Code Aurora Forum. All rights reserved.
@@ -80,6 +80,7 @@ struct msm_hs_tx {
 	dma_addr_t mapped_cmd_ptr_ptr;
 	int tx_count;
 	dma_addr_t dma_base;
+	struct tasklet_struct tlet;
 };
 
 struct msm_hs_rx {
@@ -94,7 +95,7 @@ struct msm_hs_rx {
 	unsigned char *buffer;
 	struct dma_pool *pool;
 	struct wake_lock wake_lock;
-	struct work_struct work;
+	struct tasklet_struct tlet;
 };
 
 /* optional low power wakeup, typically on a GPIO RX irq */
@@ -211,7 +212,7 @@ static int __devexit msm_hs_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int msm_hs_init_clk_locked(struct uart_port *uport)
+static int msm_hs_init_clk(struct uart_port *uport)
 {
 	int ret;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
@@ -442,7 +443,9 @@ static void msm_hs_set_termios(struct uart_port *uport,
 	if (msm_uport->rx.flush == FLUSH_NONE) {
 		wake_lock(&msm_uport->rx.wake_lock);
 		msm_uport->rx.flush = FLUSH_IGNORE;
-		msm_dmov_flush(msm_uport->dma_rx_channel);
+		/* do discard flush */
+		msm_dmov_stop_cmd(msm_uport->dma_rx_channel,
+				  &msm_uport->rx.xfer, 0);
 	}
 
 	msm_hs_write(uport, UARTDM_IMR_ADDR, msm_uport->imr_reg);
@@ -502,7 +505,9 @@ static void msm_hs_stop_rx_locked(struct uart_port *uport)
 	/* Disable the receiver */
 	if (msm_uport->rx.flush == FLUSH_NONE) {
 		wake_lock(&msm_uport->rx.wake_lock);
-		msm_dmov_flush(msm_uport->dma_rx_channel);
+		/* do discard flush */
+		msm_dmov_stop_cmd(msm_uport->dma_rx_channel,
+				  &msm_uport->rx.xfer, 0);
 	}
 	if (msm_uport->rx.flush != FLUSH_SHUTDOWN)
 		msm_uport->rx.flush = FLUSH_STOP;
@@ -515,7 +520,9 @@ static void msm_hs_submit_tx_locked(struct uart_port *uport)
 {
 	int left;
 	int tx_count;
+	int aligned_tx_count;
 	dma_addr_t src_addr;
+	dma_addr_t aligned_src_addr;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 	struct msm_hs_tx *tx = &msm_uport->tx;
 	struct circ_buf *tx_buf = &msm_uport->uport.info->xmit;
@@ -538,8 +545,13 @@ static void msm_hs_submit_tx_locked(struct uart_port *uport)
 		tx_count = left;
 
 	src_addr = tx->dma_base + tx_buf->tail;
-	dma_sync_single_for_device(uport->dev, src_addr, tx_count,
-				   DMA_TO_DEVICE);
+	/* Mask the src_addr to align on a cache
+	 * and add those bytes to tx_count */
+	aligned_src_addr = src_addr & ~(dma_get_cache_alignment() - 1);
+	aligned_tx_count = tx_count + src_addr - aligned_src_addr;
+
+	dma_sync_single_for_device(uport->dev, aligned_src_addr,
+			aligned_tx_count, DMA_TO_DEVICE);
 
 	tx->command_ptr->num_rows = (((tx_count + 15) >> 4) << 16) |
 				     ((tx_count + 15) >> 4);
@@ -578,93 +590,30 @@ static void msm_hs_start_rx_locked(struct uart_port *uport)
 	msm_hs_write(uport, UARTDM_IMR_ADDR, msm_uport->imr_reg);
 }
 
-static void msm_serial_hs_rx_work(struct work_struct *w)
-{
-	struct uart_port *uport;
-	struct msm_hs_port *msm_uport;
-	unsigned int flush;
-
-	msm_uport = container_of(w, struct msm_hs_port, rx.work);
-
-	flush = msm_uport->rx.flush;
-	if (flush == FLUSH_STOP) {
-		msm_uport->rx.flush = FLUSH_SHUTDOWN;
-		wake_up(&msm_uport->rx.wait);
-		return;
-	}
-	uport = &msm_uport->uport;
-	msm_hs_start_rx_locked(uport);
-}
-
-/* Enable the transmitter Interrupt */
-static void msm_hs_start_tx_locked(struct uart_port *uport )
-{
-	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
-
-	clk_enable(msm_uport->clk);
-
-	if (msm_uport->tx.tx_ready_int_en == 0) {
-		msm_uport->tx.tx_ready_int_en = 1;
-		msm_hs_submit_tx_locked(uport);
-	}
-
-	clk_disable(msm_uport->clk);
-}
-
-/*
- *  This routine is called when we are done with a DMA transfer
- *
- *  This routine is registered with Data mover when we set
- *  up a Data Mover transfer. It is called from Data mover ISR
- *  when the DMA transfer is done.
- */
-static void msm_hs_dmov_tx_callback(struct msm_dmov_cmd *cmd_ptr,
-					unsigned int result,
-					struct msm_dmov_errdata *err)
-{
-	struct msm_hs_port *msm_uport;
-
-	WARN_ON(result != 0x80000002);  /* DMA did not finish properly */
-	msm_uport = container_of(cmd_ptr, struct msm_hs_port, tx.xfer);
-
-	clk_enable(msm_uport->clk);
-
-	msm_uport->imr_reg |= UARTDM_ISR_TX_READY_BMSK;
-	msm_hs_write(&msm_uport->uport, UARTDM_IMR_ADDR, msm_uport->imr_reg);
-
-	clk_disable(msm_uport->clk);
-}
-
-/*
- * This routine is called when we are done with a DMA transfer or the
- * a flush has been sent to the data mover driver.
- *
- * This routine is registered with Data mover when we set up a Data Mover
- *  transfer. It is called from Data mover ISR when the DMA transfer is done.
- */
-static void msm_hs_dmov_rx_callback(struct msm_dmov_cmd *cmd_ptr,
-					unsigned int result,
-					struct msm_dmov_errdata *err)
+static void msm_serial_hs_rx_tlet(unsigned long tlet_ptr)
 {
 	int retval;
 	int rx_count;
 	unsigned long status;
+	unsigned long flags;
 	unsigned int error_f = 0;
-	unsigned int flush;
-	struct tty_struct *tty;
 	struct uart_port *uport;
 	struct msm_hs_port *msm_uport;
+	unsigned int flush;
+	struct tty_struct *tty;
 
-	msm_uport = container_of(cmd_ptr, struct msm_hs_port, rx.xfer);
+
+	msm_uport = container_of((struct tasklet_struct *)tlet_ptr,
+				struct msm_hs_port, rx.tlet);
 	uport = &msm_uport->uport;
-
-	clk_enable(msm_uport->clk);
-
 	tty = uport->info->port.tty;
 
-	msm_hs_write(uport, UARTDM_CR_ADDR, STALE_EVENT_DISABLE);
-
 	status = msm_hs_read(uport, UARTDM_SR_ADDR);
+
+	spin_lock_irqsave(&uport->lock, flags);
+
+	clk_enable(msm_uport->clk);
+	msm_hs_write(uport, UARTDM_CR_ADDR, STALE_EVENT_DISABLE);
 
 	/* overflow is not connect to data in a FIFO */
 	if (unlikely((status & UARTDM_SR_OVERRUN_BMSK) &&
@@ -687,10 +636,9 @@ static void msm_hs_dmov_rx_callback(struct msm_dmov_cmd *cmd_ptr,
 
 	if (error_f)
 		msm_hs_write(uport, UARTDM_CR_ADDR, RESET_ERROR_STATUS);
-
 	flush = msm_uport->rx.flush;
 	if (flush == FLUSH_IGNORE)
-		schedule_work(&msm_uport->rx.work);
+		msm_hs_start_rx_locked(uport);
 	if (flush == FLUSH_STOP) {
 		msm_uport->rx.flush = FLUSH_SHUTDOWN;
 		wake_up(&msm_uport->rx.wait);
@@ -706,16 +654,87 @@ static void msm_hs_dmov_rx_callback(struct msm_dmov_cmd *cmd_ptr,
 		BUG_ON(retval != rx_count);
 	}
 
-	schedule_work(&msm_uport->rx.work);
+	msm_hs_start_rx_locked(uport);
 
 out:
 	clk_disable(msm_uport->clk);
 	/* release wakelock in 500ms, not immediately, because higher layers
 	 * don't always take wakelocks when they should */
 	wake_lock_timeout(&msm_uport->rx.wake_lock, HZ / 2);
-
+	/* tty_flip_buffer_push() might call msm_hs_start(), so unlock */
+	spin_unlock_irqrestore(&uport->lock, flags);
 	if (flush < FLUSH_DATA_INVALID)
 		tty_flip_buffer_push(tty);
+}
+
+/* Enable the transmitter Interrupt */
+static void msm_hs_start_tx_locked(struct uart_port *uport )
+{
+	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
+
+	clk_enable(msm_uport->clk);
+
+	if (msm_uport->tx.tx_ready_int_en == 0) {
+		msm_uport->tx.tx_ready_int_en = 1;
+		if (msm_uport->tx.dma_in_flight == 0)
+			msm_hs_submit_tx_locked(uport);
+	}
+
+	clk_disable(msm_uport->clk);
+}
+
+/*
+ *  This routine is called when we are done with a DMA transfer
+ *
+ *  This routine is registered with Data mover when we set
+ *  up a Data Mover transfer. It is called from Data mover ISR
+ *  when the DMA transfer is done.
+ */
+static void msm_hs_dmov_tx_callback(struct msm_dmov_cmd *cmd_ptr,
+					unsigned int result,
+					struct msm_dmov_errdata *err)
+{
+	struct msm_hs_port *msm_uport;
+
+	WARN_ON(result != 0x80000002);  /* DMA did not finish properly */
+
+	msm_uport = container_of(cmd_ptr, struct msm_hs_port, tx.xfer);
+
+	tasklet_schedule(&msm_uport->tx.tlet);
+}
+
+static void msm_serial_hs_tx_tlet(unsigned long tlet_ptr)
+{
+	unsigned long flags;
+	struct msm_hs_port *msm_uport = container_of((struct tasklet_struct *)
+				tlet_ptr, struct msm_hs_port, tx.tlet);
+
+	spin_lock_irqsave(&(msm_uport->uport.lock), flags);
+	clk_enable(msm_uport->clk);
+
+	msm_uport->imr_reg |= UARTDM_ISR_TX_READY_BMSK;
+	msm_hs_write(&(msm_uport->uport), UARTDM_IMR_ADDR, msm_uport->imr_reg);
+
+	clk_disable(msm_uport->clk);
+	spin_unlock_irqrestore(&(msm_uport->uport.lock), flags);
+}
+
+/*
+ * This routine is called when we are done with a DMA transfer or the
+ * a flush has been sent to the data mover driver.
+ *
+ * This routine is registered with Data mover when we set up a Data Mover
+ *  transfer. It is called from Data mover ISR when the DMA transfer is done.
+ */
+static void msm_hs_dmov_rx_callback(struct msm_dmov_cmd *cmd_ptr,
+					unsigned int result,
+					struct msm_dmov_errdata *err)
+{
+	struct msm_hs_port *msm_uport;
+
+	msm_uport = container_of(cmd_ptr, struct msm_hs_port, rx.xfer);
+
+	tasklet_schedule(&msm_uport->rx.tlet);
 }
 
 /*
@@ -816,12 +835,10 @@ static void msm_hs_config_port(struct uart_port *uport, int cfg_flags)
 }
 
 /*  Handle CTS changes (Called from interrupt handler) */
-static void msm_hs_handle_delta_cts(struct uart_port *uport)
+static void msm_hs_handle_delta_cts_locked(struct uart_port *uport)
 {
-	unsigned long flags;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
-	spin_lock_irqsave(&uport->lock, flags);
 	clk_enable(msm_uport->clk);
 
 	/* clear interrupt */
@@ -829,7 +846,6 @@ static void msm_hs_handle_delta_cts(struct uart_port *uport)
 	uport->icount.cts++;
 
 	clk_disable(msm_uport->clk);
-	spin_unlock_irqrestore(&uport->lock, flags);
 
 	/* clear the IOCTL TIOCMIWAIT if called */
 	wake_up_interruptible(&uport->info->delta_msr_wait);
@@ -959,7 +975,7 @@ static irqreturn_t msm_hs_isr(int irq, void *dev)
 
 	/* Change in CTS interrupt */
 	if (isr_status & UARTDM_ISR_DELTA_CTS_BMSK)
-		msm_hs_handle_delta_cts(uport);
+		msm_hs_handle_delta_cts_locked(uport);
 
 	spin_unlock_irqrestore(&uport->lock, flags);
 
@@ -1074,7 +1090,7 @@ static int msm_hs_startup(struct uart_port *uport)
 				      DMA_TO_DEVICE);
 
 	/* turn on uart clk */
-	ret = msm_hs_init_clk_locked(uport);
+	ret = msm_hs_init_clk(uport);
 	if (unlikely(ret))
 		return ret;
 
@@ -1195,7 +1211,10 @@ static int uartdm_init_port(struct uart_port *uport)
 
 	init_waitqueue_head(&rx->wait);
 	wake_lock_init(&rx->wake_lock, WAKE_LOCK_SUSPEND, "msm_serial_hs_rx");
-	INIT_WORK(&rx->work, msm_serial_hs_rx_work);
+	tasklet_init(&rx->tlet, msm_serial_hs_rx_tlet,
+			(unsigned long) &rx->tlet);
+	tasklet_init(&tx->tlet, msm_serial_hs_tx_tlet,
+			(unsigned long) &tx->tlet);
 
 	rx->pool = dma_pool_create("rx_buffer_pool", uport->dev,
 				   UARTDM_RX_BUF_SIZE, 16, 0);
@@ -1271,8 +1290,14 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 
 		if (unlikely(msm_uport->wakeup.irq < 0))
 			return -ENXIO;
+#ifndef CONFIG_MACH_MOT /*added to fix bug which resolved
+			suspend problem of hci_qcom_init.
+			Remove conditional when BT starts using for wakeup.
+			However, same IO is used by bluesleep driver
+			JZ: leaving as is [disabled] since bluesleep takes care of it.*/
 		if (unlikely(set_irq_wake(msm_uport->wakeup.irq, 1)))
 			return -ENXIO;
+#endif
 	}
 
 	resource = platform_get_resource_byname(pdev, IORESOURCE_DMA,
@@ -1352,6 +1377,9 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
 	BUG_ON(msm_uport->rx.flush < FLUSH_STOP);
+	tasklet_kill(&msm_uport->tx.tlet);
+	tasklet_kill(&msm_uport->rx.tlet);
+	wait_event(msm_uport->rx.wait, msm_uport->rx.flush == FLUSH_SHUTDOWN);
 
 	spin_lock_irqsave(&uport->lock, flags);
 	clk_enable(msm_uport->clk);
@@ -1378,7 +1406,6 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	free_irq(uport->irq, msm_uport);
 	if (use_low_power_wakeup(msm_uport))
 		free_irq(msm_uport->wakeup.irq, msm_uport);
-	wait_event(msm_uport->rx.wait, msm_uport->rx.flush == FLUSH_SHUTDOWN);
 }
 
 static void __exit msm_serial_hs_exit(void)

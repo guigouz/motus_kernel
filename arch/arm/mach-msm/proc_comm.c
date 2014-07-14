@@ -63,6 +63,8 @@ int (*msm_check_for_modem_crash)(void);
  */
 static int proc_comm_wait_for(unsigned addr, unsigned value)
 {
+	int timeout_us=30 * 1000 * 1000;  /* 30seconds */
+
 	while (1) {
 		if (readl(addr) == value)
 			return 0;
@@ -72,6 +74,14 @@ static int proc_comm_wait_for(unsigned addr, unsigned value)
 				return -EAGAIN;
 
 		udelay(5);
+
+/* MOT - mtnf78 */
+		timeout_us -= 5;
+		if (timeout_us <= 0) {
+			printk(KERN_ERR "BUG: proc_comm_wait_for lockup [%x:%x]\n", addr, value);
+			BUG();
+		}
+/* MOT - mtnf78 */
 	}
 }
 
@@ -135,3 +145,10 @@ again:
 	return ret;
 }
 EXPORT_SYMBOL(msm_proc_comm);
+
+#if defined(CONFIG_MACH_MOT)
+int meta_proc(unsigned cmd, unsigned *data)
+{
+	return msm_proc_comm(PCOM_CUSTOMER_CMD3, &cmd, data);
+}
+#endif

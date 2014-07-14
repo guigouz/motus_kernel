@@ -49,6 +49,7 @@
 #define RPCROUTER_CTRL_CMD_REMOVE_CLIENT	6
 #define RPCROUTER_CTRL_CMD_RESUME_TX		7
 #define RPCROUTER_CTRL_CMD_EXIT			8
+#define RPCROUTER_CTRL_CMD_PING			9
 
 #define RPCROUTER_DEFAULT_RX_QUOTA	5
 
@@ -142,6 +143,8 @@ struct msm_rpc_reply {
 	struct list_head list;
 	uint32_t pid;
 	uint32_t cid;
+	uint32_t prog; /* be32 */
+	uint32_t vers; /* be32 */
 	uint32_t xid; /* be32 */
 };
 
@@ -182,7 +185,6 @@ struct msm_rpc_endpoint {
 	struct list_head reply_avail_q;
 	spinlock_t reply_q_lock;
 	uint32_t reply_cnt;
-	uint32_t next_pm;   /* Pacmark sequence */
 
 	/* device node if this endpoint is accessed via userspace */
 	dev_t dev;
@@ -202,6 +204,9 @@ int msm_rpcrouter_create_server_pdev(struct rr_server *server);
 
 int msm_rpcrouter_init_devices(void);
 void msm_rpcrouter_exit_devices(void);
+
+void get_requesting_client(struct msm_rpc_endpoint *ept, uint32_t xid,
+			   struct msm_rpc_client_info *clnt_info);
 
 extern dev_t msm_rpcrouter_devno;
 extern struct class *msm_rpcrouter_class;

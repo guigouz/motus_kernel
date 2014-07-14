@@ -20,6 +20,7 @@
 
 #include <linux/types.h>
 #include <linux/input.h>
+#include <linux/usb.h>
 
 /* platform device data structures */
 struct msm_acpu_clock_platform_data {
@@ -32,7 +33,7 @@ struct msm_acpu_clock_platform_data {
 	unsigned int max_vdd;
 	int (*acpu_set_vdd) (int mvolts);
 };
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 enum msm_camera_flash_t {
   MSM_CAMERA_FLASH_NONE,
   MSM_CAMERA_FLASH_LED
@@ -47,7 +48,21 @@ struct msm_camera_sensor_info {
 	enum msm_camera_flash_t flash_type;
 	int (*sensor_probe)(void *, void *);
 };
-
+#else
+#define MSM_CAMERA_FLASH_NONE 0
+#define MSM_CAMERA_FLASH_LED  1
+ struct msm_camera_sensor_info {
+	const char *sensor_name;
+	int sensor_reset;
+	int sensor_pwd;
+	int vcm_pwd;
+	int mclk;
+	int flash_type;
+	struct msm_camera_device_platform_data *pdata;
+	struct resource *resource;
+	uint8_t num_resources;
+};
+#endif
 struct msm_camera_io_ext {
 	uint32_t mdcphy;
 	uint32_t mdcsz;
@@ -55,11 +70,13 @@ struct msm_camera_io_ext {
 	uint32_t appsz;
 };
 
-struct msm_camera_device_platform_data{
+struct msm_camera_device_platform_data {
 	void (*camera_gpio_on) (void);
 	void (*camera_gpio_off)(void);
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	uint8_t snum;
 	struct msm_camera_sensor_info *sinfo;
+#endif
 	struct msm_camera_io_ext ioext;
 	void (*config_gpio_on) (void);
 	void (*config_gpio_off)(void);
@@ -138,6 +155,7 @@ struct tvenc_platform_data {
 struct mddi_platform_data {
 	void (*mddi_power_save)(int on);
 	int (*mddi_sel_clk)(u32 *clk_rate);
+	int (*mddi_power_on)(int);
 };
 
 struct msm_fb_platform_data {
@@ -147,11 +165,18 @@ struct msm_fb_platform_data {
 
 struct msm_i2c_platform_data {
 	int clk_freq;
+	uint32_t *rmutex;
+	int rsl_id;
+	uint32_t pm_lat;
+	int pri_clk;
+	int pri_dat;
+	int aux_clk;
+	int aux_dat;
 	void (*msm_i2c_config_gpio)(int iface, int config_type);
-};
-
-struct msm_serial_platform_data {
-	unsigned int *uart_csr_code;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+        int gpio_i2c_scl;
+        int gpio_i2c_sda;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 };
 
 /* common init routines for use by arch/arm/mach-msm/board-*.c */
@@ -166,12 +191,15 @@ void __init msm_clock_init(struct clk *clock_tbl, unsigned num_clocks);
 void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *);
 
 struct mmc_platform_data;
-int __init msm_add_sdcc(unsigned int controller,
-		struct mmc_platform_data *plat);
 
-struct msm_hsusb_platform_data;
+int __init msm_add_sdcc(unsigned int controller,
+			struct mmc_platform_data *plat,
+			unsigned int stat_irq,
+			unsigned long stat_irq_flags);
+
+struct msm_usb_host_platform_data;
 int __init msm_add_host(unsigned int host,
-		struct msm_hsusb_platform_data *plat);
+		struct msm_usb_host_platform_data *plat);
 #if defined(CONFIG_USB_FUNCTION_MSM_HSUSB) || defined(CONFIG_USB_MSM_72K)
 void msm_hsusb_set_vbus_state(int online);
 #else

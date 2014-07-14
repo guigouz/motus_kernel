@@ -75,9 +75,18 @@
 
 #include "mdp.h"
 #include "msm_fb.h"
+#include "mdp4.h"
+
+#ifdef CONFIG_FB_MSM_MDP40
+#define LCDC_BASE	0xC0000
+#else
+#define LCDC_BASE	0xE0000
+#endif
 
 extern spinlock_t mdp_spin_lock;
+#ifndef CONFIG_FB_MSM_MDP40
 extern uint32 mdp_intr_mask;
+#endif
 
 int first_pixel_start_x;
 int first_pixel_start_y;
@@ -133,7 +142,7 @@ int mdp_lcdc_on(struct platform_device *pdev)
 	fbi = mfd->fbi;
 	var = &fbi->var;
 
-	// MDP cmd block enable
+	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 
 	bpp = fbi->var.bits_per_pixel / 8;
@@ -177,22 +186,22 @@ int mdp_lcdc_on(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	// DMA register config
-	//
-	// starting address
+	/* DMA register config */
+
+	/* starting address */
 	MDP_OUTP(MDP_BASE + 0x90008, (uint32) buf);
-	// active window width and height
+	/* active window width and height */
 	MDP_OUTP(MDP_BASE + 0x90004, ((fbi->var.yres) << 16) | (fbi->var.xres));
-	// buffer ystride
-	MDP_OUTP(MDP_BASE + 0x9000c, fbi->var.xres * bpp);
-	// x/y coordinate = always 0 for lcdc
+	/* buffer ystride */
+	MDP_OUTP(MDP_BASE + 0x9000c, fbi->var.xres_virtual * bpp);
+	/* x/y coordinate = always 0 for lcdc */
 	MDP_OUTP(MDP_BASE + 0x90010, 0);
-	// dma config
+	/* dma config */
 	MDP_OUTP(MDP_BASE + 0x90000, dma2_cfg_reg);
 
-	////////////////////////////////////////////////
-	// LCDC timing setting
-	////////////////////////////////////////////////
+	/*
+	 * LCDC timing setting
+	 */
 	h_back_porch = var->left_margin;
 	h_front_porch = var->right_margin;
 	v_back_porch = var->upper_margin;
@@ -241,35 +250,41 @@ int mdp_lcdc_on(struct platform_device *pdev)
 		active_v_end = 0;
 	}
 
+
+#ifdef CONFIG_FB_MSM_MDP40
+	hsync_polarity = 1;
+	vsync_polarity = 1;
+	lcdc_underflow_clr |= 0x80000000;	/* enable recovery */
+#else
 	hsync_polarity = 0;
 	vsync_polarity = 0;
+#endif
 	data_en_polarity = 0;
 
 	ctrl_polarity =
-	    (hsync_polarity << 2) | (vsync_polarity << 1) | (hsync_polarity);
-	////////////////////////////////////////////////
-	MDP_OUTP(MDP_BASE + 0xE0004, hsync_ctrl);
-	MDP_OUTP(MDP_BASE + 0xE0008, vsync_period);
-	MDP_OUTP(MDP_BASE + 0xE000c, vsync_pulse_width * hsync_period);
-	MDP_OUTP(MDP_BASE + 0xE0010, display_hctl);
-	MDP_OUTP(MDP_BASE + 0xE0014, display_v_start);
-	MDP_OUTP(MDP_BASE + 0xE0018, display_v_end);
-	MDP_OUTP(MDP_BASE + 0xE0028, lcdc_border_clr);
-	MDP_OUTP(MDP_BASE + 0xE002c, lcdc_underflow_clr);
-	MDP_OUTP(MDP_BASE + 0xE0030, lcdc_hsync_skew);
-	MDP_OUTP(MDP_BASE + 0xE0038, ctrl_polarity);
-	MDP_OUTP(MDP_BASE + 0xE001c, active_hctl);
-	MDP_OUTP(MDP_BASE + 0xE0020, active_v_start);
-	MDP_OUTP(MDP_BASE + 0xE0024, active_v_end);
-	////////////////////////////////////////////////
+	    (data_en_polarity << 2) | (vsync_polarity << 1) | (hsync_polarity);
+
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x4, hsync_ctrl);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x8, vsync_period);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0xc, vsync_pulse_width * hsync_period);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x10, display_hctl);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x14, display_v_start);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x18, display_v_end);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x28, lcdc_border_clr);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x2c, lcdc_underflow_clr);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x30, lcdc_hsync_skew);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x38, ctrl_polarity);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x1c, active_hctl);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x20, active_v_start);
+	MDP_OUTP(MDP_BASE + LCDC_BASE + 0x24, active_v_end);
 
 	ret = panel_next_on(pdev);
 	if (ret == 0) {
-		// enable LCDC block
-		MDP_OUTP(MDP_BASE + 0xE0000, 1);
+		/* enable LCDC block */
+		MDP_OUTP(MDP_BASE + LCDC_BASE, 1);
 		mdp_pipe_ctrl(MDP_DMA2_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 	}
-	// MDP cmd block disable
+	/* MDP cmd block disable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
 	return ret;
@@ -279,16 +294,16 @@ int mdp_lcdc_off(struct platform_device *pdev)
 {
 	int ret = 0;
 
-	// MDP cmd block enable
+	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
-	MDP_OUTP(MDP_BASE + 0xE0000, 0);
-	// MDP cmd block disable
+	MDP_OUTP(MDP_BASE + LCDC_BASE, 0);
+	/* MDP cmd block disable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 	mdp_pipe_ctrl(MDP_DMA2_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
 	ret = panel_next_off(pdev);
 
-	// delay to make sure the last frame finishes
+	/* delay to make sure the last frame finishes */
 	mdelay(100);
 
 	return ret;
@@ -304,22 +319,29 @@ void mdp_lcdc_update(struct msm_fb_data_type *mfd)
 	if (!mfd->panel_power_on)
 		return;
 
-	// no need to power on cmd block since it's lcdc mode
+	/* no need to power on cmd block since it's lcdc mode */
 	bpp = fbi->var.bits_per_pixel / 8;
 	buf = (uint8 *) fbi->fix.smem_start;
 	buf +=
 	    (fbi->var.xoffset + fbi->var.yoffset * fbi->var.xres_virtual) * bpp;
-	// starting address
+	/* starting address */
 	MDP_OUTP(MDP_BASE + 0x90008, (uint32) buf);
 
-	// enable LCDC irq
+	/* enable LCDC irq */
 	spin_lock_irqsave(&mdp_spin_lock, flag);
+	mdp_enable_irq(MDP_DMA2_TERM);
 	INIT_COMPLETION(mfd->dma->comp);
 	mfd->dma->waiting = TRUE;
+#ifdef CONFIG_FB_MSM_MDP40
+	outp32(MDP_INTR_CLEAR, INTR_DMA_P_DONE);
+	mdp_intr_mask |= INTR_DMA_P_DONE;
+	outp32(MDP_INTR_ENABLE, mdp_intr_mask);
+#else
 	outp32(MDP_INTR_CLEAR, LCDC_FRAME_START);
 	mdp_intr_mask |= LCDC_FRAME_START;
 	outp32(MDP_INTR_ENABLE, mdp_intr_mask);
+#endif
 	spin_unlock_irqrestore(&mdp_spin_lock, flag);
-
 	wait_for_completion_killable(&mfd->dma->comp);
+	mdp_disable_irq(MDP_DMA2_TERM);
 }

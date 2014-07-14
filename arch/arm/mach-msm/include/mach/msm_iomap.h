@@ -78,7 +78,7 @@
 #if defined(CONFIG_ARCH_QSD8X50)
 #define MSM_GPIO1_PHYS        0xA9000000
 #elif defined(CONFIG_ARCH_MSM7X30)
-#define MSM_GPIO1_PHYS        0xABE00000
+#define MSM_GPIO1_PHYS        0xAC001000
 #else
 #define MSM_GPIO1_PHYS        0xA9200000
 #endif
@@ -87,7 +87,7 @@
 #define MSM_GPIO2_BASE        IOMEM(0xE0004000)
 
 #if defined(CONFIG_ARCH_MSM7X30)
-#define MSM_GPIO2_PHYS        0xABF00000
+#define MSM_GPIO2_PHYS        0xAC101000
 #elif defined(CONFIG_ARCH_QSD8X50)
 #define MSM_GPIO2_PHYS        0xA9100000
 #else
@@ -122,13 +122,17 @@
 #define MSM_SHARED_RAM_BASE   IOMEM(0xE0100000)
 #define MSM_SHARED_RAM_SIZE   SZ_1M
 
+#if defined(CONFIG_ARCH_MSM7X30)
+#define MSM_UART1_PHYS        0xACA00000
+#define MSM_UART2_PHYS        0xACB00000
+#define MSM_UART3_PHYS        0xACC00000
+#else
 #define MSM_UART1_PHYS        0xA9A00000
-#define MSM_UART1_SIZE        SZ_4K
-
 #define MSM_UART2_PHYS        0xA9B00000
-#define MSM_UART2_SIZE        SZ_4K
-
 #define MSM_UART3_PHYS        0xA9C00000
+#endif
+#define MSM_UART1_SIZE        SZ_4K
+#define MSM_UART2_SIZE        SZ_4K
 #define MSM_UART3_SIZE        SZ_4K
 
 #ifdef CONFIG_MSM_DEBUG_UART
@@ -143,23 +147,20 @@
 #define MSM_DEBUG_UART_SIZE   SZ_4K
 #endif
 
-#define MSM_I2C_PHYS          0xA9900000
-#define MSM_I2C_SIZE          SZ_4K
-
 #define MSM_MDC_BASE	      IOMEM(0xE0200000)
 #define MSM_MDC_PHYS	      0xAA500000
 #define MSM_MDC_SIZE	      SZ_1M
 
 #define MSM_AD5_BASE          IOMEM(0xE0300000)
+#if defined(CONFIG_ARCH_MSM7X30)
+#define MSM_AD5_PHYS          0xA7000000
+#else
 #define MSM_AD5_PHYS          0xAC000000
+#endif
 #define MSM_AD5_SIZE          (SZ_1M*13)
 
 #define MSM_SSBI_BASE         IOMEM(0xE1004000)
 #define MSM_SSBI_PHYS         0xA8100000
 #define MSM_SSBI_SIZE         SZ_4K
-
-#define MSM_TSSC_BASE         IOMEM(0xE1005000)
-#define MSM_TSSC_PHYS         0xAA300000
-#define MSM_TSSC_SIZE         SZ_4K
 
 #endif

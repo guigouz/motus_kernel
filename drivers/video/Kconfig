@@ -9,6 +9,8 @@ source "drivers/char/agp/Kconfig"
 
 source "drivers/gpu/drm/Kconfig"
 
+source "drivers/gpu/pvr/Kconfig"
+
 config VGASTATE
        tristate
        default n
@@ -2159,7 +2161,7 @@ config FB_MSM_MDP22
 	  Say Y here if this is msm7201 variant platform.
 
 config FB_MSM_MDP30
-	select FB_MSM_LCDC_HW
+	select FB_MSM_LCDC_HW if !KERNEL_MOTOROLA
 	bool "MDP HW ver3.0"
 	---help---
 	  Support for MSM MDP HW revision 3.0
@@ -2171,7 +2173,15 @@ config FB_MSM_MDP31
 	---help---
 	  Support for MSM MDP HW revision 3.1
 	  Say Y here if this is msm8x50 variant platform.
+
+config FB_MSM_MDP40
+	select FB_MSM_LCDC_HW
+	bool "MDP HW ver4.0"
+	---help---
+	  Support for MSM MDP HW revision 4.0
+	  Say Y here if this is msm7x30 variant platform.
 endchoice
+
 
 config FB_MSM_EBI2
 	bool
@@ -2223,6 +2233,11 @@ config FB_MSM_LCDC_GORDON_VGA
 	select FB_MSM_LCDC_PANEL
 	default n
 
+config FB_MSM_LCDC_TOSHIBA_WVGA_PT
+	bool
+	select FB_MSM_LCDC_PANEL
+	default n
+
 config FB_MSM_LCDC_WXGA
 	bool
 	select FB_MSM_LCDC_PANEL
@@ -2246,6 +2261,13 @@ config FB_MSM_LCDC_GORDON_VGA_PANEL
 	---help---
 	  Support for LCDC Gordon VGA (480x640) panel
 
+config FB_MSM_LCDC_TOSHIBA_WVGA_PT_PANEL
+	depends on FB_MSM_LCDC_HW
+	bool "LCDC Toshiba WVGA PT Panel"
+	select FB_MSM_LCDC_TOSHIBA_WVGA_PT
+	---help---
+	  Support for LCDC Toshiba WVGA PT (480x800) panel
+
 config FB_MSM_TRY_MDDI_CATCH_LCDC_PRISM
 	depends on FB_MSM_LCDC_HW
 	bool "MDDI Panel Auto Detect + LCDC Prism WVGA"
@@ -2253,6 +2275,7 @@ config FB_MSM_TRY_MDDI_CATCH_LCDC_PRISM
 	select FB_MSM_LCDC_PRISM_WVGA
 	select FB_MSM_LCDC_GORDON_VGA
 	select FB_MSM_LCDC_WXGA
+	select FB_MSM_LCDC_TOSHIBA_WVGA_PT
 	---help---
 	  Support for MDDI panel auto detect.
 	  If it can't find any MDDI panel, it will load LCDC Prism WVGA panel.
@@ -2307,8 +2330,7 @@ endchoice
 
 choice
 	prompt "Secondary LCD Panel"
-	depends on  FB_MSM_MDP31
-	default FB_MSM_SECONDARY_PANEL_NONE
+	depends on  ( FB_MSM_MDP31 || KERNEL_MOTOROLA )
 
 config FB_MSM_LCDC_EXTERNAL_WXGA
 	depends on FB_MSM_MDP31
@@ -2316,6 +2338,13 @@ config FB_MSM_LCDC_EXTERNAL_WXGA
 	select FB_MSM_LCDC_PANEL
 	---help---
 	  Support for external WXGA display (1280x720)
+
+config FB_MSM_SECONDARY_EBI2_SMART_QVGA
+	depends on KERNEL_MOTOROLA
+	bool "Secondary EBI2 Smart QVGA Panel"
+	select FB_MSM_EBI2
+	---help---
+	  Support for Secondary EBI2 Smart QVGA (240x320) panel
 
 config FB_MSM_SECONDARY_PANEL_NONE
 	bool "NONE"
@@ -2374,6 +2403,14 @@ config FB_MSM_TVOUT_NONE
 	  This will disable TV Out functionality.
 endchoice
 
+config FB_MSM_TVOUT_SVIDEO
+	bool "TVOut on S-video"
+	depends on FB_MSM_TVOUT
+	default n
+	---help---
+	  Selects whether the TVOut signal uses S-video.
+	  Choose n for composite output.
+
 choice
 	depends on  FB_MSM_MDP22
 	prompt "External MDDI"
@@ -2407,6 +2444,7 @@ config FB_MX3
          an LCD display with your i.MX31 system, say Y here.
 
 source "drivers/video/omap/Kconfig"
+source "drivers/video/omap2/Kconfig"
 
 source "drivers/video/backlight/Kconfig"
 source "drivers/video/display/Kconfig"

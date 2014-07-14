@@ -42,6 +42,7 @@ module_param_named(debug_mask, msm_timer_debug_mask, int, S_IRUGO | S_IWUSR | S_
 #define TIMER_MATCH_VAL         0x0004
 #define TIMER_COUNT_VAL         0x0008
 #define TIMER_ENABLE            0x000C
+#define TIMER_CLEAR             0x0010
 #define TIMER_ENABLE_EN		1
 
 #else
@@ -52,6 +53,7 @@ module_param_named(debug_mask, msm_timer_debug_mask, int, S_IRUGO | S_IWUSR | S_
 #define TIMER_MATCH_VAL         0x0000
 #define TIMER_COUNT_VAL         0x0004
 #define TIMER_ENABLE            0x0008
+#define TIMER_CLEAR             0x000C
 #define TIMER_ENABLE_EN		1
 
 #endif
@@ -623,6 +625,57 @@ int64_t msm_timer_get_smem_clock_time(int64_t *period)
 	tmp = tmp * NSEC_PER_SEC / SCLK_HZ;
 	return tmp;
 }
+
+static inline s64 cyc2ns_orig(struct clocksource *cs, cycle_t cycles)
+{
+	u64 ret = (u64)cycles;
+	ret = (ret * cs->mult_orig) >> cs->shift;
+	return ret;
+}
+
+unsigned long long sched_clock(void)
+{
+	static cycle_t saved_ticks;
+	static int saved_ticks_valid;
+	static unsigned long long base;
+	static unsigned long long last_result;
+
+	unsigned long irq_flags;
+	static cycle_t last_ticks;
+	cycle_t ticks;
+	static unsigned long long result;
+	struct clocksource *cs;
+	struct msm_clock *clock = msm_active_clock;
+
+	local_irq_save(irq_flags);
+	if (clock) {
+		cs = &clock->clocksource;
+
+		last_ticks = saved_ticks;
+		saved_ticks = ticks = cs->read();
+		if (!saved_ticks_valid) {
+			saved_ticks_valid = 1;
+			last_ticks = ticks;
+			base -= cyc2ns_orig(cs, ticks);
+		}
+		if (ticks < last_ticks) {
+			base += cyc2ns_orig(cs, cs->mask);
+			base += cyc2ns_orig(cs, 1);
+		}
+		last_result = result = cyc2ns_orig(cs, ticks) + base;
+	} else {
+		base = result = last_result;
+		saved_ticks_valid = 0;
+	}
+	local_irq_restore(irq_flags);
+	return result; 
+}
+
+#ifdef CONFIG_MSM7X00A_USE_GP_TIMER
+	#define DG_TIMER_RATING 100
+#else
+	#define DG_TIMER_RATING 300
+#endif
 
 unsigned long long sched_clock(void)
 {

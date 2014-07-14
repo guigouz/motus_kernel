@@ -72,6 +72,7 @@
 #include <linux/uaccess.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos_params.h>
 
 #include "msm_fb.h"
 
@@ -120,6 +121,9 @@ static int lcdc_off(struct platform_device *pdev)
 	if (lcdc_pdata && lcdc_pdata->lcdc_gpio_config)
 		ret = lcdc_pdata->lcdc_gpio_config(0);
 
+	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "lcdc",
+					PM_QOS_DEFAULT_VALUE);
+
 	return ret;
 }
 
@@ -127,7 +131,19 @@ static int lcdc_on(struct platform_device *pdev)
 {
 	int ret = 0;
 	struct msm_fb_data_type *mfd;
+	unsigned long panel_pixclock_freq , pm_qos_freq;
 
+	mfd = platform_get_drvdata(pdev);
+	panel_pixclock_freq = mfd->fbi->var.pixclock;
+
+	if (panel_pixclock_freq > 62000000)
+		/* pm_qos_freq should be in Khz */
+		pm_qos_freq = panel_pixclock_freq / 1000 ;
+	else
+		pm_qos_freq = 62000;
+
+	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "lcdc",
+						pm_qos_freq);
 	mfd = platform_get_drvdata(pdev);
 
 	clk_enable(mdp_lcdc_pclk_clk);
@@ -135,6 +151,7 @@ static int lcdc_on(struct platform_device *pdev)
 
 	if (lcdc_pdata && lcdc_pdata->lcdc_power_save)
 		lcdc_pdata->lcdc_power_save(1);
+
 	if (lcdc_pdata && lcdc_pdata->lcdc_gpio_config)
 		ret = lcdc_pdata->lcdc_gpio_config(1);
 
@@ -144,7 +161,6 @@ static int lcdc_on(struct platform_device *pdev)
 	mdp_lcdc_pad_pclk_clk_rate = clk_get_rate(mdp_lcdc_pad_pclk_clk);
 
 	ret = panel_next_on(pdev);
-
 	return ret;
 }
 
@@ -176,15 +192,15 @@ static int lcdc_probe(struct platform_device *pdev)
 	if (!mdp_dev)
 		return -ENOMEM;
 
-	/////////////////////////////////////////
-	// link to the latest pdev
-	/////////////////////////////////////////
+	/*
+	 * link to the latest pdev
+	 */
 	mfd->pdev = mdp_dev;
 	mfd->dest = DISPLAY_LCDC;
 
-	/////////////////////////////////////////
-	// alloc panel device data
-	/////////////////////////////////////////
+	/*
+	 * alloc panel device data
+	 */
 	if (platform_device_add_data
 	    (mdp_dev, pdev->dev.platform_data,
 	     sizeof(struct msm_fb_panel_data))) {
@@ -192,17 +208,17 @@ static int lcdc_probe(struct platform_device *pdev)
 		platform_device_put(mdp_dev);
 		return -ENOMEM;
 	}
-	/////////////////////////////////////////
-	// data chain
-	/////////////////////////////////////////
+	/*
+	 * data chain
+	 */
 	pdata = (struct msm_fb_panel_data *)mdp_dev->dev.platform_data;
 	pdata->on = lcdc_on;
 	pdata->off = lcdc_off;
 	pdata->next = pdev;
 
-	/////////////////////////////////////////
-	// get/set panel specific fb info
-	/////////////////////////////////////////
+	/*
+	 * get/set panel specific fb info
+	 */
 	mfd->panel_info = pdata->panel_info;
 	mfd->fb_imgType = MDP_RGB_565;
 
@@ -215,14 +231,14 @@ static int lcdc_probe(struct platform_device *pdev)
 	fbi->var.hsync_len = mfd->panel_info.lcdc.h_pulse_width;
 	fbi->var.vsync_len = mfd->panel_info.lcdc.v_pulse_width;
 
-	/////////////////////////////////////////
-	// set driver data
-	/////////////////////////////////////////
+	/*
+	 * set driver data
+	 */
 	platform_set_drvdata(mdp_dev, mfd);
 
-	/////////////////////////////////////////
-	// register in mdp driver
-	/////////////////////////////////////////
+	/*
+	 * register in mdp driver
+	 */
 	rc = platform_device_add(mdp_dev);
 	if (rc)
 		goto lcdc_probe_err;
@@ -237,6 +253,7 @@ lcdc_probe_err:
 
 static int lcdc_remove(struct platform_device *pdev)
 {
+	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ , "lcdc");
 	return 0;
 }
 
@@ -257,7 +274,8 @@ static int __init lcdc_driver_init(void)
 		printk(KERN_ERR "error: can't get mdp_lcdc_pad_pclk_clk!\n");
 		return IS_ERR(mdp_lcdc_pad_pclk_clk);
 	}
-
+	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ , "lcdc",
+				PM_QOS_DEFAULT_VALUE);
 	return lcdc_register_driver();
 }
 

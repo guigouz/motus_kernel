@@ -102,12 +102,20 @@ enum {
 enum {
 	SMSM_APPS,
 	SMSM_MODEM,
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 	SMSM_Q6,
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 	SMSM_NUM_HOSTS,
 };
 
+#if defined(CONFIG_MACH_CALGARY) || !defined(CONFIG_MACH_PANIC)
 #define SZ_DIAG_ERR_MSG 0xC8
 #define ID_DIAG_ERR_MSG SMEM_DIAG_ERR_MESSAGE
+#else
+#define SZ_DIAG_ERR_MSG 0x4000 /* 16 KB */
+#define SMEM_ID_VENDOR2 SMEM_MOT_PANIC_DMP
+#endif /* CONFIG_MOT_PANIC */
+
 #define ID_SMD_CHANNELS SMEM_SMD_BASE_ID
 #define ID_SHARED_STATE SMEM_SMSM_SHARED_STATE
 #define ID_CH_ALLOC_TBL SMEM_CHANNEL_ALLOC_TBL
@@ -153,6 +161,9 @@ void *smem_alloc(unsigned id, unsigned size);
 void *smem_get_entry(unsigned id, unsigned *size);
 int smsm_change_state(uint32_t smsm_entry,
 		      uint32_t clear_mask, uint32_t set_mask);
+int smsm_change_intr_mask(uint32_t smsm_entry,
+			  uint32_t clear_mask, uint32_t set_mask);
+int smsm_get_intr_mask(uint32_t smsm_entry, uint32_t *intr_mask);
 uint32_t smsm_get_state(uint32_t smsm_entry);
 void smsm_print_sleep_info(uint32_t sleep_delay, uint32_t sleep_limit,
 	uint32_t irq_mask, uint32_t wakeup_reason, uint32_t pending_irqs);
@@ -216,9 +227,20 @@ enum {
 	SMEM_VERSION_LAST = SMEM_VERSION_FIRST + 24,
 	SMEM_OSS_RRCASN1_BUF1,
 	SMEM_OSS_RRCASN1_BUF2,
+#if defined(CONFIG_KERNEL_MOTOROLA)
+        SMEM_MOT_HANDOVER,
+        SMEM_MOT_SBL_USB_OPS,
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	SMEM_ID_VENDOR0,
+#ifdef CONFIG_MACH_MOT
+	SMEM_BATTERY_INFO = SMEM_ID_VENDOR0,
+#endif /*CONFIG_MACH_MOT */
 	SMEM_ID_VENDOR1,
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	SMEM_ID_VENDOR2,
+#ifdef CONFIG_MOT_PANIC
+	SMEM_MOT_PANIC_DMP = SMEM_ID_VENDOR2,
+#endif /*CONFIG_MOT_PANIC */
 	SMEM_HW_SW_BUILD_ID,
 	SMEM_SMD_BLOCK_PORT_BASE_ID,
 	SMEM_SMD_BLOCK_PORT_PROC0_HEAP = SMEM_SMD_BLOCK_PORT_BASE_ID +
@@ -244,6 +266,9 @@ enum {
 	SMEM_SMEM_LOG_POWER_EVENTS,
 	SMEM_ERR_CRASH_LOG,
 	SMEM_ERR_F3_TRACE_LOG,
+	SMEM_SMD_BRIDGE_ALLOC_TABLE,
+	SMEM_SMDLITE_TABLE,
+	SMEM_SD_IMG_UPGRADE_STATUS,
 	SMEM_NUM_ITEMS,
 };
 

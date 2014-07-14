@@ -20,6 +20,7 @@
 #include <linux/list.h>
 
 #include "clock-pcom.h"
+#include "clock-7x30.h"
 
 #define CLKFLAG_INVERT			0x00000001
 #define CLKFLAG_NOINVERT		0x00000002
@@ -40,6 +41,7 @@ struct clk_ops {
 	int (*set_flags)(unsigned id, unsigned flags);
 	unsigned (*get_rate)(unsigned id);
 	unsigned (*is_enabled)(unsigned id);
+	long (*round_rate)(unsigned id, unsigned rate);
 };
 
 struct clk {
@@ -86,6 +88,7 @@ enum clkvote_client {
 int msm_clock_require_tcxo(unsigned long *reason, int nbits);
 int msm_clock_get_name(uint32_t id, char *name, uint32_t size);
 int ebi1_clk_set_min_rate(enum clkvote_client client, unsigned long rate);
+unsigned long clk_get_max_axi_khz(void);
 
 #endif
 

@@ -168,8 +168,14 @@ void msm_camio_clk_rate_set(int rate)
 int msm_camio_enable(struct platform_device *pdev)
 {
 	int rc = 0;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	struct msm_camera_device_platform_data *camdev =
 		pdev->dev.platform_data;
+#else
+	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
+        struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+#endif
+
 
 	camio_ext = camdev->ioext;
 
@@ -220,8 +226,14 @@ enable_fail:
 
 void msm_camio_disable(struct platform_device *pdev)
 {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	struct msm_camera_device_platform_data *camdev =
 		pdev->dev.platform_data;
+#else
+	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
+	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+#endif
+
 
 	iounmap(mdcbase);
 	release_mem_region(camio_ext.mdcphy, camio_ext.mdcsz);
@@ -254,22 +266,22 @@ void msm_camio_camif_pad_reg_reset(void)
 		0 << CAM_PCLK_INVERT_SHFT;
 
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	reg = (readl(mdcbase)) & CAMIF_CFG_RMSK;
 	mask = CAM_PAD_REG_SW_RESET_BMSK;
 	value = 1 << CAM_PAD_REG_SW_RESET_SHFT;
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	reg = (readl(mdcbase)) & CAMIF_CFG_RMSK;
 	mask = CAM_PAD_REG_SW_RESET_BMSK;
 	value = 0 << CAM_PAD_REG_SW_RESET_SHFT;
 	writel((reg & (~mask)) | (value & mask), mdcbase);
-	msleep(10);
+	mdelay(10);
 
 	msm_camio_clk_sel(MSM_CAMIO_CLK_SRC_EXTERNAL);
-	msleep(10);
+	mdelay(10);
 }
 
 void msm_camio_vfe_blk_reset(void)
@@ -341,8 +353,14 @@ void msm_camio_clk_sel(enum msm_camio_clk_src_type srctype)
 
 int msm_camio_probe_on(struct platform_device *pdev)
 {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	struct msm_camera_device_platform_data *camdev =
 		pdev->dev.platform_data;
+#else
+	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
+	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+#endif
+
 
 	camdev->camera_gpio_on();
 	return msm_camio_clk_enable(CAMIO_VFE_CLK);
@@ -350,8 +368,13 @@ int msm_camio_probe_on(struct platform_device *pdev)
 
 int msm_camio_probe_off(struct platform_device *pdev)
 {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	struct msm_camera_device_platform_data *camdev =
 		pdev->dev.platform_data;
+#else
+	struct msm_camera_sensor_info *sinfo = pdev->dev.platform_data;
+	struct msm_camera_device_platform_data *camdev = sinfo->pdata;
+#endif
 
 	camdev->camera_gpio_off();
 	return msm_camio_clk_disable(CAMIO_VFE_CLK);

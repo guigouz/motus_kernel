@@ -227,9 +227,17 @@ static inline void msm_irq_write_all_regs(void __iomem *base, unsigned int val)
 		writel(val, base + (i * 4));
 }
 
+unsigned int interrupt_ack_stats[65];
+EXPORT_SYMBOL(interrupt_ack_stats);
+
 static void msm_irq_ack(unsigned int irq)
 {
 	void __iomem *reg = VIC_INT_TO_REG_ADDR(VIC_INT_CLEAR0, irq);
+       {
+         if(irq >=0 && irq <= 63){interrupt_ack_stats[irq]++;}
+         else{interrupt_ack_stats[64]++;}
+         // printk("---------irq %x\n", irq);
+       }
 	irq = 1 << (irq & 31);
 	writel(irq, reg);
 }
@@ -396,12 +404,12 @@ int msm_irq_enter_sleep2(bool modem_wake, int from_idle)
 	pending[0] &= ~(1U << INT_A9_M2A_5);
 
 	for (i = 0; i < VIC_NUM_REGS; i++) {
-		if (pending[i])
-			if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP_ABORT) {
+		if (pending[i]) {
+			if (msm_irq_debug_mask & IRQ_DEBUG_SLEEP_ABORT)
 				DPRINT_ARRAY(pending, "%s abort",
 						       __func__);
-				return -EAGAIN;
-			}
+			return -EAGAIN;
+		}
 	}
 
 	msm_irq_write_all_regs(VIC_INT_EN0, 0);

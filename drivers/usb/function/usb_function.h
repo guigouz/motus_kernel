@@ -132,6 +132,9 @@ struct usb_function {
 
 	struct usb_descriptor_header **fs_descriptors;
 	struct usb_descriptor_header **hs_descriptors;
+
+	struct usb_request *ep0_out_req, *ep0_in_req;
+	struct usb_endpoint *ep0_out, *ep0_in;
 };
 
 int usb_function_register(struct usb_function *driver);
@@ -169,11 +172,14 @@ void usb_ept_free_req(struct usb_endpoint *ept, struct usb_request *req);
 int usb_ept_queue_xfer(struct usb_endpoint *ept, struct usb_request *req);
 int usb_ept_flush(struct usb_endpoint *ept);
 int usb_ept_get_max_packet(struct usb_endpoint *ept);
-int usb_ept_cancel_xfer(struct usb_request *req);
+int usb_ept_cancel_xfer(struct usb_endpoint *ept, struct usb_request *_req);
 void usb_ept_fifo_flush(struct usb_endpoint *ept);
 int usb_ept_set_halt(struct usb_endpoint *ept);
 int usb_ept_clear_halt(struct usb_endpoint *ept);
 struct device *usb_get_device(void);
+#if defined(CONFIG_KERNEL_MOTOROLA)
+unsigned int short usb_get_composition(void);
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 struct usb_endpoint *usb_ept_find(struct usb_endpoint **ept, int type);
 struct usb_function *usb_ept_get_function(struct usb_endpoint *ept);
 int usb_ept_is_stalled(struct usb_endpoint *ept);

@@ -123,8 +123,8 @@ static int mddi_off(struct platform_device *pdev)
 
 	ret = panel_next_off(pdev);
 
-	if (machine_is_msm7201a_ffa())
-		gpio_direction_output(88, 0);
+	if (mddi_pdata && mddi_pdata->mddi_power_save)
+		mddi_pdata->mddi_power_save(0);
 
 	return ret;
 }
@@ -137,8 +137,8 @@ static int mddi_on(struct platform_device *pdev)
 
 	mfd = platform_get_drvdata(pdev);
 
-	if (machine_is_msm7201a_ffa())
-		gpio_direction_output(88, 1);
+	if (mddi_pdata && mddi_pdata->mddi_power_save)
+		mddi_pdata->mddi_power_save(1);
 
 	clk_rate = mfd->fbi->var.pixclock;
 	clk_rate = min(clk_rate, mfd->panel_info.clk_max);
@@ -176,11 +176,19 @@ static int mddi_probe(struct platform_device *pdev)
 		size =  resource_size(&pdev->resource[0]);
 		msm_pmdh_base =  ioremap(pdev->resource[0].start, size);
 
-		MSM_FB_INFO("primary mddi base address = 0x%x\n",
-				pdev->resource[0].start);
+		MSM_FB_INFO("primary mddi base phy_addr = 0x%x virt = 0x%x\n",
+				pdev->resource[0].start, (int) msm_pmdh_base);
 
 		if (unlikely(!msm_pmdh_base))
 			return -ENOMEM;
+
+		if (mddi_pdata && mddi_pdata->mddi_power_on) {
+			rc = mddi_pdata->mddi_power_on(1);
+			if (rc) {
+				pr_err("%s: can't power on mddi\n", __func__);
+				return rc;
+			}
+		}
 
 		mddi_resource_initialized = 1;
 		return 0;
@@ -204,15 +212,15 @@ static int mddi_probe(struct platform_device *pdev)
 	if (!mdp_dev)
 		return -ENOMEM;
 
-	/////////////////////////////////////////
-	// link to the latest pdev
-	/////////////////////////////////////////
+	/*
+	 * link to the latest pdev
+	 */
 	mfd->pdev = mdp_dev;
 	mfd->dest = DISPLAY_LCD;
 
-	/////////////////////////////////////////
-	// alloc panel device data
-	/////////////////////////////////////////
+	/*
+	 * alloc panel device data
+	 */
 	if (platform_device_add_data
 	    (mdp_dev, pdev->dev.platform_data,
 	     sizeof(struct msm_fb_panel_data))) {
@@ -220,17 +228,17 @@ static int mddi_probe(struct platform_device *pdev)
 		platform_device_put(mdp_dev);
 		return -ENOMEM;
 	}
-	/////////////////////////////////////////
-	// data chain
-	/////////////////////////////////////////
+	/*
+	 * data chain
+	 */
 	pdata = mdp_dev->dev.platform_data;
 	pdata->on = mddi_on;
 	pdata->off = mddi_off;
 	pdata->next = pdev;
 
-	/////////////////////////////////////////
-	// get/set panel specific fb info
-	/////////////////////////////////////////
+	/*
+	 * get/set panel specific fb info
+	 */
 	mfd->panel_info = pdata->panel_info;
 	mfd->fb_imgType = MDP_RGB_565;
 
@@ -246,14 +254,14 @@ static int mddi_probe(struct platform_device *pdev)
 		printk(KERN_ERR "%s: clk_set_max_rate failed\n", __func__);
 	mfd->panel_info.clk_rate = mfd->panel_info.clk_min;
 
-	/////////////////////////////////////////
-	// set driver data
-	/////////////////////////////////////////
+	/*
+	 * set driver data
+	 */
 	platform_set_drvdata(mdp_dev, mfd);
 
-	/////////////////////////////////////////
-	// register in mdp driver
-	/////////////////////////////////////////
+	/*
+	 * register in mdp driver
+	 */
 	rc = platform_device_add(mdp_dev);
 	if (rc)
 		goto mddi_probe_err;
@@ -287,6 +295,9 @@ void mddi_disable(int lock)
 
 	if (lock)
 		mddi_power_locked = 1;
+
+	if (mddi_host_timer.function)
+		del_timer_sync(&mddi_host_timer);
 
 	mddi_pad_ctrl = mddi_host_reg_in(PAD_CTL);
 	mddi_host_reg_out(PAD_CTL, 0x0);
@@ -323,12 +334,12 @@ static int mddi_resume(struct platform_device *pdev)
 	if (mddi_power_locked)
 		return 0;
 
-	if (mddi_pdata && mddi_pdata->mddi_power_save)
-		mddi_pdata->mddi_power_save(1);
-
 	enable_irq(INT_MDDI_PRI);
 	clk_enable(mddi_clk);
 	mddi_host_reg_out(PAD_CTL, mddi_pad_ctrl);
+
+	if (mddi_host_timer.function)
+		mddi_host_timer_service(0);
 
 	return 0;
 }
@@ -351,8 +362,6 @@ static void mddi_early_resume(struct early_suspend *h)
 	mddi_resume(mfd->pdev);
 }
 #endif
-
-extern struct timer_list mddi_host_timer;
 
 static int mddi_remove(struct platform_device *pdev)
 {
@@ -387,6 +396,7 @@ static int __init mddi_driver_init(void)
 		printk(KERN_ERR "mddi_register_driver() failed!\n");
 		return ret;
 	}
+
 	mddi_init();
 
 	return ret;

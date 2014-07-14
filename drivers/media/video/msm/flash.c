@@ -59,22 +59,68 @@
 #include <mach/pmic.h>
 #include <mach/camera.h>
 
-int32_t flash_set_led_state(enum msm_camera_led_state_t led_state)
+#if CONFIG_MACH_MOT
+// MOTOROLA : Camera LED Class driver interfaces
+extern int cam_led_burst(void);
+extern int cam_led_torch(void);
+extern int cam_led_timed_torch(unsigned msec);
+extern int cam_led_off(void);
+
+// Used to eliminate LED "off" gap between torch & burst
+static int extend_torch = 0; 
+#endif
+
+int32_t msm_camera_flash_set_led_state(unsigned led_state)
 {
 	int32_t rc;
 
   CDBG("flash_set_led_state: %d\n", led_state);
   switch (led_state) {
+#ifdef CONFIG_MACH_MOT
   case MSM_LED_OFF:
-    rc = pmic_flash_led_set_current(0);
+    // MOTOROLA : Disable current sources via Camera LED class driver
+    if (extend_torch) {
+        // Now extend the torch interval (by 500 msec).
+        rc = cam_led_timed_torch(500);
+
+        // Clear the flag to avoid re-extending (until the next torch)
+        extend_torch = 0;
+    } else {
+        // In this case, we really want the LED off
+    rc = cam_led_off();
+    }
+#else
+  case MSM_CAMERA_LED_OFF:
+    rc = flash_led_set_current(0);
+#endif
     break;
 
+#if CONFIG_MACH_MOT
   case MSM_LED_LOW:
-    rc = pmic_flash_led_set_current(30);
+    // MOTOROLA : Enable low current source via Camera LED class driver 
+    rc = cam_led_torch();
+
+    // Set the flag indicating torch mode should be extended when the 
+    // ISP tells us to turn it off.  (We must eliminate the ~500 msec
+    // LED "off" interval between torch & burst modes.)
+    extend_torch = 1;
+#else
+  case MSM_CAMERA_LED_LOW:
+    rc = flash_led_set_current(30);
+#endif
     break;
 
+#if CONFIG_MACH_MOT
   case MSM_LED_HIGH:
-    rc = pmic_flash_led_set_current(100);
+    // MOTOROLA : Enable high current source via Camera LED class driver 
+    rc = cam_led_burst();
+
+    // Clear the flag to ensure that we don't extend the burst mode.
+    extend_torch = 0;
+#else
+  case MSM_CAMERA_LED_HIGH:
+    rc = flash_led_set_current(100);
+#endif
     break;
 
   default:

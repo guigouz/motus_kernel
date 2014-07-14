@@ -25,6 +25,7 @@
  * along with this program; if not, you can find it at http://www.fsf.org
  */
 
+#include <mach/debug_audio_mm.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -36,6 +37,9 @@
 #include <linux/delay.h>
 #include <linux/list.h>
 #include <linux/earlysuspend.h>
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#include <linux/android_pmem.h>
+#endif
 #include <asm/atomic.h>
 #include <asm/ioctls.h>
 #include <mach/msm_adsp.h>
@@ -47,16 +51,24 @@
 #include <mach/qdsp5/qdsp5audplaycmdi.h>
 #include <mach/qdsp5/qdsp5audplaymsg.h>
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#define BUFSZ 1024 /* Hold minimum 700ms voice data and 14 bytes of meta in*/
+#endif
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 /* for queue ids - should be relative to module number*/
 #include "adsp.h"
-
-#define BUFSZ 1024 /* Hold minimum 700ms voice data and 14 bytes of meta in*/
+#define BUFSZ 1024 /* Hold minimum 700ms voice data */
+#endif
 #define DMASZ (BUFSZ * 2)
 
 #define AUDPLAY_INVALID_READ_PTR_OFFSET	0xFFFF
 #define AUDDEC_DEC_AMRNB 10
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+#define PCM_BUFSZ_MIN 1600 /* 100ms worth of data and 24 bytes of meta out*/
+#else
 #define PCM_BUFSZ_MIN 1624 /* 100ms worth of data and 24 bytes of meta out*/
+#endif
 #define AMRNB_DECODED_FRSZ 320 /* AMR-NB 20ms 8KHz mono PCM size */
 #define PCM_BUF_MAX_COUNT 5	/* DSP only accepts 5 buffers at most
 				   but support 2 buffers currently */
@@ -68,6 +80,7 @@
 #define  AUDPP_DEC_STATUS_CFG   2
 #define  AUDPP_DEC_STATUS_PLAY  3
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 #define AUDAMRNB_METAFIELD_MASK 0xFFFF0000
 #define AUDAMRNB_EOS_FLG_OFFSET 0x0A /* Offset from beginning of buffer */
 #define AUDAMRNB_EOS_FLG_MASK 0x01
@@ -75,13 +88,18 @@
 #define AUDAMRNB_EOS_SET 0x1 /* EOS set in meta field */
 
 #define AUDAMRNB_EVENT_NUM 10 /* Default number of pre-allocated event pkts */
+#endif
 
 struct buffer {
 	void *data;
 	unsigned size;
 	unsigned used;		/* Input usage actual DSP produced PCM size  */
 	unsigned addr;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	unsigned short mfield_sz; /*only useful for data has meta field */
+#else
+	int      eos; /* non-tunnel EOS purpose */
+#endif
 };
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
@@ -117,7 +135,11 @@ struct audio {
 	struct mutex read_lock;
 	wait_queue_head_t read_wait;	/* Wait queue for read */
 	char *read_data;	/* pointer to reader buffer */
-	dma_addr_t read_phys;	/* physical address of reader buffer */
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	int32_t read_phys;	/* physical address of reader buffer */
+#else
+	dma_addr_t read_phys;   /* physical address of reader buffer */
+#endif
 	uint8_t read_next;	/* index to input buffers to be read next */
 	uint8_t fill_next;	/* index to buffer that DSP should be filling */
 	uint8_t pcm_buf_count;	/* number of pcm buffer allocated */
@@ -129,9 +151,13 @@ struct audio {
 
 	/* data allocated for various buffers */
 	char *data;
-	dma_addr_t phys;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	int32_t phys; /* physical address of write buffer */
 
 	int mfield; /* meta field embedded in data */
+#else
+	dma_addr_t phys;
+#endif
 	int rflush; /* Read  flush */
 	int wflush; /* Write flush */
 	uint8_t opened:1;
@@ -141,6 +167,14 @@ struct audio {
 	uint8_t pcm_feedback:1;
 	uint8_t buf_refresh:1;
 	int teos; /* valid only if tunnel mode & no data left for decoder */
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	enum msm_aud_decoder_state dec_state;	/* Represents decoder state */
+
+	const char *module_name;
+	unsigned queue_id;
+#else
+	unsigned volume;
+#endif
 
 	uint16_t dec_id;
 	uint32_t read_ptr_offset;
@@ -149,17 +183,26 @@ struct audio {
 	struct audamrnb_suspend_ctl suspend_ctl;
 #endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *dentry;
+#endif
+
+	wait_queue_head_t wait;
 	struct list_head free_event_queue;
+#endif
 	struct list_head event_queue;
 	wait_queue_head_t event_wait;
 	spinlock_t event_queue_lock;
 	struct mutex get_event_lock;
 	int event_abort;
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	int eq_enable;
 	int eq_needs_commit;
 	audpp_cmd_cfg_object_params_eqalizer eq;
 	audpp_cmd_cfg_object_params_volume vol_pan;
+#endif
 };
 
 struct audpp_cmd_cfg_adec_params_amrnb {
@@ -182,9 +225,7 @@ static int audamrnb_enable(struct audio *audio)
 {
 	struct audmgr_config cfg;
 	int rc;
-
-	pr_debug("audamrnb_enable()\n");
-
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	if (audio->enabled)
 		return 0;
 
@@ -202,13 +243,13 @@ static int audamrnb_enable(struct audio *audio)
 		return rc;
 
 	if (msm_adsp_enable(audio->audplay)) {
-		pr_err("audio: msm_adsp_enable(audplay) failed\n");
+		MM_ERR("msm_adsp_enable(audplay) failed\n");
 		audmgr_disable(&audio->audmgr);
 		return -ENODEV;
 	}
 
 	if (audpp_enable(audio->dec_id, audamrnb_dsp_event, audio)) {
-		pr_err("audio: audpp_enable() failed\n");
+		MM_ERR("audpp_enable() failed\n");
 		msm_adsp_disable(audio->audplay);
 		audmgr_disable(&audio->audmgr);
 		return -ENODEV;
@@ -220,7 +261,7 @@ static int audamrnb_enable(struct audio *audio)
 /* must be called with audio->lock held */
 static int audamrnb_disable(struct audio *audio)
 {
-	pr_debug("audamrnb_disable()\n");
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	if (audio->enabled) {
 		audio->enabled = 0;
 		auddec_dsp_config(audio, 0);
@@ -248,26 +289,35 @@ static void audamrnb_update_pcm_buf_entry(struct audio *audio,
 	for (index = 0; index < payload[1]; index++) {
 		if (audio->in[audio->fill_next].addr ==
 		    payload[2 + index * 2]) {
-			pr_debug("audamrnb_update_pcm_buf_entry: \
-				in[%d] ready\n", audio->fill_next);
+			MM_DBG("in[%d] ready\n", audio->fill_next);
 			audio->in[audio->fill_next].used =
 			    payload[3 + index * 2];
+
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			if (audio->in[audio->fill_next].used == 0) {
+				pr_debug("%s: EOS signaled\n", __func__);
+				audio->in[audio->fill_next].eos = 1;
+			}
+#endif
 			if ((++audio->fill_next) == audio->pcm_buf_count)
 				audio->fill_next = 0;
 
 		} else {
-			pr_err
-			  ("audamrnb_update_pcm_buf_entry: expected=%x ret=%x\n"
-			   , audio->in[audio->fill_next].addr,
-			   payload[1 + index * 2]);
+			MM_ERR("expected=%x ret=%x\n",
+				audio->in[audio->fill_next].addr,
+				payload[1 + index * 2]);
 			break;
 		}
 	}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	if (audio->in[audio->fill_next].used == 0) {
+#else
+	if (audio->in[audio->fill_next].used == 0 &&
+		!audio->in[audio->fill_next].eos) {
+#endif
 		audamrnb_buffer_refresh(audio);
 	} else {
-		pr_debug("audamrnb_update_pcm_buf_entry: \
-				read cannot keep up\n");
+		MM_DBG("read cannot keep up\n");
 		audio->buf_refresh = 1;
 	}
 	wake_up(&audio->read_wait);
@@ -280,9 +330,7 @@ static void audplay_dsp_event(void *data, unsigned id, size_t len,
 	struct audio *audio = data;
 	uint32_t msg[28];
 	getevent(msg, sizeof(msg));
-
-	pr_debug("audplay_dsp_event: msg_id=%x\n", id);
-
+	MM_DBG("msg_id=%x\n", id);
 	switch (id) {
 	case AUDPLAY_MSG_DEC_NEEDS_DATA:
 		audamrnb_send_data(audio, 1);
@@ -292,8 +340,13 @@ static void audplay_dsp_event(void *data, unsigned id, size_t len,
 		audamrnb_update_pcm_buf_entry(audio, msg);
 		break;
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	case ADSP_MESSAGE_ID:
+		MM_DBG("Received ADSP event: module enable(audplaytask)\n");
+		break;
+#endif
 	default:
-		pr_debug("unexpected message from decoder \n");
+		MM_ERR("unexpected message from decoder\n");
 	}
 }
 
@@ -307,54 +360,86 @@ static void audamrnb_dsp_event(void *private, unsigned id, uint16_t *msg)
 
 			switch (status) {
 			case AUDPP_DEC_STATUS_SLEEP:
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+						{
+				uint16_t reason = msg[2];
+				MM_DBG("decoder status:sleep reason = \
+						0x%04x\n", reason);
+				if ((reason == AUDPP_MSG_REASON_MEM)
+					|| (reason ==
+					AUDPP_MSG_REASON_NODECODER)) {
+					audio->dec_state =
+						MSM_AUD_DECODER_STATE_FAILURE;
+					wake_up(&audio->wait);
+				}
+			}
+#else
 				pr_debug("decoder status: sleep \n");
+#endif
 				break;
 
 			case AUDPP_DEC_STATUS_INIT:
-				pr_debug("decoder status: init \n");
+				MM_DBG("decoder status: init \n");
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+				if (audio->pcm_feedback)
+					audpp_cmd_cfg_routing_mode(audio);
+				else
+					audpp_cmd_cfg_adec_params(audio);
+#else
 				audpp_cmd_cfg_routing_mode(audio);
+#endif
 				break;
 
 			case AUDPP_DEC_STATUS_CFG:
-				pr_debug("decoder status: cfg \n");
+				MM_DBG("decoder status: cfg \n");
 				break;
 			case AUDPP_DEC_STATUS_PLAY:
-				pr_debug("decoder status: play \n");
+				MM_DBG("decoder status: play \n");
 				if (audio->pcm_feedback) {
 					audamrnb_config_hostpcm(audio);
 					audamrnb_buffer_refresh(audio);
 				}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+				audio->dec_state =
+					MSM_AUD_DECODER_STATE_SUCCESS;
+				wake_up(&audio->wait);
+#endif
 				break;
 			default:
-				pr_debug("unknown decoder status \n");
+				MM_ERR("unknown decoder status \n");
 				break;
 			}
 			break;
 		}
 	case AUDPP_MSG_CFG_MSG:
 		if (msg[0] == AUDPP_MSG_ENA_ENA) {
-			pr_debug("audamrnb_dsp_event: CFG_MSG ENABLE\n");
+			MM_DBG("CFG_MSG ENABLE\n");
 			auddec_dsp_config(audio, 1);
 			audio->out_needed = 0;
 			audio->running = 1;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 			audpp_dsp_set_vol_pan(audio->dec_id, &audio->vol_pan);
 			audpp_dsp_set_eq(audio->dec_id,	audio->eq_enable,
 								&audio->eq);
+#else
+			audpp_set_volume_and_pan(audio->dec_id, audio->volume,
+							0);
+#endif
 			audpp_avsync(audio->dec_id, 22050);
 		} else if (msg[0] == AUDPP_MSG_ENA_DIS) {
-			pr_debug("audamrnb_dsp_event: CFG_MSG DISABLE\n");
+			MM_DBG("CFG_MSG DISABLE\n");
 			audpp_avsync(audio->dec_id, 0);
 			audio->running = 0;
 		} else {
-			pr_debug("audamrnb_dsp_event: CFG_MSG %d?\n", msg[0]);
+			MM_DBG("CFG_MSG %d?\n", msg[0]);
 		}
 		break;
 	case AUDPP_MSG_ROUTING_ACK:
-		pr_debug("audamrnb_dsp_event: ROUTING_ACK mode=%d\n", msg[1]);
+		MM_DBG("ROUTING_ACK mode=%d\n", msg[1]);
 		audpp_cmd_cfg_adec_params(audio);
 		break;
 	case AUDPP_MSG_FLUSH_ACK:
-		pr_debug("%s: FLUSH_ACK\n", __func__);
+		MM_DBG("FLUSH_ACK\n");
 		audio->wflush = 0;
 		audio->rflush = 0;
 		wake_up(&audio->write_wait);
@@ -362,12 +447,12 @@ static void audamrnb_dsp_event(void *private, unsigned id, uint16_t *msg)
 			audamrnb_buffer_refresh(audio);
 		break;
 	case AUDPP_MSG_PCMDMAMISSED:
-		pr_debug("%s: PCMDMAMISSED\n", __func__);
+		MM_DBG("PCMDMAMISSED\n");
 		audio->teos = 1;
 		wake_up(&audio->write_wait);
 		break;
 	default:
-		pr_debug("audamrnb_dsp_event: UNKNOWN (%d)\n", id);
+		MM_ERR("UNKNOWN (%d)\n", id);
 	}
 
 }
@@ -376,23 +461,47 @@ struct msm_adsp_ops audplay_adsp_ops_amrnb = {
 	.event = audplay_dsp_event,
 };
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 #define audplay_send_queue0(audio, cmd, len) \
-	msm_adsp_write(audio->audplay, QDSP_uPAudPlay0BitStreamCtrlQueue, \
-		       cmd, len)
+	msm_adsp_write(audio->audplay, audio->queue_id, cmd, len)
+#else
+#define audplay_send_queue0(audio, cmd, len) \
+	msm_adsp_write(audio->audplay, QDSP_uPAudPlay0BitStreamCtrlQueue, cmd,\
+				 len)
+#endif
 
 static int auddec_dsp_config(struct audio *audio, int enable)
 {
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	u16 cfg_dec_cmd[AUDPP_CMD_CFG_DEC_TYPE_LEN / sizeof(unsigned short)];
+	memset(cfg_dec_cmd, 0, sizeof(cfg_dec_cmd));
+	cfg_dec_cmd[0] = AUDPP_CMD_CFG_DEC_TYPE;
+#else
 	audpp_cmd_cfg_dec_type cmd;
-
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.cmd_id = AUDPP_CMD_CFG_DEC_TYPE;
+#endif
 	if (enable)
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+		cfg_dec_cmd[1 + audio->dec_id] = AUDPP_CMD_UPDATDE_CFG_DEC |
+			AUDPP_CMD_ENA_DEC_V | AUDDEC_DEC_AMRNB;
+#else
 		cmd.dec0_cfg = AUDPP_CMD_UPDATDE_CFG_DEC |
-		    AUDPP_CMD_ENA_DEC_V | AUDDEC_DEC_AMRNB;
+		AUDPP_CMD_ENA_DEC_V | AUDDEC_DEC_AMRNB;
+#endif
 	else
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+		cfg_dec_cmd[1 + audio->dec_id] = AUDPP_CMD_UPDATDE_CFG_DEC |
+			AUDPP_CMD_DIS_DEC_V;
+#else
 		cmd.dec0_cfg = AUDPP_CMD_UPDATDE_CFG_DEC | AUDPP_CMD_DIS_DEC_V;
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	return audpp_send_queue1(&cfg_dec_cmd, sizeof(cfg_dec_cmd));
+#else
 	return audpp_send_queue1(&cmd, sizeof(cmd));
+#endif
 }
 
 static void audpp_cmd_cfg_adec_params(struct audio *audio)
@@ -412,7 +521,7 @@ static void audpp_cmd_cfg_adec_params(struct audio *audio)
 static void audpp_cmd_cfg_routing_mode(struct audio *audio)
 {
 	struct audpp_cmd_routing_mode cmd;
-	pr_debug("audpp_cmd_cfg_routing_mode()\n");
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.cmd_id = AUDPP_CMD_ROUTING_MODE;
 	cmd.object_number = audio->dec_id;
@@ -427,6 +536,7 @@ static void audpp_cmd_cfg_routing_mode(struct audio *audio)
 static int audplay_dsp_send_data_avail(struct audio *audio,
 				       unsigned idx, unsigned len)
 {
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	struct audplay_cmd_bitstream_data_avail_nt2 cmd;
 
 	cmd.cmd_id = AUDPLAY_CMD_BITSTREAM_DATA_AVAIL_NT2;
@@ -435,6 +545,11 @@ static int audplay_dsp_send_data_avail(struct audio *audio,
 			(audio->out[idx].mfield_sz >> 1);
 	else
 		cmd.decoder_id = audio->dec_id;
+#else
+	audplay_cmd_bitstream_data_avail cmd;
+	cmd.cmd_id = AUDPLAY_CMD_BITSTREAM_DATA_AVAIL;
+	cmd.decoder_id = audio->dec_id;
+#endif
 	cmd.buf_ptr = audio->out[idx].addr;
 	cmd.buf_size = len / 2;
 	cmd.partition_number = 0;
@@ -449,11 +564,15 @@ static void audamrnb_buffer_refresh(struct audio *audio)
 	refresh_cmd.num_buffers = 1;
 	refresh_cmd.buf0_address = audio->in[audio->fill_next].addr;
 	refresh_cmd.buf0_length = audio->in[audio->fill_next].size -
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	  (audio->in[audio->fill_next].size % AMRNB_DECODED_FRSZ) +
 	  (audio->mfield ? 24 : 0);
+#else
+	(audio->in[audio->fill_next].size % AMRNB_DECODED_FRSZ);
+#endif
 	refresh_cmd.buf_read_count = 0;
-	pr_debug("audplay_buffer_fresh: buf0_addr=%x buf0_len=%d\n",
-		refresh_cmd.buf0_address, refresh_cmd.buf0_length);
+	MM_DBG("buf0_addr=%x buf0_len=%d\n", refresh_cmd.buf0_address,
+			refresh_cmd.buf0_length);
 	(void)audplay_send_queue0(audio, &refresh_cmd, sizeof(refresh_cmd));
 }
 
@@ -461,7 +580,7 @@ static void audamrnb_config_hostpcm(struct audio *audio)
 {
 	struct audplay_cmd_hpcm_buf_cfg cfg_cmd;
 
-	pr_debug("audamrnb_config_hostpcm()\n");
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	cfg_cmd.cmd_id = AUDPLAY_CMD_HPCM_BUF_CFG;
 	cfg_cmd.max_buffers = audio->pcm_buf_count;
 	cfg_cmd.byte_swap = 0;
@@ -508,7 +627,7 @@ static void audamrnb_send_data(struct audio *audio, unsigned needed)
 		frame = audio->out + audio->out_tail;
 		if (frame->used) {
 			BUG_ON(frame->used == 0xffffffff);
-/*                      printk("frame %d busy\n", audio->out_tail); */
+			MM_DBG("frame %d busy\n", audio->out_tail);
 			audplay_dsp_send_data_avail(audio, audio->out_tail,
 						    frame->used);
 			frame->used = 0xffffffff;
@@ -583,12 +702,14 @@ static void audamrnb_reset_event_queue(struct audio *audio)
 		list_del(&drv_evt->list);
 		kfree(drv_evt);
 	}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	list_for_each_safe(ptr, next, &audio->free_event_queue) {
 		drv_evt = list_first_entry(&audio->free_event_queue,
 				struct audamrnb_event, list);
 		list_del(&drv_evt->list);
 		kfree(drv_evt);
 	}
+#endif
 	spin_unlock_irqrestore(&audio->event_queue_lock, flags);
 
 	return;
@@ -634,10 +755,13 @@ static long audamrnb_process_event_req(struct audio *audio, void __user *arg)
 				struct audamrnb_event, list);
 		list_del(&drv_evt->list);
 	}
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	spin_unlock_irqrestore(&audio->event_queue_lock, flags);
+#endif
 	if (drv_evt) {
 		usr_evt.event_type = drv_evt->event_type;
 		usr_evt.event_payload = drv_evt->payload;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 		list_add_tail(&drv_evt->list, &audio->free_event_queue);
 	} else
 		rc = -1;
@@ -645,10 +769,16 @@ static long audamrnb_process_event_req(struct audio *audio, void __user *arg)
 
 	if (!rc && copy_to_user(arg, &usr_evt, sizeof(usr_evt)))
 		rc = -EFAULT;
-
+#else
+	if (copy_to_user(arg, &usr_evt, sizeof(usr_evt)))
+		rc = -EFAULT;
+		kfree(drv_evt);
+	} else
+		rc = -1;
+#endif
 	return rc;
 }
-
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 static int audio_enable_eq(struct audio *audio, int enable)
 {
 	if (audio->eq_enable == enable && !audio->eq_needs_commit)
@@ -662,18 +792,22 @@ static int audio_enable_eq(struct audio *audio, int enable)
 	}
 	return 0;
 }
+#endif
 
 static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 		unsigned long arg)
 {
 	struct audio *audio = file->private_data;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	int rc = -EINVAL;
 	unsigned long flags = 0;
 	uint16_t enable_mask;
 	int enable;
 	int prev_state;
-
-	pr_debug("audamrnb_ioctl() cmd = %d\n", cmd);
+#else
+	int rc = 0;
+#endif
+	MM_DBG("cmd = %d\n", cmd);
 
 	if (cmd == AUDIO_GET_STATS) {
 		struct msm_audio_stats stats;
@@ -683,7 +817,7 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 			return -EFAULT;
 		return 0;
 	}
-
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	switch (cmd) {
 	case AUDIO_ENABLE_AUDPP:
 		if (copy_from_user(&enable_mask, (void *) arg,
@@ -734,8 +868,20 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 	if (-EINVAL != rc)
 		return rc;
 
+#else
+	if (cmd == AUDIO_SET_VOLUME) {
+		unsigned long flags;
+		spin_lock_irqsave(&audio->dsp_lock, flags);
+		audio->volume = arg;
+		if (audio->running)
+			audpp_set_volume_and_pan(audio->dec_id, arg, 0);
+		spin_unlock_irqrestore(&audio->dsp_lock, flags);
+		return 0;
+	}
+#endif
+
 	if (cmd == AUDIO_GET_EVENT) {
-		pr_debug("%s: AUDIO_GET_EVENT\n", __func__);
+		MM_DBG("AUDIO_GET_EVENT\n");
 		if (mutex_trylock(&audio->get_event_lock)) {
 			rc = audamrnb_process_event_req(audio,
 					(void __user *) arg);
@@ -755,6 +901,19 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 	switch (cmd) {
 	case AUDIO_START:
 		rc = audamrnb_enable(audio);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+		if (!rc) {
+			rc = wait_event_interruptible_timeout(audio->wait,
+				audio->dec_state != MSM_AUD_DECODER_STATE_NONE,
+				msecs_to_jiffies(MSM_AUD_DECODER_WAIT_MS));
+			MM_DBG("dec_state %d rc = %d\n", audio->dec_state, rc);
+
+			if (audio->dec_state != MSM_AUD_DECODER_STATE_SUCCESS)
+				rc = -ENODEV;
+			else
+				rc = 0;
+		}
+#endif
 		break;
 	case AUDIO_STOP:
 		rc = audamrnb_disable(audio);
@@ -763,7 +922,7 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 		audio->stopped = 0;
 		break;
 	case AUDIO_FLUSH:
-		pr_debug("%s: AUDIO_FLUSH\n", __func__);
+		MM_DBG("AUDIO_FLUSH\n");
 		audio->rflush = 1;
 		audio->wflush = 1;
 		audamrnb_ioport_reset(audio);
@@ -772,8 +931,7 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 			rc = wait_event_interruptible(audio->write_wait,
 				!audio->wflush);
 			if (rc < 0) {
-				pr_err("%s: AUDIO_FLUSH interrupted\n",
-					__func__);
+				MM_ERR("AUDIO_FLUSH interrupted\n");
 				rc = -EINTR;
 			}
 		} else {
@@ -782,6 +940,7 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 		}
 		break;
 	case AUDIO_SET_CONFIG:{
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 			struct msm_audio_config config;
 			if (copy_from_user
 			    (&config, (void *)arg, sizeof(config))) {
@@ -790,6 +949,9 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 			}
 			audio->mfield = config.meta_field;
 			rc = 0;
+#else
+			pr_debug("AUDIO_SET_CONFIG not applicable \n");
+#endif
 			break;
 		}
 	case AUDIO_GET_CONFIG:{
@@ -798,21 +960,29 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 			config.buffer_count = 2;
 			config.sample_rate = 8000;
 			config.channel_count = 1;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 			config.meta_field = 0;
+#endif
 			config.unused[0] = 0;
 			config.unused[1] = 0;
 			config.unused[2] = 0;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			config.unused[3] = 0;
+#endif
 			if (copy_to_user((void *)arg, &config,
 					 sizeof(config)))
 				rc = -EFAULT;
 			else
 				rc = 0;
-
 			break;
 		}
 	case AUDIO_GET_PCM_CONFIG:{
 			struct msm_audio_pcm_config config;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			config.pcm_feedback = audio->pcm_feedback;
+#else
 			config.pcm_feedback = 0;
+#endif
 			config.buffer_count = PCM_BUF_MAX_COUNT;
 			config.buffer_size = PCM_BUFSZ_MIN;
 			if (copy_to_user((void *)arg, &config,
@@ -829,6 +999,14 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 			rc = -EFAULT;
 			break;
 		}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+		if (config.pcm_feedback != audio->pcm_feedback) {
+			MM_ERR("Not sufficient permission to"
+				 "change the playback mode\n");
+			rc = -EACCES;
+			break;
+		}
+#endif
 		if ((config.buffer_count > PCM_BUF_MAX_COUNT) ||
 		    (config.buffer_count == 1))
 			config.buffer_count = PCM_BUF_MAX_COUNT;
@@ -838,22 +1016,45 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 
 			/* Check if pcm feedback is required */
 		if ((config.pcm_feedback) && (!audio->read_data)) {
-			pr_debug("audamrnb_ioctl: allocate PCM buf %d\n",
+			MM_DBG("allocate PCM buf %d\n",
 					config.buffer_count *
 					config.buffer_size);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+			audio->read_phys = pmem_kalloc(
+						config.buffer_size *
+						config.buffer_count,
+						PMEM_MEMTYPE_EBI1|
+						PMEM_ALIGNMENT_4K);
+			if (IS_ERR((void *)audio->read_phys)) {
+					rc = -ENOMEM;
+					break;
+			}
+			audio->read_data = ioremap(audio->read_phys,
+							config.buffer_size *
+							config.buffer_count);
+#else
 			audio->read_data =
 				dma_alloc_coherent(NULL,
-						       config.buffer_size *
-						       config.buffer_count,
-						       &audio->read_phys,
-						       GFP_KERNEL);
+							config.buffer_size *
+							config.buffer_count,
+							&audio->read_phys,
+							GFP_KERNEL);
+#endif
 			if (!audio->read_data) {
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+				MM_ERR("no mem for read buf\n");
+				rc = -ENOMEM;
+				pmem_kfree(audio->read_phys);
+#else
 				pr_err("audamrnb_ioctl: no mem for pcm buf\n");
 				rc = -1;
+#endif
 			} else {
 				uint8_t index;
 				uint32_t offset = 0;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 				audio->pcm_feedback = 1;
+#endif
 				audio->buf_refresh = 0;
 				audio->pcm_buf_count =
 					config.buffer_count;
@@ -871,6 +1072,11 @@ static long audamrnb_ioctl(struct file *file, unsigned int cmd,
 					audio->in[index].used = 0;
 					offset += config.buffer_size;
 				}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+				MM_DBG("read buf: phy addr 0x%08x kernel \
+					addr 0x%08x\n", audio->read_phys,
+					(int)audio->read_data);
+#endif
 				rc = 0;
 			}
 		} else {
@@ -892,7 +1098,7 @@ static int audamrnb_fsync(struct file *file, struct dentry *dentry,
 	struct audio *audio = file->private_data;
 	int rc = 0;
 
-	pr_debug("%s()\n", __func__);
+	MM_DBG("\n"); /* Macro prints the file name and function */
 
 	if (!audio->running || audio->pcm_feedback) {
 		rc = -EINVAL;
@@ -942,10 +1148,13 @@ static ssize_t audamrnb_read(struct file *file, char __user *buf, size_t count,
 		return 0; /* PCM feedback is not enabled. Nothing to read */
 
 	mutex_lock(&audio->read_lock);
-	pr_debug("audamrnb_read() %d \n", count);
+	MM_DBG("%d \n",	count);
 	while (count > 0) {
 		rc = wait_event_interruptible(audio->read_wait,
 			(audio->in[audio->read_next].used > 0) ||
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			(audio->in[audio->read_next].eos) ||
+#endif
 			(audio->stopped) || (audio->rflush));
 
 		if (rc < 0)
@@ -961,17 +1170,29 @@ static ssize_t audamrnb_read(struct file *file, char __user *buf, size_t count,
 			 * not know frame size, read count must be greater or
 			 * equal to size of PCM samples
 			 */
-			pr_debug("audamrnb_read:read stop - partial frame\n");
+			MM_DBG("read stop - partial frame\n");
 			break;
 		} else {
-			pr_debug("audamrnb_read: read from in[%d]\n",
-				audio->read_next);
-
+			MM_DBG("read from in[%d]\n", audio->read_next);
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			if (audio->in[audio->read_next].eos) {
+				pr_debug("%s: EOS set\n", __func__);
+				if (buf == start) {
+					audio->in[audio->read_next].eos = 0;
+					if ((++audio->read_next) ==
+						audio->pcm_buf_count)
+						audio->read_next = 0;
+				}
+				/* else client buffer already has data
+				* return the buffer first so next read
+				* return 0 byte */
+				break;
+			}
+#endif
 			if (copy_to_user
 			    (buf, audio->in[audio->read_next].data,
 			     audio->in[audio->read_next].used)) {
-				pr_err("audamrnb_read: invalid addr %x \n",
-				       (unsigned int)buf);
+				MM_ERR("invalid addr %x \n", (unsigned int)buf);
 				rc = -EFAULT;
 				break;
 			}
@@ -980,7 +1201,9 @@ static ssize_t audamrnb_read(struct file *file, char __user *buf, size_t count,
 			audio->in[audio->read_next].used = 0;
 			if ((++audio->read_next) == audio->pcm_buf_count)
 				audio->read_next = 0;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 			break;
+#endif
 		}
 	}
 
@@ -990,7 +1213,7 @@ static ssize_t audamrnb_read(struct file *file, char __user *buf, size_t count,
 	 */
 	if (audio->buf_refresh && !audio->rflush) {
 		audio->buf_refresh = 0;
-		pr_debug("audamrnb_read: kick start pcm feedback again\n");
+		MM_DBG("kick start pcm feedback again\n");
 		audamrnb_buffer_refresh(audio);
 	}
 
@@ -999,10 +1222,11 @@ static ssize_t audamrnb_read(struct file *file, char __user *buf, size_t count,
 	if (buf > start)
 		rc = buf - start;
 
-	pr_debug("audamrnb_read: read %d bytes\n", rc);
+	MM_DBG("read %d bytes\n", rc);
 	return rc;
 }
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 static int audamrnb_process_eos(struct audio *audio,
 		const char __user *buf_start, unsigned short mfield_size)
 {
@@ -1038,6 +1262,41 @@ static int audamrnb_process_eos(struct audio *audio,
 done:
 	return rc;
 }
+#else
+static int audplay_signal_eos(struct audio *audio)
+{
+	audplay_cmd_bitstream_data_avail cmd;
+	pr_debug("%s()\n", __func__);
+	cmd.cmd_id              = AUDPLAY_CMD_BITSTREAM_DATA_AVAIL;
+	cmd.decoder_id  = -1; /* Set metafield to -1 */
+	cmd.buf_ptr = 0;
+	cmd.buf_size    = 0; /* Set Zero Buffer size, to signal EOS to FW */
+	cmd.partition_number    = 0;
+	return audplay_send_queue0(audio, &cmd, sizeof(cmd));
+}
+static int audamrnb_handle_eos(struct audio *audio)
+{
+	int rc = 0;
+	mutex_lock(&audio->write_lock);
+	rc = wait_event_interruptible(audio->write_wait,
+		(audio->out_needed &&
+		audio->out[0].used == 0 &&
+		audio->out[1].used == 0)
+		|| (audio->stopped)
+		|| (audio->wflush));
+
+	if (rc < 0)
+		goto done;
+	if (audio->stopped || audio->wflush) {
+		rc = -EBUSY;
+		goto done;
+	}
+	audplay_signal_eos(audio);
+done:
+	mutex_unlock(&audio->write_lock);
+	return rc;
+}
+#endif
 
 static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 			   size_t count, loff_t *pos)
@@ -1046,32 +1305,41 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 	const char __user *start = buf;
 	struct buffer *frame;
 	size_t xfer;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	int rc = 0;
+#else
 	char *cpy_ptr;
 	int rc = 0, eos_condition = AUDAMRNB_EOS_NONE;
 	unsigned short mfield_size = 0;
-
-	pr_debug("%s: cnt=%d\n", __func__, count);
+#endif
+	MM_DBG("cnt=%d\n", count);
 
 	if (count & 1)
 		return -EINVAL;
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	if (!count) { /* client signal EOS */
+		return audamrnb_handle_eos(audio);
+	}
+#endif
 	mutex_lock(&audio->write_lock);
 	while (count > 0) {
 		frame = audio->out + audio->out_head;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 		cpy_ptr = frame->data;
+#endif
 		rc = wait_event_interruptible(audio->write_wait,
 					      (frame->used == 0)
 						|| (audio->stopped)
 						|| (audio->wflush));
 
-		pr_debug("audamrnb_write() buffer available\n");
+		MM_DBG("buffer available\n");
 		if (rc < 0)
 			break;
 		if (audio->stopped || audio->wflush) {
 			rc = -EBUSY;
 			break;
 		}
-
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 		if (audio->mfield) {
 			if (buf == start) {
 				/* Processing beginning of user buffer */
@@ -1083,8 +1351,7 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 					rc = -EINVAL;
 					break;
 				}
-				pr_debug("audio_write: mf offset_val %x\n",
-						mfield_size);
+				MM_DBG("mf offset_val %x\n", mfield_size);
 				if (copy_from_user(cpy_ptr, buf, mfield_size)) {
 					rc = -EFAULT;
 					break;
@@ -1094,7 +1361,7 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 				 */
 				if (cpy_ptr[AUDAMRNB_EOS_FLG_OFFSET] &
 						AUDAMRNB_EOS_FLG_MASK) {
-					pr_debug("audamrnb_write: eos set\n");
+					MM_DBG("eos set\n");
 					eos_condition = AUDAMRNB_EOS_SET;
 					if (mfield_size == count) {
 						buf += mfield_size;
@@ -1108,7 +1375,7 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 				buf += mfield_size;
 			} else {
 				mfield_size = 0;
-				pr_debug("audio_write: continuous buffer\n");
+				MM_DBG("continuous buffer\n");
 			}
 			frame->mfield_sz = mfield_size;
 		}
@@ -1116,11 +1383,20 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 		xfer = (count > (frame->size - mfield_size)) ?
 			(frame->size - mfield_size) : count;
 		if (copy_from_user(cpy_ptr, buf, xfer)) {
+
+		frame->used = (xfer + mfield_size);
+#else
+		xfer = (count > frame->size) ? frame->size : count;
+		if (copy_from_user(frame->data, buf, xfer)) {
+#endif
 			rc = -EFAULT;
 			break;
 		}
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		frame->used = xfer;
+#else
 		frame->used = (xfer + mfield_size);
+#endif
 		audio->out_head ^= 1;
 		count -= xfer;
 		buf += xfer;
@@ -1128,13 +1404,20 @@ static ssize_t audamrnb_write(struct file *file, const char __user *buf,
 		audamrnb_send_data(audio, 0);
 
 	}
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	if (eos_condition == AUDAMRNB_EOS_SET)
 		rc = audamrnb_process_eos(audio, start, mfield_size);
+#endif
 	mutex_unlock(&audio->write_lock);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	if (!rc) {
 		if (buf > start)
 			return buf - start;
 	}
+#else
+	if (buf > start)
+		return buf - start;
+#endif
 	return rc;
 }
 
@@ -1142,33 +1425,56 @@ static int audamrnb_release(struct inode *inode, struct file *file)
 {
 	struct audio *audio = file->private_data;
 
-	pr_debug("audamrnb_release()\n");
-
+	MM_DBG("\n"); /* Macro prints the file name and function */
+	MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
 	mutex_lock(&audio->lock);
 	audamrnb_disable(audio);
 	audamrnb_flush(audio);
 	audamrnb_flush_pcm_buf(audio);
 	msm_adsp_put(audio->audplay);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	audpp_adec_free(audio->dec_id);
+#else
 	audio->audplay = NULL;
+#endif
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&audio->suspend_ctl.node);
 #endif
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 	audio->opened = 0;
+#endif
 	audio->event_abort = 1;
 	wake_up(&audio->event_wait);
 	audamrnb_reset_event_queue(audio);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	iounmap(audio->data);
+	pmem_kfree(audio->phys);
+
+	if (audio->read_data) {
+		iounmap(audio->read_data);
+		pmem_kfree(audio->read_phys);
+	}
+#else
 	dma_free_coherent(NULL, DMASZ, audio->data, audio->phys);
 	audio->data = NULL;
 	if (audio->read_data != NULL) {
 		dma_free_coherent(NULL,
-				  audio->in[0].size * audio->pcm_buf_count,
-				  audio->read_data, audio->read_phys);
+				audio->in[0].size * audio->pcm_buf_count,
+				audio->read_data, audio->read_phys);
 		audio->read_data = NULL;
 	}
 	audio->pcm_feedback = 0;
 	audio->rflush = 0;
 	audio->wflush = 0;
+#endif
 	mutex_unlock(&audio->lock);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#ifdef CONFIG_DEBUG_FS
+	if (audio->dentry)
+		debugfs_remove(audio->dentry);
+#endif
+	kfree(audio);
+#endif
 	return 0;
 }
 
@@ -1177,7 +1483,13 @@ static void audamrnb_post_event(struct audio *audio, int type,
 {
 	struct audamrnb_event *e_node = NULL;
 	unsigned long flags;
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	e_node = kmalloc(sizeof(struct audamrnb_event), GFP_KERNEL);
+	if (!e_node) {
+		pr_err("%s: No mem to post event %d\n", __func__, type);
+		return;
+	}
+#else
 	spin_lock_irqsave(&audio->event_queue_lock, flags);
 
 	if (!list_empty(&audio->free_event_queue)) {
@@ -1187,21 +1499,24 @@ static void audamrnb_post_event(struct audio *audio, int type,
 	} else {
 		e_node = kmalloc(sizeof(struct audamrnb_event), GFP_ATOMIC);
 		if (!e_node) {
-			pr_err("%s: No mem to post event %d\n", __func__, type);
+			MM_ERR("No mem to post event %d\n", type);
 			return;
 		}
 	}
-
+#endif
 	e_node->event_type = type;
 	e_node->payload = payload;
-
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	spin_lock_irqsave(&audio->event_queue_lock, flags);
+#endif
 	list_add_tail(&e_node->list, &audio->event_queue);
 	spin_unlock_irqrestore(&audio->event_queue_lock, flags);
 	wake_up(&audio->event_wait);
 }
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 static struct audio the_amrnb_audio;
-
+#endif
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static void audamrnb_suspend(struct early_suspend *h)
 {
@@ -1209,7 +1524,7 @@ static void audamrnb_suspend(struct early_suspend *h)
 		container_of(h, struct audamrnb_suspend_ctl, node);
 	union msm_audio_event_payload payload;
 
-	pr_debug("%s()\n", __func__);
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	audamrnb_post_event(ctl->audio, AUDIO_EVENT_SUSPEND, payload);
 }
 
@@ -1219,16 +1534,16 @@ static void audamrnb_resume(struct early_suspend *h)
 		container_of(h, struct audamrnb_suspend_ctl, node);
 	union msm_audio_event_payload payload;
 
-	pr_debug("%s()\n", __func__);
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	audamrnb_post_event(ctl->audio, AUDIO_EVENT_RESUME, payload);
 }
 #endif
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 static int audamrnb_open(struct inode *inode, struct file *file)
 {
 	struct audio *audio = &the_amrnb_audio;
-	int rc, i;
-	struct audamrnb_event *e_node = NULL;
+	int rc;
 
 	mutex_lock(&audio->lock);
 
@@ -1272,16 +1587,13 @@ static int audamrnb_open(struct inode *inode, struct file *file)
 	audio->out[1].addr = audio->phys + BUFSZ;
 	audio->out[1].size = BUFSZ;
 
-	audio->vol_pan.volume = 0x2000;
-	audio->vol_pan.pan = 0x0;
-	audio->eq_enable = 0;
+	audio->volume = 0x2000;	/* Q13 1.0 */
 
 	audamrnb_flush(audio);
 
 	file->private_data = audio;
 	audio->opened = 1;
 	audio->event_abort = 0;
-	audio->mfield = 0;
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	audio->suspend_ctl.node.level = EARLY_SUSPEND_LEVEL_DISABLE_FB;
 	audio->suspend_ctl.node.resume = audamrnb_resume;
@@ -1289,22 +1601,13 @@ static int audamrnb_open(struct inode *inode, struct file *file)
 	audio->suspend_ctl.audio = audio;
 	register_early_suspend(&audio->suspend_ctl.node);
 #endif
-	for (i = 0; i < AUDAMRNB_EVENT_NUM; i++) {
-		e_node = kmalloc(sizeof(struct audamrnb_event), GFP_KERNEL);
-		if (e_node)
-			list_add_tail(&e_node->list, &audio->free_event_queue);
-		else {
-			pr_info("%s: event pkt alloc failed\n", __func__);
-			break;
-		}
-	}
 	rc = 0;
 done:
 	mutex_unlock(&audio->lock);
 	return rc;
 }
 
-static const struct file_operations audio_amrnb_fops = {
+static struct file_operations audio_amrnb_fops = {
 	.owner = THIS_MODULE,
 	.open = audamrnb_open,
 	.release = audamrnb_release,
@@ -1319,6 +1622,7 @@ struct miscdevice audio_amrnb_misc = {
 	.name = "msm_amrnb",
 	.fops = &audio_amrnb_fops,
 };
+#endif
 
 #ifdef CONFIG_DEBUG_FS
 static ssize_t audamrnb_debug_open(struct inode *inode, struct file *file)
@@ -1350,7 +1654,11 @@ static ssize_t audamrnb_debug_read(struct file *file, char __user *buf,
 	n += scnprintf(buffer + n, debug_bufmax - n,
 			"pcm_buf_sz %d \n", audio->in[0].size);
 	n += scnprintf(buffer + n, debug_bufmax - n,
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 			"volume %x \n", audio->vol_pan.volume);
+#else
+			"volume %x \n", audio->volume);
+#endif
 	mutex_unlock(&audio->lock);
 	/* Following variables are only useful for debugging when
 	 * when playback halts unexpectedly. Thus, no mutual exclusion
@@ -1363,6 +1671,10 @@ static ssize_t audamrnb_debug_read(struct file *file, char __user *buf,
 	n += scnprintf(buffer + n, debug_bufmax - n,
 			"running %d \n", audio->running);
 	n += scnprintf(buffer + n, debug_bufmax - n,
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+			"dec state %d \n", audio->dec_state);
+	n += scnprintf(buffer + n, debug_bufmax - n,
+#endif
 			"out_needed %d \n", audio->out_needed);
 	n += scnprintf(buffer + n, debug_bufmax - n,
 			"out_head %d \n", audio->out_head);
@@ -1385,14 +1697,19 @@ static ssize_t audamrnb_debug_read(struct file *file, char __user *buf,
 	return simple_read_from_buffer(buf, count, ppos, buffer, n);
 }
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static struct file_operations audamrnb_debug_fops = {
+#else
 static const struct file_operations audamrnb_debug_fops = {
+#endif
 	.read = audamrnb_debug_read,
 	.open = audamrnb_debug_open,
 };
 #endif
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 static int __init audamrnb_init(void)
-{
+ {
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *dentry;
 #endif
@@ -1403,7 +1720,6 @@ static int __init audamrnb_init(void)
 	mutex_init(&the_amrnb_audio.get_event_lock);
 	spin_lock_init(&the_amrnb_audio.dsp_lock);
 	spin_lock_init(&the_amrnb_audio.event_queue_lock);
-	INIT_LIST_HEAD(&the_amrnb_audio.free_event_queue);
 	INIT_LIST_HEAD(&the_amrnb_audio.event_queue);
 	init_waitqueue_head(&the_amrnb_audio.write_wait);
 	init_waitqueue_head(&the_amrnb_audio.read_wait);
@@ -1412,13 +1728,182 @@ static int __init audamrnb_init(void)
 
 #ifdef CONFIG_DEBUG_FS
 	dentry = debugfs_create_file("msm_amrnb", S_IFREG | S_IRUGO, NULL,
-		(void *) &the_amrnb_audio, &audamrnb_debug_fops);
+			(void *) &the_amrnb_audio, &audamrnb_debug_fops);
 
 	if (IS_ERR(dentry))
 		pr_err("AMRNB:%s:debugfs_create_file failed\n", __func__);
 #endif
 	return misc_register(&audio_amrnb_misc);
 }
+
+#else
+
+static int audamrnb_open(struct inode *inode, struct file *file)
+{
+	struct audio *audio = NULL;
+	int rc, dec_attrb, decid, i;
+	struct audamrnb_event *e_node = NULL;
+#ifdef CONFIG_DEBUG_FS
+	/* 4 bytes represents decoder number, 1 byte for terminate string */
+	char name[sizeof "msm_amrnb_" + 5];
+#endif
+
+	/* Allocate Mem for audio instance */
+	audio = kzalloc(sizeof(struct audio), GFP_KERNEL);
+	if (!audio) {
+		MM_ERR("no memory to allocate audio instance \n");
+		rc = -ENOMEM;
+		goto done;
+	}
+	MM_INFO("audio instance 0x%08x created\n", (int)audio);
+
+	/* Allocate the decoder */
+	dec_attrb = AUDDEC_DEC_AMRNB;
+	if ((file->f_mode & FMODE_WRITE) &&
+			(file->f_mode & FMODE_READ)) {
+		dec_attrb |= MSM_AUD_MODE_NONTUNNEL;
+		audio->pcm_feedback = NON_TUNNEL_MODE_PLAYBACK;
+	} else if ((file->f_mode & FMODE_WRITE) &&
+			!(file->f_mode & FMODE_READ)) {
+		dec_attrb |= MSM_AUD_MODE_TUNNEL;
+		audio->pcm_feedback = TUNNEL_MODE_PLAYBACK;
+	} else {
+		kfree(audio);
+		rc = -EACCES;
+		goto done;
+	}
+
+	decid = audpp_adec_alloc(dec_attrb, &audio->module_name,
+			&audio->queue_id);
+
+	if (decid < 0) {
+		MM_ERR("No free decoder available\n");
+		rc = -ENODEV;
+		MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
+		kfree(audio);
+		goto done;
+	}
+
+	audio->dec_id = decid & MSM_AUD_DECODER_MASK;
+
+	audio->phys = pmem_kalloc(DMASZ, PMEM_MEMTYPE_EBI1|PMEM_ALIGNMENT_4K);
+	if (IS_ERR((void *)audio->phys)) {
+		MM_ERR("could not allocate write buffers\n");
+		rc = -ENOMEM;
+		audpp_adec_free(audio->dec_id);
+		MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
+		kfree(audio);
+		goto done;
+	} else {
+		audio->data = ioremap(audio->phys, DMASZ);
+		if (!audio->data) {
+			MM_ERR("could not allocate write buffers\n");
+			rc = -ENOMEM;
+			pmem_kfree(audio->phys);
+			audpp_adec_free(audio->dec_id);
+			MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
+			kfree(audio);
+			goto done;
+		}
+		MM_DBG("write buf: phy addr 0x%08x kernel addr \
+				0x%08x\n", audio->phys, (int)audio->data);
+	}
+
+	rc = audmgr_open(&audio->audmgr);
+	if (rc)
+		goto err;
+
+	rc = msm_adsp_get(audio->module_name, &audio->audplay,
+		&audplay_adsp_ops_amrnb, audio);
+	if (rc) {
+		MM_ERR("failed to get %s module\n", audio->module_name);
+		audmgr_close(&audio->audmgr);
+		goto err;
+	}
+
+	mutex_init(&audio->lock);
+	mutex_init(&audio->write_lock);
+	mutex_init(&audio->read_lock);
+	mutex_init(&audio->get_event_lock);
+	spin_lock_init(&audio->dsp_lock);
+	spin_lock_init(&audio->event_queue_lock);
+	INIT_LIST_HEAD(&audio->free_event_queue);
+	INIT_LIST_HEAD(&audio->event_queue);
+	init_waitqueue_head(&audio->write_wait);
+	init_waitqueue_head(&audio->read_wait);
+	init_waitqueue_head(&audio->wait);
+	init_waitqueue_head(&audio->event_wait);
+
+	audio->out[0].data = audio->data + 0;
+	audio->out[0].addr = audio->phys + 0;
+	audio->out[0].size = BUFSZ;
+
+	audio->out[1].data = audio->data + BUFSZ;
+	audio->out[1].addr = audio->phys + BUFSZ;
+	audio->out[1].size = BUFSZ;
+
+	audio->vol_pan.volume = 0x2000;
+
+	audamrnb_flush(audio);
+
+	file->private_data = audio;
+	audio->opened = 1;
+#ifdef CONFIG_DEBUG_FS
+	snprintf(name, sizeof name, "msm_amrnb_%04x", audio->dec_id);
+	audio->dentry = debugfs_create_file(name, S_IFREG | S_IRUGO,
+			NULL, (void *) audio, &audamrnb_debug_fops);
+
+	if (IS_ERR(audio->dentry))
+		MM_DBG("debugfs_create_file failed\n");
+#endif
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	audio->suspend_ctl.node.level = EARLY_SUSPEND_LEVEL_DISABLE_FB;
+	audio->suspend_ctl.node.resume = audamrnb_resume;
+	audio->suspend_ctl.node.suspend = audamrnb_suspend;
+	audio->suspend_ctl.audio = audio;
+	register_early_suspend(&audio->suspend_ctl.node);
+#endif
+	for (i = 0; i < AUDAMRNB_EVENT_NUM; i++) {
+		e_node = kmalloc(sizeof(struct audamrnb_event), GFP_KERNEL);
+		if (e_node)
+			list_add_tail(&e_node->list, &audio->free_event_queue);
+		else {
+			MM_ERR("event pkt alloc failed\n");
+			break;
+		}
+	}
+done:
+	return rc;
+err:
+	iounmap(audio->data);
+	pmem_kfree(audio->phys);
+	audpp_adec_free(audio->dec_id);
+	MM_INFO("audio instance 0x%08x freeing\n", (int)audio);
+	kfree(audio);
+	return rc;
+}
+
+static const struct file_operations audio_amrnb_fops = {
+	.owner = THIS_MODULE,
+	.open = audamrnb_open,
+	.release = audamrnb_release,
+	.read = audamrnb_read,
+	.write = audamrnb_write,
+	.unlocked_ioctl = audamrnb_ioctl,
+	.fsync = audamrnb_fsync,
+};
+
+struct miscdevice audio_amrnb_misc = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "msm_amrnb",
+	.fops = &audio_amrnb_fops,
+};
+
+static int __init audamrnb_init(void)
+{
+	return misc_register(&audio_amrnb_misc);
+}
+#endif
 
 static void __exit audamrnb_exit(void)
 {

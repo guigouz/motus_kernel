@@ -66,9 +66,11 @@
 #include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/mfd/tps65023.h>
+#include <linux/bma150.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
+#include <asm/setup.h>
 
 #include <asm/mach/mmc.h>
 #include <mach/vreg.h>
@@ -80,14 +82,23 @@
 #include <mach/msm_serial_hs.h>
 #include <mach/msm_spi.h>
 #include <linux/spi/spi.h>
+#include <mach/ofn_atlab.h>
 #include <mach/s1r72v05.h>
+#include <mach/rpc_hsusb.h>
 
 #include "devices.h"
 #include "timer.h"
 #include "pm.h"
+#include "smd_private.h"
 
 #define TOUCHPAD_SUSPEND	34
-#define TOUCHPAD_IRQ            42
+#define TOUCHPAD_IRQ           144
+
+#define OPTNAV_IRQ             150
+#define OPTNAV_BUTTON_L         35
+#define OPTNAV_BUTTON_R         34
+
+#define SMEM_SPINLOCK_I2C	6
 
 #define MSM_PMEM_MDP_SIZE	0x800000
 #define MSM_PMEM_ADSP_SIZE	0x2900000
@@ -95,12 +106,15 @@
 #define MSM_FB_SIZE             0x500000
 #define MSM_AUDIO_SIZE		0x200000
 
+#define MSM_GPU_PHYS_SIZE       SZ_2M
+
 #define MSM_SMI_BASE		0x2b00000
 #define MSM_SMI_SIZE		0x1500000
 
-#define MSM_FB_BASE		MSM_SMI_BASE
-#define MSM_PMEM_GPU0_BASE	(MSM_FB_BASE + MSM_FB_SIZE)
-#define MSM_PMEM_GPU0_SIZE	(MSM_SMI_SIZE - MSM_FB_SIZE)
+#define MSM_FB_BASE             MSM_SMI_BASE
+#define MSM_GPU_PHYS_BASE       (MSM_FB_BASE + MSM_FB_SIZE)
+#define MSM_PMEM_GPU0_BASE      (MSM_GPU_PHYS_BASE + MSM_GPU_PHYS_SIZE)
+#define MSM_PMEM_GPU0_SIZE      (MSM_SMI_SIZE - MSM_FB_SIZE - MSM_GPU_PHYS_SIZE)
 
 #define PMEM_KERNEL_EBI1_SIZE	0x200000
 
@@ -119,13 +133,23 @@
 #define COMET_CPLD_PER_ENABLE_HDD        0x1000
 #define COMET_CPLD_PER_ENABLE_WVGA       0x0400
 #define COMET_CPLD_PER_ENABLE_LVDS       0x0200
+#define COMET_CPLD_PER_ENABLE_OFN        0x0100
 #define COMET_CPLD_PER_ENABLE_IDE        0x0080
 #define COMET_CPLD_PER_ENABLE_WXGA       0x0040
+#define COMET_CPLD_PER_ENABLE_I2C2       0x0020
 #define COMET_CPLD_PER_ENABLE_I2C1       0x0010
 #define COMET_CPLD_EXT_PER_ENABLE_WXGA   0x0080
 #define COMET_CPLD_PER_RESET_IDE         0x0004
+#define COMET_CPLD_EXT_PER_ENABLE_I2C2   0x0010
 #define COMET_CPLD_EXT_PER_ENABLE_I2C1   0x0008
 
+#define COMET_BMA150_GPIO                106
+
+static unsigned long        vreg_sts, gpio_sts;
+static struct vreg         *vreg_mmc;
+static int                  gp6_enabled;
+
+static char __iomem        *cpld_base;
 static int                  cpld_version;
 static bool                 wvga_present;
 static bool                 wxga_present;
@@ -142,7 +166,7 @@ static struct comet_cpld_t {
 		.per_reset_all_reset     = 0x00FF,
 		/* enable all peripherals except microphones and */
 		/* reset line for i2c touchpad                   */
-		.per_enable_all          = 0xFFD8,
+		.per_enable_all          = 0xFFE8,
 		.bt_reset_reg            = 0x0018,
 		.bt_reset_mask           = 0x0001,
 	},
@@ -153,7 +177,7 @@ static struct comet_cpld_t {
 		/* enable all peripherals except microphones and */
 		/* displays                                      */
 		.per_enable_all          = 0xF9B8,
-		.ext_per_enable_all      = 0x007D,
+		.ext_per_enable_all      = 0x0075,
 		.bt_reset_reg            = 0x0048,
 		.bt_reset_mask           = 0x0004,
 	},
@@ -314,10 +338,44 @@ static struct msm_hsusb_platform_data msm_hsusb_pdata = {
 	.function_map   = usb_functions_map,
 	.num_functions	= ARRAY_SIZE(usb_functions_map),
 	.config_gpio    = NULL,
-#ifdef CONFIG_USB_FS_HOST
-	.config_fs_gpio = msm_fsusb_setup_gpio,
-#endif
 };
+
+static struct vreg *vreg_usb;
+static void msm_hsusb_vbus_power(unsigned phy_info, int on)
+{
+
+	switch (PHY_TYPE(phy_info)) {
+	case USB_PHY_INTEGRATED:
+		if (on)
+			msm_hsusb_vbus_powerup();
+		else
+			msm_hsusb_vbus_shutdown();
+		break;
+	case USB_PHY_SERIAL_PMIC:
+		if (on)
+			vreg_enable(vreg_usb);
+		else
+			vreg_disable(vreg_usb);
+		break;
+	default:
+		pr_err("%s: undefined phy type ( %X ) \n", __func__,
+						phy_info);
+	}
+
+}
+
+static struct msm_usb_host_platform_data msm_usb_host_pdata = {
+	.phy_info	= (USB_PHY_INTEGRATED | USB_PHY_MODEL_180NM),
+	.vbus_power = msm_hsusb_vbus_power,
+};
+
+#ifdef CONFIG_USB_FS_HOST
+static struct msm_usb_host_platform_data msm_usb_host2_pdata = {
+	.phy_info	= USB_PHY_SERIAL_PMIC,
+	.config_gpio = msm_fsusb_setup_gpio,
+	.vbus_power = msm_hsusb_vbus_power,
+};
+#endif
 
 static struct android_pmem_platform_data android_pmem_kernel_ebi1_pdata = {
 	.name = PMEM_KERNEL_EBI1_DATA_NAME,
@@ -332,14 +390,12 @@ static struct android_pmem_platform_data android_pmem_kernel_ebi1_pdata = {
 
 static struct android_pmem_platform_data android_pmem_pdata = {
 	.name = "pmem",
-	.size = MSM_PMEM_MDP_SIZE,
 	.allocator_type = PMEM_ALLOCATORTYPE_BUDDYBESTFIT,
 	.cached = 1,
 };
 
 static struct android_pmem_platform_data android_pmem_adsp_pdata = {
 	.name = "pmem_adsp",
-	.size = MSM_PMEM_ADSP_SIZE,
 	.allocator_type = PMEM_ALLOCATORTYPE_BUDDYBESTFIT,
 	.cached = 0,
 };
@@ -388,6 +444,31 @@ static struct platform_device android_pmem_kernel_ebi1_device = {
 	.dev = { .platform_data = &android_pmem_kernel_ebi1_pdata },
 };
 
+static struct msm_gpio bma_spi_gpio_config_data[] = {
+	{ GPIO_CFG(COMET_BMA150_GPIO, 0, GPIO_INPUT,
+		   GPIO_NO_PULL, GPIO_2MA), "bma_irq" },
+};
+
+static int msm_bma_gpio_setup(struct device *dev)
+{
+	int rc;
+
+	rc = msm_gpios_request_enable(bma_spi_gpio_config_data,
+		ARRAY_SIZE(bma_spi_gpio_config_data));
+	return rc;
+}
+
+static void msm_bma_gpio_teardown(struct device *dev)
+{
+	msm_gpios_disable_free(bma_spi_gpio_config_data,
+		ARRAY_SIZE(bma_spi_gpio_config_data));
+}
+
+static struct bma150_platform_data bma_pdata = {
+	.setup    = msm_bma_gpio_setup,
+	.teardown = msm_bma_gpio_teardown,
+};
+
 static struct resource qsd_spi_resources[] = {
 	{
 		.name   = "spi_irq_in",
@@ -426,58 +507,38 @@ static struct spi_board_info msm_spi_board_info[] __initdata = {
 	{
 		.modalias	= "bma150",
 		.mode		= SPI_MODE_3,
-		.irq		= MSM_GPIO_TO_INT(106),
+		.irq		= MSM_GPIO_TO_INT(COMET_BMA150_GPIO),
 		.bus_num	= 0,
 		.chip_select	= 0,
 		.max_speed_hz	= 10000000,
+		.platform_data	= &bma_pdata,
 	}
 };
 
-static unsigned qsd_spi_gpio_config_data[] = {
-	GPIO_CFG(17,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),  /* SPI_CLK */
-	GPIO_CFG(18,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),  /* SPI_MOSI */
-	GPIO_CFG(19,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),  /* SPI_MISO */
-	GPIO_CFG(20,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),  /* SPI_CS0 */
-	GPIO_CFG(106, 0, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),  /* IRQ_CS0 */
+static struct msm_gpio qsd_spi_gpio_config_data[] = {
+	{ GPIO_CFG(17,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA), "spi_clk" },
+	{ GPIO_CFG(18,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA), "spi_mosi" },
+	{ GPIO_CFG(19,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA), "spi_miso" },
+	{ GPIO_CFG(20,  1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA), "spi_cs0" },
 };
 
 static int msm_qsd_spi_gpio_config(void)
 {
-	int i, rc;
+	int rc;
 
-	if (gpio_request(17, "spi_clk"))
-		pr_err("failed to request gpio spi_clk\n");
-	if (gpio_request(18, "spi_mosi"))
-		pr_err("failed to request gpio spi_mosi\n");
-	if (gpio_request(19, "spi_miso"))
-		pr_err("failed to request gpio spi_miso\n");
-	if (gpio_request(20, "spi_cs0"))
-		pr_err("failed to request gpio spi_cs0\n");
-	if (gpio_request(106, "spi_irq_cs0"))
-		pr_err("failed to request gpio spi_irq_cs0\n");
-
-	for (i = 0; i < ARRAY_SIZE(qsd_spi_gpio_config_data); i++) {
-		rc = gpio_tlmm_config(qsd_spi_gpio_config_data[i], GPIO_ENABLE);
-		if (rc) {
-			printk(KERN_ERR "%s: gpio_tlmm_config(%#x)=%d\n",
-				__func__, qsd_spi_gpio_config_data[i], rc);
-			return -EIO;
-		}
-	}
-
-	return 0;
+	rc = msm_gpios_request_enable(qsd_spi_gpio_config_data,
+		ARRAY_SIZE(qsd_spi_gpio_config_data));
+	return rc;
 }
 
 static void msm_qsd_spi_gpio_release(void)
 {
-	gpio_free(17);
-	gpio_free(18);
-	gpio_free(19);
-	gpio_free(20);
-	gpio_free(106);
+	msm_gpios_disable_free(qsd_spi_gpio_config_data,
+		ARRAY_SIZE(qsd_spi_gpio_config_data));
 }
 
 static struct msm_spi_platform_data qsd_spi_pdata = {
+	.max_clock_speed = 19200000,
 	.gpio_config  = msm_qsd_spi_gpio_config,
 	.gpio_release = msm_qsd_spi_gpio_release
 };
@@ -533,6 +594,20 @@ static struct mddi_platform_data mddi_pdata = {
 
 static void __init msm_fb_add_devices(void)
 {
+	int rc;
+
+	if (wvga_present) {
+		vreg_mmc = vreg_get(NULL, "gp6");
+		rc = vreg_set_level(vreg_mmc, 2850);
+		if (!rc)
+			rc = vreg_enable(vreg_mmc);
+		if (rc)
+			printk(KERN_ERR "%s: gp6 vreg error: %d\n",
+			       __func__, rc);
+		else
+			gp6_enabled = 1;
+	}
+
 	msm_fb_register_device("mdp", 0);
 	msm_fb_register_device("pmdh", &mddi_pdata);
 	msm_fb_register_device("emdh", &mddi_pdata);
@@ -607,13 +682,9 @@ cpld_base_exit:
 static int comet_init_s1r72v05(void)
 {
 	int rc;
-	char __iomem *cpld_base;
 	u16 per_enable;
 	u8 irq_gpio = S1R72V05_IRQ_GPIO;
 
-	cpld_base = comet_cpld_base();
-	if (!cpld_base)
-		return -ENOMEM;
 	per_enable = readw(cpld_base + COMET_CPLD_PER_ENABLE);
 	per_enable |= COMET_CPLD_PER_ENABLE_HDD | COMET_CPLD_PER_ENABLE_IDE;
 	writew(per_enable,
@@ -686,8 +757,8 @@ static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
 static struct resource bluesleep_resources[] = {
 	{
 		.name	= "gpio_host_wake",
-		.start	= 21,
-		.end	= 21,
+		.start	= 40,
+		.end	= 40,
 		.flags	= IORESOURCE_IO,
 	},
 	{
@@ -698,8 +769,8 @@ static struct resource bluesleep_resources[] = {
 	},
 	{
 		.name	= "host_wake",
-		.start	= MSM_GPIO_TO_INT(21),
-		.end	= MSM_GPIO_TO_INT(21),
+		.start	= MSM_GPIO_TO_INT(40),
+		.end	= MSM_GPIO_TO_INT(40),
 		.flags	= IORESOURCE_IRQ,
 	},
 };
@@ -733,7 +804,7 @@ enum {
 
 static unsigned bt_config_power_on[] = {
 	GPIO_CFG(29, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),	/* WAKE */
-	GPIO_CFG(21, 0, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),	/* HOST_WAKE */
+	GPIO_CFG(40, 0, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),	/* HOST_WAKE */
 	GPIO_CFG(22, 0, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),	/* PWR_EN */
 	GPIO_CFG(43, 2, GPIO_OUTPUT, GPIO_NO_PULL, GPIO_2MA),	/* RFR */
 	GPIO_CFG(44, 2, GPIO_INPUT,  GPIO_NO_PULL, GPIO_2MA),	/* CTS */
@@ -746,7 +817,7 @@ static unsigned bt_config_power_on[] = {
 };
 static unsigned bt_config_power_off[] = {
 	GPIO_CFG(29, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* WAKE */
-	GPIO_CFG(21, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* HOST_WAKE */
+	GPIO_CFG(40, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* HOST_WAKE */
 	GPIO_CFG(22, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* PWR_EN */
 	GPIO_CFG(43, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* RFR */
 	GPIO_CFG(44, 0, GPIO_INPUT, GPIO_PULL_DOWN, GPIO_2MA),	/* CTS */
@@ -761,13 +832,8 @@ static unsigned bt_config_power_off[] = {
 static int bluetooth_power(int on)
 {
 	int pin, rc;
-	char __iomem *cpld_base;
 
 	printk(KERN_DEBUG "%s\n", __func__);
-
-	cpld_base = comet_cpld_base();
-	if (!cpld_base)
-		return -ENOMEM;
 
 	if (on) {
 		for (pin = 0; pin < ARRAY_SIZE(bt_config_power_on); pin++) {
@@ -814,9 +880,38 @@ static void __init bt_power_init(void)
 #define bt_power_init(x) do {} while (0)
 #endif
 
+static struct resource kgsl_resources[] = {
+       {
+	       .name  = "kgsl_reg_memory",
+	       .start = 0xA0000000,
+	       .end = 0xA001ffff,
+	       .flags = IORESOURCE_MEM,
+       },
+       {
+	       .name   = "kgsl_phys_memory",
+	       .start = MSM_GPU_PHYS_BASE,
+	       .end = MSM_GPU_PHYS_BASE + MSM_GPU_PHYS_SIZE - 1,
+	       .flags = IORESOURCE_MEM,
+       },
+       {
+	       .start = INT_GRAPHICS,
+	       .end = INT_GRAPHICS,
+	       .flags = IORESOURCE_IRQ,
+       },
+};
+
+static struct platform_device msm_device_kgsl = {
+	.name = "kgsl",
+	.id = -1,
+	.num_resources = ARRAY_SIZE(kgsl_resources),
+	.resource = kgsl_resources,
+};
+
+
 static struct platform_device *devices[] __initdata = {
 	&msm_fb_device,
 	&msm_device_smd,
+	&msm_device_dmov,
 	&smc911x_device,
 	&s1r72v05_device,
 	&android_pmem_kernel_ebi1_device,
@@ -838,6 +933,7 @@ static struct platform_device *devices[] __initdata = {
 	&qsd_device_spi,
 	&msm_device_tssc,
 	&hs_device,
+	&msm_device_kgsl,
 };
 
 #ifdef CONFIG_QSD_SVS
@@ -932,7 +1028,7 @@ static struct msm_touchpad_platform_data msm_touchpad_data = {
 };
 
 
-#define KBD_IRQ 144
+#define KBD_IRQ 42
 
 static void kbd_gpio_release(void)
 {
@@ -969,41 +1065,32 @@ err_gpioconfig:
 /* use CPLD register to toggle keyboard external reset pin */
 static void kbd_hwreset(int kbd_mclrpin)
 {
-	char __iomem *cpld_base;
 	int per_en;
 	int ext_per_en;
-
-	cpld_base = comet_cpld_base();
-
-	if (!cpld_base)
-		return;
-
-	cpld_version = (readw(cpld_base + COMET_CPLD_VERSION)
-			& COMET_CPLD_VERSION_MAJOR) >> 8;
 
 	if (cpld_version >= 2) {
 		/* COMET2 */
 		/* Reset the pin */
 		ext_per_en = readw(cpld_base + COMET_CPLD_EXT_PER_ENABLE);
-		ext_per_en = ext_per_en & (~COMET_CPLD_EXT_PER_ENABLE_I2C1);
+		ext_per_en = ext_per_en & (~COMET_CPLD_EXT_PER_ENABLE_I2C2);
 		writew(ext_per_en, cpld_base + COMET_CPLD_EXT_PER_ENABLE);
 
 		msleep(2);
 
 		/* Set the pin */
-		ext_per_en = ext_per_en | COMET_CPLD_EXT_PER_ENABLE_I2C1;
+		ext_per_en = ext_per_en | COMET_CPLD_EXT_PER_ENABLE_I2C2;
 		writew(ext_per_en, cpld_base + COMET_CPLD_EXT_PER_ENABLE);
 	} else {
 		/* COMET1 */
 		/* Reset the pin */
 		per_en = readw(cpld_base + COMET_CPLD_PER_ENABLE);
-		per_en = per_en & (~COMET_CPLD_PER_ENABLE_I2C1);
+		per_en = per_en & (~COMET_CPLD_PER_ENABLE_I2C2);
 		writew(per_en, cpld_base + COMET_CPLD_PER_ENABLE);
 
 		msleep(1);
 
 		/* Set the pin */
-		per_en = per_en | COMET_CPLD_PER_ENABLE_I2C1;
+		per_en = per_en | COMET_CPLD_PER_ENABLE_I2C2;
 		writew(per_en, cpld_base + COMET_CPLD_PER_ENABLE);
 	}
 }
@@ -1015,6 +1102,62 @@ static struct msm_i2ckbd_platform_data msm_kybd_data = {
 	.gpio_setup = kbd_gpio_setup,
 	.gpio_shutdown = kbd_gpio_release,
 	.hw_reset = kbd_hwreset,
+};
+
+static struct msm_gpio optnav_config_data[] = {
+	{ GPIO_CFG(OPTNAV_BUTTON_L, 0, GPIO_INPUT, GPIO_PULL_UP, GPIO_2MA),
+	  "optnav_button_l" },
+	{ GPIO_CFG(OPTNAV_BUTTON_R, 0, GPIO_INPUT, GPIO_PULL_UP, GPIO_2MA),
+	  "optnav_button_r" },
+	{ GPIO_CFG(OPTNAV_IRQ, 0, GPIO_INPUT, GPIO_PULL_UP, GPIO_2MA),
+	  "optnav_irq" },
+};
+
+static int optnav_gpio_setup(void)
+{
+	int rc = -ENODEV;
+
+	if (cpld_version >= 2)
+		rc = msm_gpios_request_enable(optnav_config_data,
+					      ARRAY_SIZE(optnav_config_data));
+	return rc;
+}
+
+static void optnav_gpio_release(void)
+{
+	msm_gpios_disable_free(optnav_config_data,
+			       ARRAY_SIZE(optnav_config_data));
+}
+
+static int optnav_enable(void)
+{
+	u16 save;
+
+	save = readw(cpld_base + COMET_CPLD_PER_ENABLE);
+	writew(save | COMET_CPLD_PER_ENABLE_OFN,
+	       cpld_base + COMET_CPLD_PER_ENABLE);
+	return 0;
+}
+
+static void optnav_disable(void)
+{
+	u16 save;
+
+	save = readw(cpld_base + COMET_CPLD_PER_ENABLE);
+	writew(save & ~COMET_CPLD_PER_ENABLE_OFN,
+	       cpld_base + COMET_CPLD_PER_ENABLE);
+}
+
+static struct ofn_atlab_platform_data optnav_data = {
+	.irq_button_l  = MSM_GPIO_TO_INT(OPTNAV_BUTTON_L),
+	.irq_button_r  = MSM_GPIO_TO_INT(OPTNAV_BUTTON_R),
+	.gpio_button_l = OPTNAV_BUTTON_L,
+	.gpio_button_r = OPTNAV_BUTTON_R,
+	.gpio_setup    = optnav_gpio_setup,
+	.gpio_release  = optnav_gpio_release,
+	.optnav_on     = optnav_enable,
+	.optnav_off    = optnav_disable,
+	.rotate_xy     = 1,
 };
 
 static struct i2c_board_info msm_i2c_board_info[] __initdata = {
@@ -1030,6 +1173,11 @@ static struct i2c_board_info msm_i2c_board_info[] __initdata = {
 		.platform_data  = &msm_kybd_data
 	},
 	{
+		I2C_BOARD_INFO("fo1w", 0x50),
+		.irq           =  MSM_GPIO_TO_INT(OPTNAV_IRQ),
+		.platform_data = &optnav_data
+	},
+	{
 		I2C_BOARD_INFO("tps65023", 0x48),
 	},
 };
@@ -1040,13 +1188,19 @@ static void __init comet_init_irq(void)
 	msm_init_sirc();
 }
 
+static void kgsl_phys_memory_init(void)
+{
+	request_mem_region(kgsl_resources[1].start,
+			resource_size(&kgsl_resources[1]), "kgsl");
+}
+
 static void __init comet_init_host(void)
 {
-	msm_add_host(0, &msm_hsusb_pdata);
+	msm_add_host(0, &msm_usb_host_pdata);
 #ifdef CONFIG_USB_FS_HOST
 	if (fsusb_gpio_init())
 		return;
-	msm_add_host(1, &msm_hsusb_pdata);
+	msm_add_host(1, &msm_usb_host2_pdata);
 #endif
 }
 static void sdcc_gpio_init(void)
@@ -1125,9 +1279,6 @@ static unsigned sdcc_cfg_data[][6] = {
 	},
 };
 
-static unsigned long vreg_sts, gpio_sts;
-static struct vreg *vreg_mmc;
-
 static void msm_sdcc_setup_gpio(int dev_id, unsigned int enable)
 {
 	int i, rc;
@@ -1163,7 +1314,7 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 
 		clear_bit(pdev->id, &vreg_sts);
 
-		if (!vreg_sts) {
+		if (!vreg_sts && !gp6_enabled) {
 			rc = vreg_disable(vreg_mmc);
 			if (rc)
 				printk(KERN_ERR "%s: return val: %d \n",
@@ -1172,7 +1323,7 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 		return 0;
 	}
 
-	if (!vreg_sts) {
+	if (!vreg_sts && !gp6_enabled) {
 		rc = vreg_set_level(vreg_mmc, 2850);
 		if (!rc)
 			rc = vreg_enable(vreg_mmc);
@@ -1198,52 +1349,8 @@ static void __init comet_init_mmc(void)
 		return;
 	}
 	sdcc_gpio_init();
-	msm_add_sdcc(1, &comet_sdcc_data);
-	msm_add_sdcc(3, &comet_sdcc_data);
-}
-
-static void
-msm_i2c_gpio_config(int iface, int config_type)
-{
-	int gpio_scl;
-	int gpio_sda;
-	if (iface) {
-		gpio_scl = 60;
-		gpio_sda = 61;
-	} else {
-		gpio_scl = 95;
-		gpio_sda = 96;
-	}
-	if (config_type) {
-		gpio_tlmm_config(GPIO_CFG(gpio_scl, 1, GPIO_INPUT,
-					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
-		gpio_tlmm_config(GPIO_CFG(gpio_sda, 1, GPIO_INPUT,
-					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
-	} else {
-		gpio_tlmm_config(GPIO_CFG(gpio_scl, 0, GPIO_OUTPUT,
-					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
-		gpio_tlmm_config(GPIO_CFG(gpio_sda, 0, GPIO_OUTPUT,
-					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
-	}
-}
-
-static struct msm_i2c_platform_data msm_i2c_pdata = {
-	.clk_freq = 100000,
-	.msm_i2c_config_gpio = msm_i2c_gpio_config,
-};
-
-static void __init msm_device_i2c_init(void)
-{
-	if (gpio_request(95, "i2c_pri_clk"))
-		pr_err("failed to request gpio i2c_pri_clk\n");
-	if (gpio_request(96, "i2c_pri_dat"))
-		pr_err("failed to request gpio i2c_pri_dat\n");
-	if (gpio_request(60, "i2c_sec_clk"))
-		pr_err("failed to request gpio i2c_sec_clk\n");
-	if (gpio_request(61, "i2c_sec_dat"))
-		pr_err("failed to request gpio i2c_sec_dat\n");
-
-	msm_device_i2c.dev.platform_data = &msm_i2c_pdata;
+	msm_add_sdcc(1, &comet_sdcc_data, 0, 0);
+	msm_add_sdcc(3, &comet_sdcc_data, 0, 0);
 }
 
 static struct msm_pm_platform_data msm_pm_data[MSM_PM_SLEEP_MODE_NR] = {
@@ -1273,28 +1380,61 @@ static struct msm_pm_platform_data msm_pm_data[MSM_PM_SLEEP_MODE_NR] = {
 	[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT].residency = 0,
 };
 
-static unsigned msm_uart_csr_code[] = {
-	0x22,		/* 	300 bits per second	*/
-	0x33,		/* 	600 bits per second	*/
-	0x44,		/* 	1200 bits per second	*/
-	0x55,		/* 	2400 bits per second	*/
-	0x77,		/* 	4800 bits per second	*/
-	0x99,		/* 	9600 bits per second	*/
-	0xAA,		/* 	14.4K bits per second	*/
-	0xBB,		/* 	19.2K bits per second	*/
-	0xCC,		/* 	28.8K bits per second	*/
-	0xDD,		/* 	38.4K bits per second	*/
-	0xEE,		/* 	57.6K bits per second	*/
-	0xFF,		/* 	115.2K bits per second	*/
+static void
+msm_i2c_gpio_config(int iface, int config_type)
+{
+	int gpio_scl;
+	int gpio_sda;
+	if (iface) {
+		gpio_scl = 60;
+		gpio_sda = 61;
+	} else {
+		gpio_scl = 95;
+		gpio_sda = 96;
+	}
+	if (config_type) {
+		gpio_tlmm_config(GPIO_CFG(gpio_scl, 1, GPIO_INPUT,
+					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
+		gpio_tlmm_config(GPIO_CFG(gpio_sda, 1, GPIO_INPUT,
+					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
+	} else {
+		gpio_tlmm_config(GPIO_CFG(gpio_scl, 0, GPIO_OUTPUT,
+					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
+		gpio_tlmm_config(GPIO_CFG(gpio_sda, 0, GPIO_OUTPUT,
+					GPIO_NO_PULL, GPIO_16MA), GPIO_ENABLE);
+	}
+}
+
+static struct msm_i2c_platform_data msm_i2c_pdata = {
+	.clk_freq = 100000,
+	.rsl_id = SMEM_SPINLOCK_I2C,
+	.pri_clk = 95,
+	.pri_dat = 96,
+	.aux_clk = 60,
+	.aux_dat = 61,
+	.msm_i2c_config_gpio = msm_i2c_gpio_config,
 };
 
-static struct msm_serial_platform_data msm_serial_pdata = {
-	.uart_csr_code = msm_uart_csr_code,
-};
+static void __init msm_device_i2c_init(void)
+{
+	if (gpio_request(95, "i2c_pri_clk"))
+		pr_err("failed to request gpio i2c_pri_clk\n");
+	if (gpio_request(96, "i2c_pri_dat"))
+		pr_err("failed to request gpio i2c_pri_dat\n");
+	if (gpio_request(60, "i2c_sec_clk"))
+		pr_err("failed to request gpio i2c_sec_clk\n");
+	if (gpio_request(61, "i2c_sec_dat"))
+		pr_err("failed to request gpio i2c_sec_dat\n");
+
+	msm_i2c_pdata.rmutex = (uint32_t *)smem_alloc(SMEM_I2C_MUTEX, 8);
+	msm_i2c_pdata.pm_lat =
+		msm_pm_data[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN]
+		.latency;
+	msm_device_i2c.dev.platform_data = &msm_i2c_pdata;
+}
 
 static void __init comet_init(void)
 {
-	char __iomem *cpld_base;
 	int           per_enable;
 	int           ext_per_enable;
 
@@ -1342,7 +1482,6 @@ static void __init comet_init(void)
 	msm_acpu_clock_init(&comet_clock_data);
 
 	msm_device_hsusb_peripheral.dev.platform_data = &msm_hsusb_pdata;
-	msm_device_uart3.dev.platform_data = &msm_serial_pdata;
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 	msm_device_uart_dm1.dev.platform_data = &msm_uart_dm1_pdata;
 	bt_power_init();
@@ -1356,50 +1495,98 @@ static void __init comet_init(void)
 	spi_register_board_info(msm_spi_board_info,
 				ARRAY_SIZE(msm_spi_board_info));
 	msm_pm_set_platform_data(msm_pm_data);
+	kgsl_phys_memory_init();
 }
+
+static unsigned pmem_kernel_ebi1_size = PMEM_KERNEL_EBI1_SIZE;
+static void __init pmem_kernel_ebi1_size_setup(char **p)
+{
+	pmem_kernel_ebi1_size = memparse(*p, p);
+}
+__early_param("pmem_kernel_ebi1_size=", pmem_kernel_ebi1_size_setup);
+
+static unsigned pmem_mdp_size = MSM_PMEM_MDP_SIZE;
+static void __init pmem_mdp_size_setup(char **p)
+{
+	pmem_mdp_size = memparse(*p, p);
+}
+__early_param("pmem_mdp_size=", pmem_mdp_size_setup);
+
+static unsigned pmem_adsp_size = MSM_PMEM_ADSP_SIZE;
+static void __init pmem_adsp_size_setup(char **p)
+{
+	pmem_adsp_size = memparse(*p, p);
+}
+__early_param("pmem_adsp_size=", pmem_adsp_size_setup);
+
+static unsigned pmem_gpu1_size = MSM_PMEM_GPU1_SIZE;
+static void __init pmem_gpu1_size_setup(char **p)
+{
+	pmem_gpu1_size = memparse(*p, p);
+}
+__early_param("pmem_gpu1_size=", pmem_gpu1_size_setup);
+
+static unsigned audio_size = MSM_AUDIO_SIZE;
+static void __init audio_size_setup(char **p)
+{
+	audio_size = memparse(*p, p);
+}
+__early_param("audio_size=", audio_size_setup);
 
 static void __init comet_allocate_memory_regions(void)
 {
 	void *addr;
 	unsigned long size;
 
-	size = PMEM_KERNEL_EBI1_SIZE;
-	addr = alloc_bootmem_aligned(size, 0x100000);
-	android_pmem_kernel_ebi1_pdata.start = __pa(addr);
-	android_pmem_kernel_ebi1_pdata.size = size;
-	printk(KERN_INFO "allocating %lu bytes at %p (%lx physical)"
-	       "for pmem kernel ebi1 arena\n", size, addr, __pa(addr));
+	size = pmem_kernel_ebi1_size;
+	if (size) {
+		addr = alloc_bootmem_aligned(size, 0x100000);
+		android_pmem_kernel_ebi1_pdata.start = __pa(addr);
+		android_pmem_kernel_ebi1_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for kernel"
+			" ebi1 pmem arena\n", size, addr, __pa(addr));
+	}
 
-	addr = alloc_bootmem(android_pmem_pdata.size);
-	android_pmem_pdata.start = __pa(addr);
+	size = pmem_mdp_size;
+	if (size) {
+		addr = alloc_bootmem(size);
+		android_pmem_pdata.start = __pa(addr);
+		android_pmem_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for mdp "
+			"pmem arena\n", size, addr, __pa(addr));
+	}
 
-	size = MSM_PMEM_ADSP_SIZE;
-	addr = alloc_bootmem(size);
-	android_pmem_adsp_pdata.start = __pa(addr);
-	android_pmem_adsp_pdata.size = size;
-	printk(KERN_INFO "allocating %lu bytes at %p (%lx physical)"
-	       "for adsp pmem\n", size, addr, __pa(addr));
+	size = pmem_adsp_size;
+	if (size) {
+		addr = alloc_bootmem(size);
+		android_pmem_adsp_pdata.start = __pa(addr);
+		android_pmem_adsp_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for adsp "
+			"pmem arena\n", size, addr, __pa(addr));
+	}
 
-	size = MSM_PMEM_GPU1_SIZE;
-	addr = alloc_bootmem_aligned(size, 0x100000);
-	android_pmem_gpu1_pdata.start = __pa(addr);
-	android_pmem_gpu1_pdata.size = size;
-	printk(KERN_INFO "allocating %lu bytes at %p (%lx physical)"
-	       "for gpu1 pmem\n", size, addr, __pa(addr));
+	size = pmem_gpu1_size;
+	if (size) {
+		addr = alloc_bootmem_aligned(size, 0x100000);
+		android_pmem_gpu1_pdata.start = __pa(addr);
+		android_pmem_gpu1_pdata.size = size;
+		pr_info("allocating %lu bytes at %p (%lx physical) for gpu1 "
+			"pmem arena\n", size, addr, __pa(addr));
+	}
 
 	size = MSM_FB_SIZE;
 	addr = (void *)MSM_FB_BASE;
 	msm_fb_resources[0].start = (unsigned long)addr;
 	msm_fb_resources[0].end = msm_fb_resources[0].start + size - 1;
-	printk(KERN_INFO "using %lu bytes of SMI at %lx physical for fb\n",
+	pr_info("using %lu bytes of SMI at %lx physical for fb\n",
 	       size, (unsigned long)addr);
 
-	size = MSM_AUDIO_SIZE;
+	size = audio_size ? : MSM_AUDIO_SIZE;
 	addr = alloc_bootmem(size);
 	msm_audio_resources[0].start = __pa(addr);
-	msm_audio_resources[0].end = __pa(addr) + MSM_AUDIO_SIZE;
-	printk(KERN_INFO "allocating %lu bytes at %p (%lx physical)"
-	       "for audio\n", size, addr, __pa(addr));
+	msm_audio_resources[0].end = msm_audio_resources[0].start + size - 1;
+	pr_info("allocating %lu bytes at %p (%lx physical) for audio\n",
+		size, addr, __pa(addr));
 }
 
 static void __init comet_map_io(void)

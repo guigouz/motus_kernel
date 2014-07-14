@@ -63,7 +63,7 @@
 #define TSSC_NUMBER_OF_OPERATIONS 2
 #define TS_PENUP_TIMEOUT_MS 20
 
-#define TS_DRIVER_NAME "msm_touch"
+#define TS_DRIVER_NAME "msm_touchscreen"
 
 #define X_MAX	1024
 #define Y_MAX	1024
@@ -144,8 +144,8 @@ static irqreturn_t ts_interrupt(int irq, void *dev_id)
 		 * Android framework adds calibration framework.
 		 */
 #ifdef CONFIG_ANDROID_TOUCHSCREEN_MSM_HACKS
-		lx = ts->x_max + 25 - x;
-		ly = ts->y_max + 25 - y;
+		lx = ts->x_max - x;
+		ly = ts->y_max - y;
 #else
 		lx = x;
 		ly = y;
@@ -312,4 +312,4 @@ module_exit(ts_exit);
 
 MODULE_DESCRIPTION("MSM Touch Screen driver");
 MODULE_LICENSE("GPL v2");
-MODULE_ALIAS("platform:msm_touch");
+MODULE_ALIAS("platform:msm_touchscreen");

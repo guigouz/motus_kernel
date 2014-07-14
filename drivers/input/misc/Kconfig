@@ -193,6 +193,16 @@ config INPUT_CM109
 	  To compile this driver as a module, choose M here: the module will be
 	  called cm109.
 
+config INPUT_TWL4030_PWRBUTTON
+	tristate "TWL4030 Power button Driver"
+	depends on TWL4030_CORE
+	help
+	  Say Y here if you want to enable power key reporting via the
+	  TWL4030 family of chips.
+
+	  To compile this driver as a module, choose M here. The module will
+	  be called twl4030_pwrbutton.
+
 config INPUT_UINPUT
 	tristate "User level driver support"
 	help
@@ -242,6 +252,35 @@ config INPUT_KEYCHORD
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called keychord.
+
+config INPUT_PROXIMITY_SFH7743
+	tristate "SFH7743 Proximity"
+	default n
+	help
+	  Say Y here if you wish to include the OSRAM SFH7743 proximity
+	  driver.
+
+	  If unsure, say N.
+	  To compile this driver a a module, choose M here.
+
+config INPUT_MSM_SFH7743
+        tristate "Proximity sensor SFH 7743 for QualCommon MSM"
+        depends on KERNEL_MOTOROLA || MACH_MOT
+        default n
+        help
+          Say Y here if you are using a driver for a SFH 7743
+          proximity device.
+
+          If unsure, say N.
+
+config INPUT_HALLEFFECT_BU52014HV
+	tristate "BU52014HV Hall Effect Sensor"
+	default n
+	help
+	  Say Y here if you wish to include support for the BU52014HV hall
+	  effect sensor.
+
+	  If unsure, say N.
 
 config BMA150
 	tristate "Bosch BMA150 accelerometer"

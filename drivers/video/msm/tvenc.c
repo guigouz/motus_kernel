@@ -72,6 +72,7 @@
 #include <linux/uaccess.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
+#include <linux/pm_qos_params.h>
 
 #define TVENC_C
 #include "tvenc.h"
@@ -116,11 +117,12 @@ static int tvenc_off(struct platform_device *pdev)
 	if (tvenc_pdata && tvenc_pdata->pm_vid_en)
 		ret = tvenc_pdata->pm_vid_en(0);
 
-	if (ret) {
+	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "tvenc",
+					PM_QOS_DEFAULT_VALUE);
+
+	if (ret)
 		printk(KERN_ERR "%s: pm_vid_en(off) failed! %d\n",
 		__func__, ret);
-		return ret;
-	}
 
 	return ret;
 }
@@ -129,6 +131,8 @@ static int tvenc_on(struct platform_device *pdev)
 {
 	int ret = 0;
 
+	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "tvenc",
+				128000);
 	if (tvenc_pdata && tvenc_pdata->pm_vid_en)
 		ret = tvenc_pdata->pm_vid_en(1);
 
@@ -154,24 +158,24 @@ void tvenc_gen_test_pattern(struct msm_fb_data_type *mfd)
 	reg |= TVENC_CTL_TEST_PATT_EN;
 
 	for (i = 0; i < 3; i++) {
-		TV_OUT(TV_ENC_CTL, 0);	//disable TV encoder
+		TV_OUT(TV_ENC_CTL, 0);	/* disable TV encoder */
 
 		switch (i) {
-			//////////////////////////////////////////////////
-			// TV Encoder - Color Bar Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Color Bar Test Pattern
+			 */
 		case 0:
 			reg |= TVENC_CTL_TPG_CLRBAR;
 			break;
-			//////////////////////////////////////////////////
-			// TV Encoder - Red Frame Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Red Frame Test Pattern
+			 */
 		case 1:
 			reg |= TVENC_CTL_TPG_REDCLR;
 			break;
-			//////////////////////////////////////////////////
-			// TV Encoder - Modulated Ramp Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Modulated Ramp Test Pattern
+			 */
 		default:
 			reg |= TVENC_CTL_TPG_MODRAMP;
 			break;
@@ -181,21 +185,21 @@ void tvenc_gen_test_pattern(struct msm_fb_data_type *mfd)
 		mdelay(5000);
 
 		switch (i) {
-			//////////////////////////////////////////////////
-			// TV Encoder - Color Bar Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Color Bar Test Pattern
+			 */
 		case 0:
 			reg &= ~TVENC_CTL_TPG_CLRBAR;
 			break;
-			//////////////////////////////////////////////////
-			// TV Encoder - Red Frame Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Red Frame Test Pattern
+			 */
 		case 1:
 			reg &= ~TVENC_CTL_TPG_REDCLR;
 			break;
-			//////////////////////////////////////////////////
-			// TV Encoder - Modulated Ramp Test Pattern
-			//////////////////////////////////////////////////
+			/*
+			 * TV Encoder - Modulated Ramp Test Pattern
+			 */
 		default:
 			reg &= ~TVENC_CTL_TPG_MODRAMP;
 			break;
@@ -247,15 +251,15 @@ static int tvenc_probe(struct platform_device *pdev)
 	if (!mdp_dev)
 		return -ENOMEM;
 
-	/////////////////////////////////////////
-	// link to the latest pdev
-	/////////////////////////////////////////
+	/*
+	 * link to the latest pdev
+	 */
 	mfd->pdev = mdp_dev;
 	mfd->dest = DISPLAY_TV;
 
-	/////////////////////////////////////////
-	// alloc panel device data
-	/////////////////////////////////////////
+	/*
+	 * alloc panel device data
+	 */
 	if (platform_device_add_data
 	    (mdp_dev, pdev->dev.platform_data,
 	     sizeof(struct msm_fb_panel_data))) {
@@ -263,28 +267,28 @@ static int tvenc_probe(struct platform_device *pdev)
 		platform_device_put(mdp_dev);
 		return -ENOMEM;
 	}
-	/////////////////////////////////////////
-	// data chain
-	/////////////////////////////////////////
+	/*
+	 * data chain
+	 */
 	pdata = mdp_dev->dev.platform_data;
 	pdata->on = tvenc_on;
 	pdata->off = tvenc_off;
 	pdata->next = pdev;
 
-	/////////////////////////////////////////
-	// get/set panel specific fb info
-	/////////////////////////////////////////
+	/*
+	 * get/set panel specific fb info
+	 */
 	mfd->panel_info = pdata->panel_info;
 	mfd->fb_imgType = MDP_YCRYCB_H2V1;
 
-	/////////////////////////////////////////
-	// set driver data
-	/////////////////////////////////////////
+	/*
+	 * set driver data
+	 */
 	platform_set_drvdata(mdp_dev, mfd);
 
-	/////////////////////////////////////////
-	// register in mdp driver
-	/////////////////////////////////////////
+	/*
+	 * register in mdp driver
+	 */
 	rc = platform_device_add(mdp_dev);
 	if (rc)
 		goto tvenc_probe_err;
@@ -299,6 +303,7 @@ tvenc_probe_err:
 
 static int tvenc_remove(struct platform_device *pdev)
 {
+	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ , "tvenc");
 	return 0;
 }
 
@@ -322,6 +327,8 @@ static int __init tvenc_driver_init(void)
 		return IS_ERR(tvdac_clk);
 	}
 
+	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ , "tvenc",
+				PM_QOS_DEFAULT_VALUE);
 	return tvenc_register_driver();
 }
 

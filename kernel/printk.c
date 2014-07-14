@@ -44,7 +44,7 @@ void asmlinkage __attribute__((weak)) early_printk(const char *fmt, ...)
 
 #define __LOG_BUF_LEN	(1 << CONFIG_LOG_BUF_SHIFT)
 
-#ifdef        CONFIG_DEBUG_LL
+#ifdef CONFIG_DEBUG_LL
 extern void printascii(char *);
 #endif
 
@@ -241,6 +241,14 @@ static inline void boot_delay_msec(void)
 static int log_buf_get_len(void)
 {
 	return logged_chars;
+}
+
+/*
+ * Clears the ring-buffer
+ */
+void log_buf_clear(void)
+{
+	logged_chars = 0;
 }
 
 /*
@@ -710,6 +718,9 @@ asmlinkage int vprintk(const char *fmt, va_list args)
 	printed_len += vscnprintf(printk_buf + printed_len,
 				  sizeof(printk_buf) - printed_len, fmt, args);
 
+#ifdef	CONFIG_DEBUG_LL
+	printascii(printk_buf);
+#endif
 
 #ifdef	CONFIG_DEBUG_LL
 	printascii(printk_buf);
@@ -934,7 +945,7 @@ void suspend_console(void)
 {
 	if (!console_suspend_enabled)
 		return;
-	printk("Suspending console(s) (use no_console_suspend to debug)\n");
+	/*printk("Suspending console(s) (use no_console_suspend to debug)\n");*/
 	acquire_console_sem();
 	console_suspended = 1;
 	up(&console_sem);

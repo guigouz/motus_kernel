@@ -7,67 +7,42 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
+ *     * Neither the name of Code Aurora nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
- *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
 #ifndef _QDSP6AUDIOENCDRIVERI_H_
 #define _QDSP6AUDIOENCDRIVERI_H_
 
+#include <linux/completion.h>
+
 #include <mach/qdsp6/msm8k_cad_module.h>
+#include <mach/qdsp6/msm8k_adsp_audio_command.h>
 
 #define		Q6_ENC_MAX_SESSION_COUNT	4
 #define		Q6_ENC_BUF_PER_SESSION		4
-#define		Q6_ENC_BUF_MAX_SIZE		(1024 * 10)
+#define		Q6_ENC_BUF_MAX_SIZE		(1024 * 11)
 
 enum q6_enc_session_state {
 	Q6_ENC_STATE_RESET = 0,
 	Q6_ENC_STATE_INIT,
 	Q6_ENC_STATE_PROCESS,
+	Q6_ENC_STATE_VOICE,
 	Q6_ENC_STATE_CLOSING
 };
 
@@ -76,16 +51,21 @@ struct q6_enc_session_buf_node {
 	u32					phys_addr;
 	u32					buf_len;
 	struct q6_enc_session_buf_node		*next;
+	/* the following is used when smaller user buffer is used */
+	u8					*read_ptr;
 };
 
 struct q6_enc_session_data {
 	struct mutex			session_mutex;
+	struct mutex			close_mutex;
 	u32				session_id;
+	u32				group_id;
 	u32				buf_size;
-	struct semaphore		buf_done_evt;
+	struct completion		buf_done_compl;
 	s32				signal_buf_done;
-	struct semaphore		all_buf_done_evt;
+	struct completion		all_buf_done_compl;
 	s32				signal_all_buf_done;
+	u32				need_flush;
 	struct q6_enc_session_buf_node	*free_nodes;
 	struct q6_enc_session_buf_node	*used_nodes;
 	struct q6_enc_session_buf_node	*full_nodes_head;
@@ -94,6 +74,7 @@ struct q6_enc_session_data {
 	struct q6_enc_session_data	*next;
 	struct cad_event_struct_type	cb_data;
 	u8				*shared_buffer;
+	struct adsp_audio_data_command	q6_data_buf;
 };
 
 struct q6_audio_enc_data {

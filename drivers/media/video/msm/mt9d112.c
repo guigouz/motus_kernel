@@ -1,57 +1,18 @@
-/* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
- *       the names of its contributors may be used to endorse or promote
- *       products derived from this software without specific prior written
- *       permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
 
@@ -74,26 +35,36 @@
 #define  REG_MT9D112_STANDBY_CONTROL  0x3202
 #define  REG_MT9D112_MCU_BOOT         0x3386
 
-struct mt9d112_work_t {
+
+static int mt9d112_reset(struct msm_camera_sensor_info *dev)
+=======
+struct mt9d112_work {
 	struct work_struct work;
 };
 
-static struct  mt9d112_work_t *mt9d112_sensorw;
+static struct  mt9d112_work *mt9d112_sensorw;
 static struct  i2c_client *mt9d112_client;
 
-struct mt9d112_ctrl_t {
-	struct msm_camera_sensor_info *sensordata;
+struct mt9d112_ctrl {
+	const struct msm_camera_sensor_info *sensordata;
 };
 
 
-static struct mt9d112_ctrl_t *mt9d112_ctrl;
+static struct mt9d112_ctrl *mt9d112_ctrl;
 
 static DECLARE_WAIT_QUEUE_HEAD(mt9d112_wait_queue);
 DECLARE_MUTEX(mt9d112_sem);
+static int16_t mt9d112_effect = CAMERA_EFFECT_OFF;
+
+/*=============================================================
+	EXTERNAL DECLARATIONS
+==============================================================*/
+extern struct mt9d112_reg mt9d112_regs;
+
 
 /*=============================================================*/
 
-static int mt9d112_reset(struct msm_camera_sensor_info *dev)
+static int mt9d112_reset(const struct msm_camera_sensor_info *dev)
 {
 	int rc = 0;
 
@@ -122,7 +93,7 @@ static int32_t mt9d112_i2c_txdata(unsigned short saddr,
 	};
 
 	if (i2c_transfer(mt9d112_client->adapter, msg, 1) < 0) {
-		CDBG("mt9d112_i2c_txdata faild\n");
+		CDBG("mt9d112_i2c_txdata failed\n");
 		return -EIO;
 	}
 
@@ -130,9 +101,9 @@ static int32_t mt9d112_i2c_txdata(unsigned short saddr,
 }
 
 static int32_t mt9d112_i2c_write(unsigned short saddr,
-	unsigned short waddr, unsigned short wdata, enum mt9d112_width_t width)
+	unsigned short waddr, unsigned short wdata, enum mt9d112_width width)
 {
-	int32_t rc = -EFAULT;
+	int32_t rc = -EIO;
 	unsigned char buf[4];
 
 	memset(buf, 0, sizeof(buf));
@@ -171,7 +142,7 @@ static int32_t mt9d112_i2c_write_table(
 	int num_of_items_in_table)
 {
 	int i;
-	int32_t rc = -EFAULT;
+	int32_t rc = -EIO;
 
 	for (i = 0; i < num_of_items_in_table; i++) {
 		rc = mt9d112_i2c_write(mt9d112_client->addr,
@@ -214,7 +185,7 @@ static int mt9d112_i2c_rxdata(unsigned short saddr,
 }
 
 static int32_t mt9d112_i2c_read(unsigned short   saddr,
-	unsigned short raddr, unsigned short *rdata, enum mt9d112_width_t width)
+	unsigned short raddr, unsigned short *rdata, enum mt9d112_width width)
 {
 	int32_t rc = 0;
 	unsigned char buf[4];
@@ -251,7 +222,7 @@ static int32_t mt9d112_set_lens_roll_off(void)
 {
 	int32_t rc = 0;
 	rc = mt9d112_i2c_write_table(&mt9d112_regs.rftbl[0],
-		mt9d112_regs.rftbl_size);
+								 mt9d112_regs.rftbl_size);
 	return rc;
 }
 
@@ -263,14 +234,13 @@ static long mt9d112_reg_init(void)
 
 	/* PLL Setup Start */
 	rc = mt9d112_i2c_write_table(&mt9d112_regs.plltbl[0],
-		mt9d112_regs.plltbl_size);
+					mt9d112_regs.plltbl_size);
 
 	if (rc < 0)
 		return rc;
 	/* PLL Setup End   */
 
 	array_length = mt9d112_regs.prev_snap_reg_settings_size;
-
 
 	/* Configure sensor for Preview mode and Snapshot mode */
 	for (i = 0; i < array_length; i++) {
@@ -288,9 +258,9 @@ static long mt9d112_reg_init(void)
 
 	for (i = 0; i < array_length; i++) {
 		rc = mt9d112_i2c_write(mt9d112_client->addr,
-		mt9d112_regs.noise_reduction_reg_settings[i].register_address,
-		mt9d112_regs.noise_reduction_reg_settings[i].register_value,
-		WORD_LEN);
+			mt9d112_regs.noise_reduction_reg_settings[i].register_address,
+			mt9d112_regs.noise_reduction_reg_settings[i].register_value,
+			WORD_LEN);
 
 		if (rc < 0)
 			return rc;
@@ -306,7 +276,7 @@ static long mt9d112_reg_init(void)
 		return rc;
 
 	rc = mt9d112_i2c_write_table(&mt9d112_regs.stbl[0],
-		mt9d112_regs.stbl_size);
+					mt9d112_regs.stbl_size);
 	if (rc < 0)
 		return rc;
 
@@ -317,118 +287,7 @@ static long mt9d112_reg_init(void)
 	return 0;
 }
 
-static long mt9d112_set_sensor_mode(enum sensor_mode_t mode)
-{
-	uint16_t clock;
-	long rc = 0;
-
-	switch (mode) {
-	case SENSOR_PREVIEW_MODE:
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA20C, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0004, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA215, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0004, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA20B, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0000, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		clock = 0x0250;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x341C, clock, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA103, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0001, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		mdelay(5);
-		break;
-
-	case SENSOR_SNAPSHOT_MODE:
-		/* Switch to lower fps for Snapshot */
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x341C, 0x0120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA120, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		mdelay(5);
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x338C, 0xA103, WORD_LEN);
-		if (rc < 0)
-			return rc;
-
-		rc =
-			mt9d112_i2c_write(mt9d112_client->addr,
-				0x3390, 0x0002, WORD_LEN);
-		if (rc < 0)
-			return rc;
-		break;
-
-	default:
-		return -EFAULT;
-	}
-
-	return 0;
-}
-
-static long mt9d112_set_effect(
-	enum sensor_mode_t mode,
-	int8_t effect
-)
+static long mt9d112_set_effect(int mode, int effect)
 {
 	uint16_t reg_addr;
 	uint16_t reg_val;
@@ -450,7 +309,7 @@ static long mt9d112_set_effect(
 		break;
 	}
 
-	switch ((enum camera_effect_t)effect) {
+	switch (effect) {
 	case CAMERA_EFFECT_OFF: {
 		reg_val = 0x6440;
 
@@ -534,11 +393,11 @@ static long mt9d112_set_effect(
 		if (rc < 0)
 			return rc;
 
-		return -EFAULT;
+		return -EINVAL;
 	}
 	}
-
-  /* Refresh Sequencer */
+	mt9d112_effect = effect;
+	/* Refresh Sequencer */
 	rc = mt9d112_i2c_write(mt9d112_client->addr,
 		0x338C, 0xA103, WORD_LEN);
 	if (rc < 0)
@@ -550,7 +409,170 @@ static long mt9d112_set_effect(
 	return rc;
 }
 
-static int mt9d112_sensor_init_probe(struct msm_camera_sensor_info *data)
+static long mt9d112_set_sensor_mode(int mode)
+{
+	uint16_t clock;
+	long rc = 0;
+
+	switch (mode) {
+	case SENSOR_PREVIEW_MODE:
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA20C, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0004, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA215, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0004, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA20B, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0000, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		clock = 0x0250;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x341C, clock, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA103, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0001, WORD_LEN);
+		if (rc < 0)
+			return rc;
+		mdelay(5);
+		rc =
+			mt9d112_set_effect(mode, mt9d112_effect);
+		if (rc < 0)
+			return rc;
+		break;
+
+	case SENSOR_SNAPSHOT_MODE:
+		rc =
+			mt9d112_set_effect(mode, mt9d112_effect);
+		if (rc < 0)
+			return rc;
+		/* Switch to lower fps for Snapshot */
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x341C, 0x0120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		mdelay(5);
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA103, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+		break;
+
+	case SENSOR_RAW_SNAPSHOT_MODE:
+		/* Setting the effect to CAMERA_EFFECT_OFF */
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0x279B, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+			0x3390, 0x6440, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		/* Switch to lower fps for Snapshot */
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x341C, 0x0120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA120, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		mdelay(5);
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x338C, 0xA103, WORD_LEN);
+		if (rc < 0)
+			return rc;
+
+		rc =
+			mt9d112_i2c_write(mt9d112_client->addr,
+				0x3390, 0x0002, WORD_LEN);
+		if (rc < 0)
+			return rc;
+		break;
+
+	default:
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int mt9d112_sensor_init_probe(const struct msm_camera_sensor_info *data)
 {
 	uint16_t model_id = 0;
 	int rc = 0;
@@ -609,7 +631,7 @@ static int mt9d112_sensor_init_probe(struct msm_camera_sensor_info *data)
 
 	/* Check if it matches it with the value in Datasheet */
 	if (model_id != MT9D112_MODEL_ID) {
-		rc = -EFAULT;
+		rc = -EINVAL;
 		goto init_probe_fail;
 	}
 
@@ -623,11 +645,11 @@ init_probe_fail:
 	return rc;
 }
 
-int mt9d112_sensor_init(struct msm_camera_sensor_info *data)
+int mt9d112_sensor_init(const struct msm_camera_sensor_info *data)
 {
 	int rc = 0;
 
-	mt9d112_ctrl = kzalloc(sizeof(struct mt9d112_ctrl_t), GFP_KERNEL);
+	mt9d112_ctrl = kzalloc(sizeof(struct mt9d112_ctrl), GFP_KERNEL);
 	if (!mt9d112_ctrl) {
 		CDBG("mt9d112_init failed!\n");
 		rc = -ENOMEM;
@@ -643,7 +665,7 @@ int mt9d112_sensor_init(struct msm_camera_sensor_info *data)
 
 	msm_camio_camif_pad_reg_reset();
 
-  rc = mt9d112_sensor_init_probe(data);
+	rc = mt9d112_sensor_init_probe(data);
 	if (rc < 0) {
 		CDBG("mt9d112_sensor_init failed!\n");
 		goto init_fail;
@@ -666,13 +688,12 @@ static int mt9d112_init_client(struct i2c_client *client)
 
 int mt9d112_sensor_config(void __user *argp)
 {
-	struct sensor_cfg_data_t cfg_data;
+	struct sensor_cfg_data cfg_data;
 	long   rc = 0;
 
-	if (copy_from_user(
-				&cfg_data,
-				(void *)argp,
-				sizeof(struct sensor_cfg_data_t)))
+	if (copy_from_user(&cfg_data,
+			(void *)argp,
+			sizeof(struct sensor_cfg_data)))
 		return -EFAULT;
 
 	/* down(&mt9d112_sem); */
@@ -680,22 +701,22 @@ int mt9d112_sensor_config(void __user *argp)
 	CDBG("mt9d112_ioctl, cfgtype = %d, mode = %d\n",
 		cfg_data.cfgtype, cfg_data.mode);
 
-	switch (cfg_data.cfgtype) {
-	case CFG_SET_MODE:
-		rc = mt9d112_set_sensor_mode(
-					cfg_data.mode);
-		break;
+		switch (cfg_data.cfgtype) {
+		case CFG_SET_MODE:
+			rc = mt9d112_set_sensor_mode(
+						cfg_data.mode);
+			break;
 
-	case CFG_SET_EFFECT:
-		rc = mt9d112_set_effect(
-					cfg_data.mode,
-					cfg_data.cfg.effect);
-		break;
+		case CFG_SET_EFFECT:
+			rc = mt9d112_set_effect(cfg_data.mode,
+						cfg_data.cfg.effect);
+			break;
 
-	default:
-		rc = -EFAULT;
-		break;
-	}
+		case CFG_GET_AF_MAX_STEPS:
+		default:
+			rc = -EINVAL;
+			break;
+		}
 
 	/* up(&mt9d112_sem); */
 
@@ -714,7 +735,7 @@ int mt9d112_sensor_release(void)
 	return rc;
 }
 
-static int mt9d112_probe(struct i2c_client *client,
+static int mt9d112_i2c_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
 	int rc = 0;
@@ -724,7 +745,7 @@ static int mt9d112_probe(struct i2c_client *client,
 	}
 
 	mt9d112_sensorw =
-		kzalloc(sizeof(struct mt9d112_work_t), GFP_KERNEL);
+		kzalloc(sizeof(struct mt9d112_work), GFP_KERNEL);
 
 	if (!mt9d112_sensorw) {
 		rc = -ENOMEM;
@@ -735,7 +756,7 @@ static int mt9d112_probe(struct i2c_client *client,
 	mt9d112_init_client(client);
 	mt9d112_client = client;
 
-	CDBG("mt9d112_probe successed!\n");
+	CDBG("mt9d112_probe succeeded!\n");
 
 	return 0;
 
@@ -746,61 +767,28 @@ probe_failure:
 	return rc;
 }
 
-static int __exit mt9d112_remove(struct i2c_client *client)
-{
-	struct mt9d112_work_t *sensorw = i2c_get_clientdata(client);
-	free_irq(client->irq, sensorw);
-	mt9d112_client = NULL;
-	mt9d112_sensorw = NULL;
-	kfree(sensorw);
-	return 0;
-}
-
-static const struct i2c_device_id mt9d112_id[] = {
+static const struct i2c_device_id mt9d112_i2c_id[] = {
 	{ "mt9d112", 0},
 	{ },
 };
 
-static struct i2c_driver mt9d112_driver = {
-	.id_table = mt9d112_id,
-	.probe  = mt9d112_probe,
-	.remove = __exit_p(mt9d112_remove),
+static struct i2c_driver mt9d112_i2c_driver = {
+	.id_table = mt9d112_i2c_id,
+	.probe  = mt9d112_i2c_probe,
+	.remove = __exit_p(mt9d112_i2c_remove),
 	.driver = {
 		.name = "mt9d112",
 	},
 };
 
-static int32_t mt9d112_init(void)
+static int mt9d112_sensor_probe(const struct msm_camera_sensor_info *info,
+				struct msm_sensor_ctrl *s)
 {
-	int32_t rc = 0;
-
-	rc = i2c_add_driver(&mt9d112_driver);
-	if (IS_ERR_VALUE(rc))
-		goto init_failure;
-	return rc;
-
-init_failure:
-	CDBG("mt9d112_init, rc = %d\n", rc);
-	return rc;
-}
-
-void mt9d112_exit(void)
-{
-	i2c_del_driver(&mt9d112_driver);
-}
-
-int mt9d112_probe_init(void *dev, void *ctrl)
-{
-	int rc = 0;
-	struct msm_camera_sensor_info *info =
-		(struct msm_camera_sensor_info *)dev;
-
-	struct msm_sensor_ctrl_t *s =
-		(struct msm_sensor_ctrl_t *)ctrl;
-
-	rc = mt9d112_init();
-	if (rc < 0)
+	int rc = i2c_add_driver(&mt9d112_i2c_driver);
+	if (rc < 0 || mt9d112_client == NULL) {
+		rc = -ENOTSUPP;
 		goto probe_done;
+	}
 
 	/* Input MCLK = 24MHz */
 	msm_camio_clk_rate_set(24000000);
@@ -819,3 +807,22 @@ probe_done:
 	return rc;
 }
 
+static int __mt9d112_probe(struct platform_device *pdev)
+{
+	return msm_camera_drv_start(pdev, mt9d112_sensor_probe);
+}
+
+static struct platform_driver msm_camera_driver = {
+	.probe = __mt9d112_probe,
+	.driver = {
+		.name = "msm_camera_mt9d112",
+		.owner = THIS_MODULE,
+	},
+};
+
+static int __init mt9d112_init(void)
+{
+	return platform_driver_register(&msm_camera_driver);
+}
+
+module_init(mt9d112_init);

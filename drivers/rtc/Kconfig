@@ -119,6 +119,14 @@ config RTC_INTF_ALARM
 	  Also provides an ioctl to set the wall time which must be used
 	  for elapsed realtime to work.
 
+config RTC_INTF_SECCLKD
+	tristate "RTC SECCLKD"
+	default n
+	help
+	  CPCAP RTC driver provide support for secure clock daemon in
+	  gettting the counter maintained to keep track of the change
+	  in RTC time.
+
 config RTC_DRV_TEST
 	tristate "Test driver/device"
 	help
@@ -524,6 +532,13 @@ config RTC_DRV_PCF50633
 	help
 	  If you say yes here you get support for the RTC subsystem of the
 	  NXP PCF50633 used in embedded systems.
+
+config RTC_DRV_CPCAP
+	depends on MFD_CPCAP
+	tristate "CPCAP RTC"
+	help
+	  If you say yes here you get support for the RTC subsystem of the
+	  CPCAP used in embedded systems.
 
 comment "on-CPU RTC drivers"
 

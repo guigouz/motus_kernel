@@ -3,6 +3,7 @@
  *
  *  Copyright (C) 2004 ARM Limited.
  *  Written by Deep Blue Solutions Limited.
+ *  Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -153,10 +154,13 @@ static void vfp_raise_exceptions(u32 exceptions, u32 inst, u32 fpscr, struct pt_
 	}
 
 	/*
-	 * Update the FPSCR with the additional exception flags.
+	 * If any of the status flags are set, update the FPSCR.
 	 * Comparison instructions always return at least one of
 	 * these flags set.
 	 */
+	if (exceptions & (FPSCR_N|FPSCR_Z|FPSCR_C|FPSCR_V))
+		fpscr &= ~(FPSCR_N|FPSCR_Z|FPSCR_C|FPSCR_V);
+
 	fpscr |= exceptions;
 
 	fmxr(FPSCR, fpscr);
@@ -253,12 +257,14 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	}
 
 	if (fpexc & FPEXC_EX) {
+#ifndef CONFIG_ARCH_OMAP3430
 		/*
 		 * Asynchronous exception. The instruction is read from FPINST
 		 * and the interrupted instruction has to be restarted.
 		 */
 		trigger = fmrx(FPINST);
 		regs->ARM_pc -= 4;
+#endif
 	} else if (!(fpexc & FPEXC_DEX)) {
 		/*
 		 * Illegal combination of bits. It can be caused by an
@@ -266,7 +272,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 		 * on VFP subarch 1.
 		 */
 		 vfp_raise_exceptions(VFP_EXCEPTION_ERROR, trigger, fpscr, regs);
-		 return;
+		goto exit;
 	}
 
 	/*
@@ -297,7 +303,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	 * the FPEXC.FP2V bit is valid only if FPEXC.EX is 1.
 	 */
 	if (fpexc ^ (FPEXC_EX | FPEXC_FP2V))
-		return;
+		goto exit;
 
 	/*
 	 * The barrier() here prevents fpinst2 being read
@@ -310,6 +316,8 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	exceptions = vfp_emulate_instruction(trigger, orig_fpscr, regs);
 	if (exceptions)
 		vfp_raise_exceptions(exceptions, trigger, orig_fpscr, regs);
+ exit:
+	preempt_enable();
 }
 
 static void vfp_enable(void *unused)
@@ -324,14 +332,22 @@ static void vfp_enable(void *unused)
 
 int vfp_flush_context(void)
 {
-	struct thread_info *ti = current_thread_info();
-	u32 fpexc = fmrx(FPEXC);
-	u32 cpu = ti->cpu;
+	unsigned long flags;
+	struct thread_info *ti;
+	u32 fpexc;
+	u32 cpu;
 	int saved = 0;
+
+	local_irq_save(flags);
+
+	ti = current_thread_info();
+	fpexc = fmrx(FPEXC);
+	cpu = ti->cpu;
 
 #ifdef CONFIG_SMP
 	/* On SMP, if VFP is enabled, save the old state */
 	if ((fpexc & FPEXC_EN) && last_VFP_context[cpu]) {
+		last_VFP_context[cpu]->hard.cpu = cpu;
 #else
 	/* If there is a VFP context we must save it. */
 	if (last_VFP_context[cpu]) {
@@ -343,10 +359,12 @@ int vfp_flush_context(void)
 
 		/* disable, just in case */
 		fmxr(FPEXC, fmrx(FPEXC) & ~FPEXC_EN);
-
-		last_VFP_context[cpu] = NULL;
 		saved = 1;
 	}
+	last_VFP_context[cpu] = NULL;
+
+	local_irq_restore(flags);
+
 	return saved;
 }
 
@@ -403,6 +421,55 @@ static void vfp_pm_init(void)
 static inline void vfp_pm_init(void) { }
 #endif /* CONFIG_PM */
 
+/*
+ * Synchronise the hardware VFP state of a thread other than current with the
+ * saved one. This function is used by the ptrace mechanism.
+ */
+#ifdef CONFIG_SMP
+void vfp_sync_state(struct thread_info *thread)
+{
+	/*
+	 * On SMP systems, the VFP state is automatically saved at every
+	 * context switch. We mark the thread VFP state as belonging to a
+	 * non-existent CPU so that the saved one will be reloaded when
+	 * needed.
+	 */
+	thread->vfpstate.hard.cpu = NR_CPUS;
+}
+#else
+void vfp_sync_state(struct thread_info *thread)
+{
+	unsigned int cpu = get_cpu();
+	u32 fpexc = fmrx(FPEXC);
+
+	/*
+	 * If VFP is enabled, the previous state was already saved and
+	 * last_VFP_context updated.
+	 */
+	if (fpexc & FPEXC_EN)
+		goto out;
+
+	if (!last_VFP_context[cpu])
+		goto out;
+
+	/*
+	 * Save the last VFP state on this CPU.
+	 */
+	fmxr(FPEXC, fpexc | FPEXC_EN);
+	vfp_save_state(last_VFP_context[cpu], fpexc);
+	fmxr(FPEXC, fpexc);
+
+	/*
+	 * Set the context to NULL to force a reload the next time the thread
+	 * uses the VFP.
+	 */
+	last_VFP_context[cpu] = NULL;
+
+out:
+	put_cpu();
+}
+#endif
+
 #include <linux/smp.h>
 
 /*
@@ -453,6 +520,18 @@ static int __init vfp_init(void)
 		 * in place; report VFP support to userspace.
 		 */
 		elf_hwcap |= HWCAP_VFP;
+#ifdef CONFIG_VFPv3
+		if (VFP_arch >= 3) {
+			elf_hwcap |= HWCAP_VFPv3;
+
+			/*
+			 * Check for VFPv3 D16. CPUs in this configuration
+			 * only have 16 x 64bit registers.
+			 */
+			if (((fmrx(MVFR0) & MVFR0_A_SIMD_MASK)) == 1)
+				elf_hwcap |= HWCAP_VFPv3D16;
+		}
+#endif
 #ifdef CONFIG_NEON
 		/*
 		 * Check for the presence of the Advanced SIMD

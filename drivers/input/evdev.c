@@ -45,6 +45,7 @@ struct evdev_client {
 	struct evdev *evdev;
 	struct list_head node;
 	struct wake_lock wake_lock;
+	char name[28];
 };
 
 static struct evdev *evdev_table[EVDEV_MINORS];
@@ -279,7 +280,9 @@ static int evdev_open(struct inode *inode, struct file *file)
 	}
 
 	spin_lock_init(&client->buffer_lock);
-	wake_lock_init(&client->wake_lock, WAKE_LOCK_SUSPEND, "evdev");
+	snprintf(client->name, sizeof(client->name), "%s-%d", evdev->name,
+			task_tgid_vnr(current));
+	wake_lock_init(&client->wake_lock, WAKE_LOCK_SUSPEND, client->name);
 	client->evdev = evdev;
 	evdev_attach_client(evdev, client);
 
@@ -292,6 +295,7 @@ static int evdev_open(struct inode *inode, struct file *file)
 
  err_free_client:
 	evdev_detach_client(evdev, client);
+	wake_lock_destroy(&client->wake_lock);
 	kfree(client);
  err_put_evdev:
 	put_device(&evdev->dev);

@@ -117,9 +117,15 @@ int mdp_hw_cursor_update(struct fb_info *info, struct fb_cursor *cursor)
 		MDP_OUTP(MDP_BASE + 0x90060,
 			 (transp_en << 3) | (calpha_en << 1) |
 			 (inp32(MDP_BASE + 0x90060) & 0x1));
+#ifdef CONFIG_FB_MSM_MDP40
+		MDP_OUTP(MDP_BASE + 0x90064, (alpha << 24));
+		MDP_OUTP(MDP_BASE + 0x90068, (0xffffff & img->bg_color));
+		MDP_OUTP(MDP_BASE + 0x9006C, (0xffffff & img->bg_color));
+#else
 		MDP_OUTP(MDP_BASE + 0x90064,
 			 (alpha << 24) | (0xffffff & img->bg_color));
 		MDP_OUTP(MDP_BASE + 0x90068, 0);
+#endif
 	}
 
 	if ((cursor->enable) && (!cursor_enabled)) {

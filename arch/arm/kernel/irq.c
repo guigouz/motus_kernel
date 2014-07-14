@@ -20,6 +20,10 @@
  *
  *  IRQ's are in fact implemented a bit like signal handlers for the kernel.
  *  Naturally it's not a 1:1 relation, but there are similarities.
+ *  Date        Author    Comment
+ *  ---------   --------- ------------------------------------
+ *  11/05/2007  Motorola  add irq log for LTT-LITE
+ *
  */
 #include <linux/kernel_stat.h>
 #include <linux/module.h>
@@ -36,7 +40,6 @@
 #include <linux/list.h>
 #include <linux/kallsyms.h>
 #include <linux/proc_fs.h>
-
 #include <asm/system.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
@@ -121,8 +124,9 @@ asmlinkage void __exception asm_do_IRQ(unsigned int irq, struct pt_regs *regs)
 	 */
 	if (irq >= NR_IRQS)
 		handle_bad_irq(irq, &bad_irq_desc);
-	else
+	else {
 		generic_handle_irq(irq);
+	}
 
 	/* AT91 specific workaround */
 	irq_finish(irq);

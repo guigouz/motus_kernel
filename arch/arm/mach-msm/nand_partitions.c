@@ -45,9 +45,11 @@ struct msm_ptbl_entry {
 	__u32 size;
 	__u32 flags;
 };
-
+#if defined(CONFIG_KERNEL_MOTOROLA)
+#define MSM_MAX_PARTITIONS 10
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 #define MSM_MAX_PARTITIONS 8
-
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 static struct mtd_partition msm_nand_partitions[MSM_MAX_PARTITIONS];
 static char msm_nand_names[MSM_MAX_PARTITIONS * 16];
 

@@ -20,7 +20,7 @@
 #ifdef CONFIG_MSM_STACKED_MEMORY
 
 #ifdef CONFIG_ARCH_MSM_SCORPION
-#define PHYS_OFFSET		UL(0x24000000)
+#define PHYS_OFFSET		UL(0x20000000)
 #else
 #define PHYS_OFFSET		UL(0x10000000)
 #endif
@@ -32,6 +32,8 @@
 #endif
 
 #define HAS_ARCH_IO_REMAP_PFN_RANGE
+
+#define CONSISTENT_DMA_SIZE (4*SZ_1M)
 
 #ifndef __ASSEMBLY__
 void *alloc_bootmem_aligned(unsigned long size, unsigned long alignment);
@@ -49,6 +51,10 @@ void write_to_strongly_ordered_memory(void);
 		write_to_strongly_ordered_memory(); \
 	} while (0)
 #endif
+#endif
+
+#ifdef CONFIG_ARCH_MSM_SCORPION
+#define arch_has_speculative_dfetch()	1
 #endif
 
 #endif

@@ -7,51 +7,22 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
+ *     * Neither the name of Code Aurora nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
- *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -153,7 +124,7 @@ typedef unsigned int boolean;
 #define inpdw(port)            readl(port)
 #define outpdw(port, val)      writel(val, port)
 
-//
+
 #define clk_busy_wait(x) msleep_interruptible((x)/1000)
 
 #define memory_barrier()
@@ -170,8 +141,13 @@ typedef unsigned int boolean;
 #ifdef DISP_EBI2_LOCAL_DEFINE
 #define LCD_PRIM_BASE_PHYS 0x98000000
 #define LCD_SECD_BASE_PHYS 0x9c000000
+#if defined(CONFIG_KERNEL_MOTOROLA)
+#define EBI2_PRIM_LCD_RS_PIN ((0x1ul << 17) | (0x1ul << 16) | (0x1ul << 15))
+#define EBI2_SECD_LCD_RS_PIN ((0x1ul << 17) | (0x1ul << 16) | (0x1ul << 15))
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 #define EBI2_PRIM_LCD_RS_PIN 0x20000
 #define EBI2_SECD_LCD_RS_PIN 0x20000
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 
 #define EBI2_PRIM_LCD_CLR 0xC0
 #define EBI2_PRIM_LCD_SEL 0x40
@@ -182,16 +158,17 @@ typedef unsigned int boolean;
 
 extern u32 msm_fb_msg_level;
 
-// Message printing priorities:
-// LEVEL 0 KERN_EMERG (highest priority)
-// LEVEL 1 KERN_ALERT
-// LEVEL 2 KERN_CRIT
-// LEVEL 3 KERN_ERR
-// LEVEL 4 KERN_WARNING
-// LEVEL 5 KERN_NOTICE
-// LEVEL 6 KERN_INFO
-// LEVEL 7 KERN_DEBUG (Lowest priority)
-
+/*
+ * Message printing priorities:
+ * LEVEL 0 KERN_EMERG (highest priority)
+ * LEVEL 1 KERN_ALERT
+ * LEVEL 2 KERN_CRIT
+ * LEVEL 3 KERN_ERR
+ * LEVEL 4 KERN_WARNING
+ * LEVEL 5 KERN_NOTICE
+ * LEVEL 6 KERN_INFO
+ * LEVEL 7 KERN_DEBUG (Lowest priority)
+ */
 #define MSM_FB_EMERG(msg, ...)    \
 	if (msm_fb_msg_level > 0)  \
 		printk(KERN_EMERG msg, ## __VA_ARGS__);

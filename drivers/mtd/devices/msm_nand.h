@@ -143,12 +143,16 @@ extern unsigned long msm_nand_phys;
 #define ONENAND_ECC_ERRPOS_SPARE3	0xFF08
 
 /* Onenand commands */
+#define ONENAND_WP_US                   (1 << 2)
+#define ONENAND_WP_LS                   (1 << 1)
 
 #define ONENAND_CMDLOAD			0x0000
 #define ONENAND_CMDLOADSPARE		0x0013
 #define ONENAND_CMDPROG			0x0080
 #define ONENAND_CMDPROGSPARE		0x001A
 #define ONENAND_CMDERAS			0x0094
+#define ONENAND_CMD_UNLOCK              0x0023
+#define ONENAND_CMD_LOCK                0x002A
 
 #define ONENAND_SYSCFG1_ECCENA		0x40E0
 #define ONENAND_SYSCFG1_ECCDIS		0x41E0
@@ -156,9 +160,12 @@ extern unsigned long msm_nand_phys;
 #define ONENAND_STARTADDR1_RES		0x07FF
 #define ONENAND_STARTADDR3_RES		0x07FF
 
-#define DEVICE_FLASHCORE_0		0
-#define DEVICE_BUFFERRAM_0		0
 #define DATARAM0_0			0x8
+#define DEVICE_FLASHCORE_0              (0 << 15)
+#define DEVICE_FLASHCORE_1              (1 << 15)
+#define DEVICE_BUFFERRAM_0              (0 << 15)
+#define DEVICE_BUFFERRAM_1              (1 << 15)
+#define ONENAND_DEVICE_IS_DDP		(1 << 3)
 
 #define CLEAN_DATA_16			0xFFFF
 #define CLEAN_DATA_32			0xFFFFFFFF

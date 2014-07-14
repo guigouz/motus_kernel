@@ -79,6 +79,18 @@
 #include "msm_fb.h"
 #include "mddihost.h"
 
+#ifdef CONFIG_FB_MSM_MDP40
+#define MDP_SYNC_CFG_0		0x100
+#define MDP_SYNC_STATUS_0	0x10c
+#define MDP_PRIM_VSYNC_OUT_CTRL	0x118
+#define MDP_PRIM_VSYNC_INIT_VAL	0x128
+#else
+#define MDP_SYNC_CFG_0		0x300
+#define MDP_SYNC_STATUS_0	0x30c
+#define MDP_PRIM_VSYNC_OUT_CTRL	0x318
+#define MDP_PRIM_VSYNC_INIT_VAL	0x328
+#endif
+
 extern mddi_lcd_type mddi_lcd_idx;
 extern spinlock_t mdp_spin_lock;
 extern struct workqueue_struct *mdp_vsync_wq;
@@ -144,7 +156,7 @@ static void mdp_vsync_handler(void *data)
 	if (mfd->use_mdp_vsync) {
 #ifdef MDP_HW_VSYNC
 		if (mfd->panel_power_on)
-			MDP_OUTP(MDP_BASE + 0x30c, vsync_load_cnt);
+			MDP_OUTP(MDP_BASE + MDP_SYNC_STATUS_0, vsync_load_cnt);
 
 		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, TRUE);
 #endif
@@ -157,17 +169,35 @@ static void mdp_vsync_handler(void *data)
 
 irqreturn_t mdp_hw_vsync_handler_proxy(int irq, void *data)
 {
-	//ToDo: tried enabling/disabling GPIO MDP HW VSYNC interrupt
-	//      but getting inaccurate timing in mdp_vsync_handler()
-	//disable_irq(MDP_HW_VSYNC_IRQ);
+	/*
+	 * ToDo: tried enabling/disabling GPIO MDP HW VSYNC interrupt
+	 * but getting inaccurate timing in mdp_vsync_handler()
+	 * disable_irq(MDP_HW_VSYNC_IRQ);
+	 */
 	mdp_vsync_handler(data);
 
 	return IRQ_HANDLED;
 }
 
+#ifdef MDP_HW_VSYNC
+static void mdp_set_sync_cfg_0(struct msm_fb_data_type *mfd, int vsync_cnt)
+{
+	unsigned long cfg;
+
+	cfg = mfd->total_lcd_lines - 1;
+	cfg <<= MDP_SYNCFG_HGT_LOC;
+	if (mfd->panel_info.lcd.hw_vsync_mode)
+		cfg |= MDP_SYNCFG_VSYNC_EXT_EN;
+	cfg |= (MDP_SYNCFG_VSYNC_INT_EN | vsync_cnt);
+
+	MDP_OUTP(MDP_BASE + MDP_SYNC_CFG_0, cfg);
+}
+#endif
+
 void mdp_config_vsync(struct msm_fb_data_type *mfd)
 {
-	// vsync on primary lcd only for now
+
+	/* vsync on primary lcd only for now */
 	if ((mfd->dest != DISPLAY_LCD) || (mfd->panel_info.pdest != DISPLAY_1)
 	    || (!vsync_mode)) {
 		goto err_handle;
@@ -204,7 +234,10 @@ void mdp_config_vsync(struct msm_fb_data_type *mfd)
 			if (mdp_vsync_clk_speed_hz == 0) {
 				mfd->use_mdp_vsync = 0;
 			} else {
-				// Do this calculation in 2 steps for rounding uint32 properly.
+				/*
+				 * Do this calculation in 2 steps for
+				 * rounding uint32 properly.
+				 */
 				vsync_cnt_cfg_dem =
 				    (mfd->panel_info.lcd.refx100 *
 				     mfd->total_lcd_lines) / 100;
@@ -212,39 +245,38 @@ void mdp_config_vsync(struct msm_fb_data_type *mfd)
 				    (mdp_vsync_clk_speed_hz) /
 				    vsync_cnt_cfg_dem;
 
-				//MDP cmd block enable
+				/* MDP cmd block enable */
 				mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON,
 					      FALSE);
 				mdp_hw_vsync_clk_enable(mfd);
 
-				MDP_OUTP(MDP_BASE + 0x300,
-					 ((mfd->total_lcd_lines -
-					   1) << MDP_SYNCFG_HGT_LOC) | (mfd->
-									panel_info.
-									lcd.
-									hw_vsync_mode
-									?
-									MDP_SYNCFG_VSYNC_EXT_EN
-									: 0) |
-					 MDP_SYNCFG_VSYNC_INT_EN |
-					 vsync_cnt_cfg);
+				mdp_set_sync_cfg_0(mfd, vsync_cnt_cfg);
 
-				// load the last line + 1 to be in the safety zone
-				vsync_load_cnt = mfd->panel_info.yres;
+				/*
+				 * load the last line + 1 to be in the
+				 * safety zone
+				 */
+				vsync_load_cnt = mfd->panel_info.yres
 
-				// line counter init value at the next pulse
-				MDP_OUTP(MDP_BASE + 0x328, vsync_load_cnt);
+				/* line counter init value at the next pulse */
+				MDP_OUTP(MDP_BASE + MDP_PRIM_VSYNC_INIT_VAL,
+							vsync_load_cnt);
 
-				// external vsync source pulse width and polarity flip
-				MDP_OUTP(MDP_BASE + 0x318, BIT(30) | BIT(0));
+				/*
+				 * external vsync source pulse width and
+				 * polarity flip
+				 */
+				MDP_OUTP(MDP_BASE + MDP_PRIM_VSYN_OUT_CTRL,
+							BIT(30) | BIT(0));
 
-				// threshold
+
+				/* threshold */
 				MDP_OUTP(MDP_BASE + 0x200,
 					 (vsync_above_th << 16) |
 					 (vsync_start_th));
 
 				mdp_hw_vsync_clk_disable(mfd);
-				// MDP cmd block disable
+				/* MDP cmd block disable */
 				mdp_pipe_ctrl(MDP_CMD_BLOCK,
 					      MDP_BLOCK_POWER_OFF, FALSE);
 			}
@@ -319,11 +351,17 @@ void mdp_vsync_resync_workqueue_handler(struct work_struct *work)
 			    (struct msm_fb_panel_data *)mfd->pdev->dev.
 			    platform_data;
 
-			// we need to turn on MDP power if it uses MDP vsync HW block in SW mode
+			/*
+			 * we need to turn on MDP power if it uses MDP vsync
+			 * HW block in SW mode
+			 */
 			if ((!mfd->panel_info.lcd.hw_vsync_mode) &&
 			    (mfd->use_mdp_vsync) &&
 			    (pdata) && (pdata->set_vsync_notifier != NULL)) {
-				// enable pwr here since we can't enable it in vsync callback in isr mode
+				/*
+				 * enable pwr here since we can't enable it in
+				 * vsync callback in isr mode
+				 */
 				mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON,
 					      FALSE);
 			}
@@ -342,9 +380,11 @@ void mdp_vsync_resync_workqueue_handler(struct work_struct *work)
 
 boolean mdp_hw_vsync_set_handler(msm_fb_vsync_handler_type handler, void *data)
 {
-	//ToDo: tried enabling/disabling GPIO MDP HW VSYNC interrupt
-	//      but getting inaccurate timing in mdp_vsync_handler()
-	//enable_irq(MDP_HW_VSYNC_IRQ);
+	/*
+	 * ToDo: tried enabling/disabling GPIO MDP HW VSYNC interrupt
+	 * but getting inaccurate timing in mdp_vsync_handler()
+	 * enable_irq(MDP_HW_VSYNC_IRQ);
+	 */
 
 	return TRUE;
 }
@@ -371,11 +411,11 @@ uint32 mdp_get_lcd_line_counter(struct msm_fb_data_type *mfd)
 
 	elapsed_usec_time = elapsed_usec_time % mfd->lcd_ref_usec_time;
 
-	// lcd line calculation referencing to line counter = 0
+	/* lcd line calculation referencing to line counter = 0 */
 	lcd_line =
 	    (elapsed_usec_time * mfd->total_lcd_lines) / mfd->lcd_ref_usec_time;
 
-	// lcd line adjusment referencing to the actual line counter at vsync
+	/* lcd line adjusment referencing to the actual line counter at vsync */
 	lcd_line =
 	    (mfd->total_lcd_lines - mfd->panel_info.lcd.v_back_porch +
 	     lcd_line) % (mfd->total_lcd_lines + 1);

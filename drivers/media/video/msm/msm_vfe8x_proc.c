@@ -1,59 +1,21 @@
-/* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2009, Code Aurora Forum. All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in the
- *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
- *       the names of its contributors may be used to endorse or promote
- *       products derived from this software without specific prior written
- *       permission.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 and
+ * only version 2 as published by the Free Software Foundation.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  */
+
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -63,8 +25,9 @@
 #include <linux/platform_device.h>
 #include "msm_vfe8x_proc.h"
 #include <media/msm_camera.h>
+#include <mach/board.h>
 
-struct msm_vfe8x_ctrl_t {
+struct msm_vfe8x_ctrl {
 	/* bit 1:0 ENC_IRQ_MASK = 0x11:
 	 * generate IRQ when both y and cbcr frame is ready. */
 
@@ -118,7 +81,7 @@ struct msm_vfe8x_ctrl_t {
 	spinlock_t  state_lock;
 	spinlock_t  io_lock;
 
-	struct msm_vfe_resp *resp;
+	struct msm_vfe_callback *resp;
 	uint32_t extlen;
 	void *extdata;
 
@@ -130,7 +93,7 @@ struct msm_vfe8x_ctrl_t {
 
 	void *syncdata;
 };
-static struct msm_vfe8x_ctrl_t *ctrl;
+static struct msm_vfe8x_ctrl *ctrl;
 static irqreturn_t vfe_parse_irq(int irq_num, void *data);
 
 struct isr_queue_cmd {
@@ -187,7 +150,7 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 	struct vfe_output_path_combo *out1,
 	struct vfe_output_path_combo *out2, uint16_t out)
 {
-	struct vfe_axi_out_cfg_t cmd;
+	struct vfe_axi_out_cfg cmd;
 
 	uint16_t temp;
 	uint32_t burstLength;
@@ -286,7 +249,7 @@ static void vfe_axi_output(struct vfe_cmd_axi_output_config *in,
 
 static void vfe_reg_bus_cfg(struct vfe_bus_cfg_data *in)
 {
-	struct vfe_axi_bus_cfg_t cmd;
+	struct vfe_axi_bus_cfg cmd;
 
 	cmd.stripeRdPathEn      = in->stripeRdPathEn;
 	cmd.encYWrPathEn        = in->encYWrPathEn;
@@ -342,7 +305,7 @@ static void vfe_reg_camif_config(struct vfe_camif_cfg_data *in)
 
 static void vfe_reg_bus_cmd(struct vfe_bus_cmd_data *in)
 {
-	struct vfe_buscmd_t cmd;
+	struct vfe_buscmd cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	cmd.stripeReload        = in->stripeReload;
@@ -362,7 +325,7 @@ static void vfe_reg_bus_cmd(struct vfe_bus_cmd_data *in)
 
 static void vfe_reg_module_cfg(struct vfe_module_enable *in)
 {
-	struct vfe_mod_enable_t ena;
+	struct vfe_mod_enable ena;
 
 	memset(&ena, 0, sizeof(ena));
 
@@ -611,7 +574,7 @@ static void vfe_8k_pm_start(struct vfe_cmd_bus_pm_start *in)
 
 static uint32_t vfe_irq_pack(struct vfe_interrupt_mask data)
 {
-	struct vfe_irqenable_t packedData;
+	struct vfe_irqenable packedData;
 
 	memset(&packedData, 0, sizeof(packedData));
 
@@ -666,7 +629,7 @@ vfe_irq_composite_pack(struct vfe_irq_composite_mask_config data)
 }
 
 static void vfe_addr_convert(struct msm_vfe_phy_info *pinfo,
-	enum vfe_resp_msg_t	type, void *data, void **ext, int32_t *elen)
+	enum vfe_resp_msg type, void *data, void **ext, int32_t *elen)
 {
 	switch (type) {
 	case VFE_MSG_OUTPUT1: {
@@ -737,7 +700,7 @@ static void vfe_addr_convert(struct msm_vfe_phy_info *pinfo,
 static void
 vfe_proc_ops(enum VFE_MESSAGE_ID id, void *msg, size_t len)
 {
-	struct msm_vfe_resp_t *rp;
+	struct msm_vfe_resp *rp;
 
 	/* In 8k, OUTPUT1 & OUTPUT2 messages arrive before
 	 * SNAPSHOT_DONE. We don't send such messages to user */
@@ -750,7 +713,8 @@ vfe_proc_ops(enum VFE_MESSAGE_ID id, void *msg, size_t len)
 		return;
 	}
 
-	rp = kmalloc(sizeof(struct msm_vfe_resp_t), GFP_ATOMIC);
+	rp = ctrl->resp->vfe_alloc(sizeof(struct msm_vfe_resp) + len,
+		ctrl->syncdata);
 	if (!rp) {
 		CDBG("rp: cannot allocate buffer\n");
 		return;
@@ -761,7 +725,11 @@ vfe_proc_ops(enum VFE_MESSAGE_ID id, void *msg, size_t len)
 	rp->evt_msg.type   = MSM_CAMERA_MSG;
 	rp->evt_msg.msg_id = id;
 	rp->evt_msg.len    = len;
-	rp->evt_msg.data   = msg;
+	rp->evt_msg.data   = rp + 1;
+
+	if (len != 0) {
+		memcpy(rp->evt_msg.data, msg, len);
+	}
 
 	switch (rp->evt_msg.msg_id) {
 	case VFE_MSG_ID_SNAPSHOT_DONE:
@@ -804,49 +772,37 @@ vfe_proc_ops(enum VFE_MESSAGE_ID id, void *msg, size_t len)
 
 static void vfe_send_msg_no_payload(enum VFE_MESSAGE_ID id)
 {
-	struct vfe_message *msg;
+	struct vfe_message msg;
 
-	msg = kzalloc(sizeof(msg), GFP_ATOMIC);
-	if (!msg)
-		return;
-
-	msg->_d = id;
-	vfe_proc_ops(id, msg, 0);
+	msg._d = id;
+	vfe_proc_ops(id, &msg, 0);
 }
 
 static void vfe_send_bus_overflow_msg(void)
 {
-	struct vfe_message *msg;
-	msg =
-		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message msg;
 
-	msg->_d = VFE_MSG_ID_BUS_OVERFLOW;
+	msg._d = VFE_MSG_ID_BUS_OVERFLOW;
 #if 0
-	memcpy(&(msg->_u.msgBusOverflow),
+	memcpy(&(msg._u.msgBusOverflow),
 		&ctrl->vfePmData, sizeof(ctrl->vfePmData));
 #endif
 
 	vfe_proc_ops(VFE_MSG_ID_BUS_OVERFLOW,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 }
 
 static void vfe_send_camif_error_msg(void)
 {
 #if 0
-	struct vfe_message *msg;
-	msg =
-		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message msg;
 
-	msg->_d = VFE_MSG_ID_CAMIF_ERROR;
-	memcpy(&(msg->_u.msgCamifError),
+	msg._d = VFE_MSG_ID_CAMIF_ERROR;
+	memcpy(&(msg._u.msgCamifError),
 		&ctrl->vfeCamifStatusLocal, sizeof(ctrl->vfeCamifStatusLocal));
 
 	vfe_proc_ops(VFE_MSG_ID_CAMIF_ERROR,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 #endif
 }
 
@@ -945,11 +901,7 @@ static void
 vfe_send_af_stats_msg(uint32_t afBufAddress)
 {
 	/* unsigned long flags; */
-	struct vfe_message *msg;
-	msg =
-		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message msg;
 
 	/* fill message with right content. */
 	/* @todo This is causing issues, need further investigate */
@@ -957,12 +909,12 @@ vfe_send_af_stats_msg(uint32_t afBufAddress)
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
 		goto af_stats_done;
 
-	msg->_d = VFE_MSG_ID_STATS_AUTOFOCUS;
-	msg->_u.msgStatsAf.afBuffer = afBufAddress;
-	msg->_u.msgStatsAf.frameCounter = ctrl->vfeFrameId;
+	msg._d = VFE_MSG_ID_STATS_AUTOFOCUS;
+	msg._u.msgStatsAf.afBuffer = afBufAddress;
+	msg._u.msgStatsAf.frameCounter = ctrl->vfeFrameId;
 
 	vfe_proc_ops(VFE_MSG_ID_STATS_AUTOFOCUS,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 
 	ctrl->afStatsControl.ackPending = TRUE;
 
@@ -1030,12 +982,7 @@ static void vfe_update_awb_buf_addr(
 static void vfe_send_awb_stats_msg(uint32_t awbBufAddress)
 {
 	/* unsigned long flags; */
-	struct vfe_message   *msg;
-
-	msg =
-		kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message   msg;
 
 	/* fill message with right content. */
 	/* @todo This is causing issues, need further investigate */
@@ -1043,12 +990,12 @@ static void vfe_send_awb_stats_msg(uint32_t awbBufAddress)
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
 		goto awb_stats_done;
 
-	msg->_d = VFE_MSG_ID_STATS_WB_EXP;
-	msg->_u.msgStatsWbExp.awbBuffer = awbBufAddress;
-	msg->_u.msgStatsWbExp.frameCounter = ctrl->vfeFrameId;
+	msg._d = VFE_MSG_ID_STATS_WB_EXP;
+	msg._u.msgStatsWbExp.awbBuffer = awbBufAddress;
+	msg._u.msgStatsWbExp.frameCounter = ctrl->vfeFrameId;
 
 	vfe_proc_ops(VFE_MSG_ID_STATS_WB_EXP,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 
 	ctrl->awbStatsControl.ackPending = TRUE;
 
@@ -1141,8 +1088,6 @@ static inline void vfe_read_irq_status(struct vfe_irq_thread_msg *out)
 
 	temp = (uint32_t *)(ctrl->vfebase + CAMIF_STATUS);
 	out->camifStatus = readl(temp);
-	writel(0x7, ctrl->vfebase + CAMIF_COMMAND);
-	writel(0x3, ctrl->vfebase + CAMIF_COMMAND);
 	CDBG("camifStatus  = 0x%x\n", out->camifStatus);
 
 /*
@@ -1170,14 +1115,14 @@ static inline void vfe_read_irq_status(struct vfe_irq_thread_msg *out)
 static struct vfe_interrupt_status
 vfe_parse_interrupt_status(uint32_t irqStatusIn)
 {
-	struct vfe_irqenable_t hwstat;
+	struct vfe_irqenable hwstat;
 	struct vfe_interrupt_status ret;
 	boolean temp;
 
 	memset(&hwstat, 0, sizeof(hwstat));
 	memset(&ret, 0, sizeof(ret));
 
-	hwstat = *((struct vfe_irqenable_t *)(&irqStatusIn));
+	hwstat = *((struct vfe_irqenable *)(&irqStatusIn));
 
 	ret.camifErrorIrq       = hwstat.camifErrorIrq;
 	ret.camifSofIrq         = hwstat.camifSofIrq;
@@ -1284,14 +1229,14 @@ vfe_parse_interrupt_status(uint32_t irqStatusIn)
 static struct vfe_frame_asf_info
 vfe_get_asf_frame_info(struct vfe_irq_thread_msg *in)
 {
-	struct vfe_asf_info_t     asfInfoTemp;
+	struct vfe_asf_info     asfInfoTemp;
 	struct vfe_frame_asf_info rc;
 
 	memset(&rc, 0, sizeof(rc));
 	memset(&asfInfoTemp, 0, sizeof(asfInfoTemp));
 
 	asfInfoTemp =
-		*((struct vfe_asf_info_t *)(&(in->asfMaxEdge)));
+		*((struct vfe_asf_info *)(&(in->asfMaxEdge)));
 
 	rc.asfHbiCount = asfInfoTemp.HBICount;
 	rc.asfMaxEdge  = asfInfoTemp.maxEdge;
@@ -1302,14 +1247,14 @@ vfe_get_asf_frame_info(struct vfe_irq_thread_msg *in)
 static struct vfe_frame_bpc_info
 vfe_get_demosaic_frame_info(struct vfe_irq_thread_msg *in)
 {
-	struct vfe_bps_info_t     bpcInfoTemp;
+	struct vfe_bps_info     bpcInfoTemp;
 	struct vfe_frame_bpc_info rc;
 
 	memset(&rc, 0, sizeof(rc));
 	memset(&bpcInfoTemp, 0, sizeof(bpcInfoTemp));
 
 	bpcInfoTemp =
-		*((struct vfe_bps_info_t *)(&(in->demosaicStatus)));
+		*((struct vfe_bps_info *)(&(in->demosaicStatus)));
 
 	rc.greenDefectPixelCount    =
 		bpcInfoTemp.greenBadPixelCount;
@@ -1323,14 +1268,14 @@ vfe_get_demosaic_frame_info(struct vfe_irq_thread_msg *in)
 static struct vfe_msg_camif_status
 vfe_get_camif_status(struct vfe_irq_thread_msg *in)
 {
-	struct vfe_camif_stats_t camifStatusTemp;
+	struct vfe_camif_stats camifStatusTemp;
 	struct vfe_msg_camif_status rc;
 
 	memset(&rc, 0, sizeof(rc));
 	memset(&camifStatusTemp, 0, sizeof(camifStatusTemp));
 
 	camifStatusTemp =
-		*((struct vfe_camif_stats_t *)(&(in->camifStatus)));
+		*((struct vfe_camif_stats *)(&(in->camifStatus)));
 
 	rc.camifState = (boolean)camifStatusTemp.camifHalt;
 	rc.lineCount  = camifStatusTemp.lineCount;
@@ -1421,11 +1366,7 @@ static void vfe_send_output2_msg(
 	struct vfe_msg_output *pPayload)
 {
 	/* unsigned long flags; */
-	struct vfe_message *msg;
-
-	msg = kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message msg;
 
 	/* fill message with right content. */
 	/* @todo This is causing issues, need further investigate */
@@ -1433,13 +1374,13 @@ static void vfe_send_output2_msg(
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
 		goto output2_msg_done;
 
-	msg->_d = VFE_MSG_ID_OUTPUT2;
+	msg._d = VFE_MSG_ID_OUTPUT2;
 
-	memcpy(&(msg->_u.msgOutput2),
+	memcpy(&(msg._u.msgOutput2),
 		(void *)pPayload, sizeof(struct vfe_msg_output));
 
 	vfe_proc_ops(VFE_MSG_ID_OUTPUT2,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 
 	ctrl->encPath.ackPending = TRUE;
 
@@ -1457,23 +1398,19 @@ static void vfe_send_output1_msg(
 	struct vfe_msg_output *pPayload)
 {
 	/* unsigned long flags; */
-	struct vfe_message *msg;
-
-	msg = kzalloc(sizeof(struct vfe_message), GFP_ATOMIC);
-	if (!msg)
-		return;
+	struct vfe_message msg;
 
 	/* @todo This is causing issues, need further investigate */
 	/* spin_lock_irqsave(&ctrl->state_lock, flags); */
 	if (ctrl->vstate != VFE_STATE_ACTIVE)
 		goto output1_msg_done;
 
-	msg->_d = VFE_MSG_ID_OUTPUT1;
-	memmove(&(msg->_u),
+	msg._d = VFE_MSG_ID_OUTPUT1;
+	memmove(&(msg._u),
 		(void *)pPayload, sizeof(struct vfe_msg_output));
 
 	vfe_proc_ops(VFE_MSG_ID_OUTPUT1,
-		msg, sizeof(struct vfe_message));
+		&msg, sizeof(struct vfe_message));
 
 	ctrl->viewPath.ackPending = TRUE;
 
@@ -1860,11 +1797,16 @@ static irqreturn_t vfe_parse_irq(int irq_num, void *data)
 	return IRQ_HANDLED;
 }
 
-int vfe_cmd_init(struct msm_vfe_resp *presp,
+int vfe_cmd_init(struct msm_vfe_callback *presp,
 	struct platform_device *pdev, void *sdata)
 {
 	struct resource	*vfemem, *vfeirq, *vfeio;
 	int rc;
+	struct msm_camera_sensor_info *s_info;
+	s_info = pdev->dev.platform_data;
+
+	pdev->resource = s_info->resource;
+	pdev->num_resources = s_info->num_resources;
 
 	vfemem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!vfemem) {
@@ -1886,7 +1828,7 @@ int vfe_cmd_init(struct msm_vfe_resp *presp,
 	}
 
 	ctrl =
-	kzalloc(sizeof(struct msm_vfe8x_ctrl_t), GFP_KERNEL);
+	kzalloc(sizeof(struct msm_vfe8x_ctrl), GFP_KERNEL);
 	if (!ctrl) {
 		rc = -ENOMEM;
 		goto cmd_init_failed1;
@@ -2215,11 +2157,11 @@ void vfe_start(struct vfe_cmd_start *in)
 	uint32_t  demeven = 0;
 	uint32_t  demodd = 0;
 
-	/* derived from other commands.  ( camif config, axi output config,
-	 * etc )
+	/* derived from other commands.  (camif config, axi output config,
+	 * etc)
 	*/
-	struct vfe_cfg_t hwcfg;
-	struct vfe_upsample_cfg_t chromupcfg;
+	struct vfe_cfg hwcfg;
+	struct vfe_upsample_cfg chromupcfg;
 
 	CDBG("vfe_start operationMode = %d\n", in->operationMode);
 
@@ -2556,7 +2498,7 @@ void vfe_frame_skip_update(struct vfe_cmd_frame_skip_update *in)
 
 void vfe_frame_skip_config(struct vfe_cmd_frame_skip_config *in)
 {
-	struct vfe_frame_skip_cfg_t cmd;
+	struct vfe_frame_skip_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeFrameSkip = *in;
@@ -2576,7 +2518,7 @@ void vfe_frame_skip_config(struct vfe_cmd_frame_skip_config *in)
 
 void vfe_output_clamp_config(struct vfe_cmd_output_clamp_config *in)
 {
-	struct vfe_output_clamp_cfg_t cmd;
+	struct vfe_output_clamp_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	cmd.yChanMax  = in->maxCh0;
@@ -2593,7 +2535,7 @@ void vfe_output_clamp_config(struct vfe_cmd_output_clamp_config *in)
 
 void vfe_camif_frame_update(struct vfe_cmds_camif_frame *in)
 {
-	struct vfe_camifframe_update_t cmd;
+	struct vfe_camifframe_update cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -2607,7 +2549,7 @@ void vfe_camif_frame_update(struct vfe_cmds_camif_frame *in)
 void vfe_color_correction_config(
 	struct vfe_cmd_color_correction_config *in)
 {
-	struct vfe_color_correction_cfg_t cmd;
+	struct vfe_color_correction_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 	ctrl->vfeModuleEnableLocal.colorCorrectionEnable = in->enable;
@@ -2634,14 +2576,14 @@ void vfe_color_correction_config(
 
 void vfe_demosaic_abf_update(struct vfe_cmd_demosaic_abf_update *in)
 {
-struct vfe_demosaic_cfg_t cmd;
-	struct vfe_demosaic_abf_cfg_t cmdabf;
+struct vfe_demosaic_cfg cmd;
+	struct vfe_demosaic_abf_cfg cmdabf;
 	uint32_t temp;
 
 	memset(&cmd, 0, sizeof(cmd));
 	temp = readl(ctrl->vfebase + VFE_DEMOSAIC_CFG);
 
-	cmd = *((struct vfe_demosaic_cfg_t *)(&temp));
+	cmd = *((struct vfe_demosaic_cfg *)(&temp));
 	cmd.abfEnable       = in->abfUpdate.enable;
 	cmd.forceAbfOn      = in->abfUpdate.forceOn;
 	cmd.abfShift        = in->abfUpdate.shift;
@@ -2658,15 +2600,15 @@ struct vfe_demosaic_cfg_t cmd;
 
 void vfe_demosaic_bpc_update(struct vfe_cmd_demosaic_bpc_update *in)
 {
-	struct vfe_demosaic_cfg_t cmd;
-	struct vfe_demosaic_bpc_cfg_t cmdbpc;
+	struct vfe_demosaic_cfg cmd;
+	struct vfe_demosaic_bpc_cfg cmdbpc;
 	uint32_t temp;
 
 	memset(&cmd, 0, sizeof(cmd));
 
 	temp = readl(ctrl->vfebase + VFE_DEMOSAIC_CFG);
 
-	cmd = *((struct vfe_demosaic_cfg_t *)(&temp));
+	cmd = *((struct vfe_demosaic_cfg *)(&temp));
 	cmd.badPixelCorrEnable = in->bpcUpdate.enable;
 	cmd.fminThreshold      = in->bpcUpdate.fminThreshold;
 	cmd.fmaxThreshold      = in->bpcUpdate.fmaxThreshold;
@@ -2684,9 +2626,9 @@ void vfe_demosaic_bpc_update(struct vfe_cmd_demosaic_bpc_update *in)
 
 void vfe_demosaic_config(struct vfe_cmd_demosaic_config *in)
 {
-	struct vfe_demosaic_cfg_t cmd;
-	struct vfe_demosaic_bpc_cfg_t cmd_bpc;
-	struct vfe_demosaic_abf_cfg_t cmd_abf;
+	struct vfe_demosaic_cfg cmd;
+	struct vfe_demosaic_bpc_cfg cmd_bpc;
+	struct vfe_demosaic_abf_cfg cmd_abf;
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd_bpc, 0, sizeof(cmd_bpc));
@@ -2724,7 +2666,7 @@ void vfe_demosaic_config(struct vfe_cmd_demosaic_config *in)
 void vfe_demux_channel_gain_update(
 	struct vfe_cmd_demux_channel_gain_config *in)
 {
-	struct vfe_demux_cfg_t cmd;
+	struct vfe_demux_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -2740,7 +2682,7 @@ void vfe_demux_channel_gain_update(
 void vfe_demux_channel_gain_config(
 	struct vfe_cmd_demux_channel_gain_config *in)
 {
-	struct vfe_demux_cfg_t cmd;
+	struct vfe_demux_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -2755,7 +2697,7 @@ void vfe_demux_channel_gain_config(
 
 void vfe_black_level_update(struct vfe_cmd_black_level_config *in)
 {
-	struct vfe_blacklevel_cfg_t cmd;
+	struct vfe_blacklevel_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 	ctrl->vfeModuleEnableLocal.blackLevelCorrectionEnable = in->enable;
@@ -2771,7 +2713,7 @@ void vfe_black_level_update(struct vfe_cmd_black_level_config *in)
 
 void vfe_black_level_config(struct vfe_cmd_black_level_config *in)
 {
-	struct vfe_blacklevel_cfg_t cmd;
+	struct vfe_blacklevel_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.blackLevelCorrectionEnable = in->enable;
@@ -2787,7 +2729,7 @@ void vfe_black_level_config(struct vfe_cmd_black_level_config *in)
 
 void vfe_asf_update(struct vfe_cmd_asf_update *in)
 {
-	struct vfe_asf_update_t cmd;
+	struct vfe_asf_update cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.asfEnable = in->enable;
@@ -2830,8 +2772,8 @@ void vfe_asf_update(struct vfe_cmd_asf_update *in)
 
 void vfe_asf_config(struct vfe_cmd_asf_config *in)
 {
-	struct vfe_asf_update_t     cmd;
-	struct vfe_asfcrop_cfg_t cmd2;
+	struct vfe_asf_update     cmd;
+	struct vfe_asfcrop_cfg cmd2;
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd2, 0, sizeof(cmd2));
@@ -2884,7 +2826,7 @@ void vfe_asf_config(struct vfe_cmd_asf_config *in)
 
 void vfe_white_balance_config(struct vfe_cmd_white_balance_config *in)
 {
-	struct vfe_wb_cfg_t cmd;
+	struct vfe_wb_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.whiteBalanceEnable =
@@ -2900,7 +2842,7 @@ void vfe_white_balance_config(struct vfe_cmd_white_balance_config *in)
 
 void vfe_chroma_sup_config(struct vfe_cmd_chroma_suppression_config *in)
 {
-	struct vfe_chroma_suppress_cfg_t cmd;
+	struct vfe_chroma_suppress_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.chromaSuppressionEnable = in->enable;
@@ -2918,7 +2860,7 @@ void vfe_chroma_sup_config(struct vfe_cmd_chroma_suppression_config *in)
 
 void vfe_roll_off_config(struct vfe_cmd_roll_off_config *in)
 {
-	struct vfe_rolloff_cfg_t cmd;
+	struct vfe_rolloff_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.lensRollOffEnable = in->enable;
@@ -2941,7 +2883,7 @@ void vfe_roll_off_config(struct vfe_cmd_roll_off_config *in)
 void vfe_chroma_subsample_config(
 	struct vfe_cmd_chroma_subsample_config *in)
 {
-	struct vfe_chromasubsample_cfg_t cmd;
+	struct vfe_chromasubsample_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.chromaSubsampleEnable = in->enable;
@@ -2964,8 +2906,8 @@ void vfe_chroma_subsample_config(
 
 void vfe_chroma_enhan_config(struct vfe_cmd_chroma_enhan_config *in)
 {
-	struct vfe_chroma_enhance_cfg_t cmd;
-	struct vfe_color_convert_cfg_t cmd2;
+	struct vfe_chroma_enhance_cfg cmd;
+	struct vfe_color_convert_cfg cmd2;
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd2, 0, sizeof(cmd2));
@@ -2997,7 +2939,7 @@ void vfe_chroma_enhan_config(struct vfe_cmd_chroma_enhan_config *in)
 
 void vfe_scaler2cbcr_config(struct vfe_cmd_scaler2_config *in)
 {
-	struct vfe_scaler2_cfg_t cmd;
+	struct vfe_scaler2_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -3020,7 +2962,7 @@ void vfe_scaler2cbcr_config(struct vfe_cmd_scaler2_config *in)
 
 void vfe_scaler2y_config(struct vfe_cmd_scaler2_config *in)
 {
-	struct vfe_scaler2_cfg_t cmd;
+	struct vfe_scaler2_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -3043,7 +2985,7 @@ void vfe_scaler2y_config(struct vfe_cmd_scaler2_config *in)
 
 void vfe_main_scaler_config(struct vfe_cmd_main_scaler_config *in)
 {
-	struct vfe_main_scaler_cfg_t cmd;
+	struct vfe_main_scaler_cfg cmd;
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -3076,8 +3018,8 @@ void vfe_stats_wb_exp_stop(void)
 
 void vfe_stats_update_wb_exp(struct vfe_cmd_stats_wb_exp_update *in)
 {
-	struct vfe_statsawb_update_t   cmd;
-	struct vfe_statsawbae_update_t cmd2;
+	struct vfe_statsawb_update   cmd;
+	struct vfe_statsawbae_update cmd2;
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd2, 0, sizeof(cmd2));
@@ -3103,7 +3045,7 @@ void vfe_stats_update_wb_exp(struct vfe_cmd_stats_wb_exp_update *in)
 
 void vfe_stats_update_af(struct vfe_cmd_stats_af_update *in)
 {
-	struct vfe_statsaf_update_t cmd;
+	struct vfe_statsaf_update cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	cmd.windowVOffset = in->windowVOffset;
@@ -3118,9 +3060,9 @@ void vfe_stats_update_af(struct vfe_cmd_stats_af_update *in)
 
 void vfe_stats_start_wb_exp(struct vfe_cmd_stats_wb_exp_start *in)
 {
-	struct vfe_statsawb_update_t   cmd;
-	struct vfe_statsawbae_update_t cmd2;
-	struct vfe_statsaxw_hdr_cfg_t  cmd3;
+	struct vfe_statsawb_update   cmd;
+	struct vfe_statsawbae_update cmd2;
+	struct vfe_statsaxw_hdr_cfg  cmd3;
 
 	ctrl->vfeStatsCmdLocal.axwEnable   =  in->enable;
 	ctrl->vfeImaskLocal.awbPingpongIrq = TRUE;
@@ -3154,8 +3096,8 @@ void vfe_stats_start_wb_exp(struct vfe_cmd_stats_wb_exp_start *in)
 
 void vfe_stats_start_af(struct vfe_cmd_stats_af_start *in)
 {
-	struct vfe_statsaf_update_t cmd;
-	struct vfe_statsaf_cfg_t    cmd2;
+	struct vfe_statsaf_update cmd;
+	struct vfe_statsaf_cfg    cmd2;
 
 	memset(&cmd, 0, sizeof(cmd));
 	memset(&cmd2, 0, sizeof(cmd2));
@@ -3205,8 +3147,8 @@ void vfe_stats_start_af(struct vfe_cmd_stats_af_start *in)
 
 void vfe_stats_setting(struct vfe_cmd_stats_setting *in)
 {
-	struct vfe_statsframe_t cmd1;
-	struct vfe_busstats_wrprio_t cmd2;
+	struct vfe_statsframe cmd1;
+	struct vfe_busstats_wrprio cmd2;
 
 	memset(&cmd1, 0, sizeof(cmd1));
 	memset(&cmd2, 0, sizeof(cmd2));
@@ -3511,7 +3453,7 @@ void vfe_axi_output_config(
 		 * leave the pong buffer to NULL, there will be axi_error.
 		 * Note that ideally we should deal with this at upper layer,
 		 * which is in msm_vfe8x.c */
-		if (in->output2.outputCbcr.outFragments[1][0] == 0) {
+		if (!in->output2.outputCbcr.outFragments[1][0]) {
 			in->output2.outputCbcr.outFragments[1][0] =
 				in->output2.outputCbcr.outFragments[0][0];
 		}
@@ -3728,7 +3670,7 @@ void vfe_axi_output_config(
 
 void vfe_camif_config(struct vfe_cmd_camif_config *in)
 {
-	struct vfe_camifcfg_t cmd;
+	struct vfe_camifcfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	CDBG("camif.frame pixelsPerLine = %d\n", in->frame.pixelsPerLine);
@@ -3790,7 +3732,7 @@ void vfe_camif_config(struct vfe_cmd_camif_config *in)
 
 void vfe_fov_crop_config(struct vfe_cmd_fov_crop_config *in)
 {
-	struct vfe_fov_crop_cfg_t cmd;
+	struct vfe_fov_crop_cfg cmd;
 	memset(&cmd, 0, sizeof(cmd));
 
 	ctrl->vfeModuleEnableLocal.cropEnable = in->enable;
@@ -3810,11 +3752,11 @@ void vfe_fov_crop_config(struct vfe_cmd_fov_crop_config *in)
 void vfe_get_hw_version(struct vfe_cmd_hw_version *out)
 {
 	uint32_t vfeHwVersionPacked;
-	struct vfe_hw_ver_t ver;
+	struct vfe_hw_ver ver;
 
 	vfeHwVersionPacked = readl(ctrl->vfebase + VFE_HW_VERSION);
 
-	ver = *((struct vfe_hw_ver_t *)&vfeHwVersionPacked);
+	ver = *((struct vfe_hw_ver *)&vfeHwVersionPacked);
 
 	out->coreVersion  = ver.coreVersion;
 	out->minorVersion = ver.minorVersion;

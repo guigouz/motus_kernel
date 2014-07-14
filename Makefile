@@ -16,6 +16,10 @@ NAME = Temporary Tasmanian Devil
 # o  print "Entering directory ...";
 MAKEFLAGS += -rR --no-print-directory
 
+# Add custom flags here to avoid conflict with updates
+#EXTRAVERSION := $(EXTRAVERSION)-omap1
+#EXTRAVERSION := $(EXTRAVERSION)-msm7k
+
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
 #
@@ -75,6 +79,7 @@ ifdef M
   endif
 endif
 
+KBUILD_GCOV_FLAGS	= -fprofile-arcs -ftest-coverage
 
 # kbuild supports saving output files in a separate directory.
 # To locate output files in a separate directory two syntaxes are supported.
@@ -171,6 +176,8 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 				  -e s/ppc.*/powerpc/ -e s/mips.*/mips/ \
 				  -e s/sh.*/sh/ )
 
+SUBARCH := arm
+
 # Cross compiling and selecting different set of gcc/bin-utils
 # ---------------------------------------------------------------------------
 #
@@ -191,7 +198,7 @@ SUBARCH := $(shell uname -m | sed -e s/i.86/i386/ -e s/sun4u/sparc64/ \
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
 export KBUILD_BUILDHOST := $(SUBARCH)
 ARCH		?= $(SUBARCH)
-CROSS_COMPILE	?=
+CROSS_COMPILE	?= arm-linux-
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -362,6 +369,7 @@ export HOSTCXX HOSTCXXFLAGS LDFLAGS_MODULE CHECK CHECKFLAGS
 export KBUILD_CPPFLAGS NOSTDINC_FLAGS LINUXINCLUDE OBJCOPYFLAGS LDFLAGS
 export KBUILD_CFLAGS CFLAGS_KERNEL CFLAGS_MODULE
 export KBUILD_AFLAGS AFLAGS_KERNEL AFLAGS_MODULE
+export KBUILD_CFLAGS_NOGCOV KBUILD_GCOV_FLAGS
 
 # When compiling out-of-tree modules, put MODVERDIR in the module
 # tree rather than in the kernel tree. The kernel tree might
@@ -589,6 +597,11 @@ endif
 ifneq ($(KCFLAGS),)
         $(call warn-assign,CFLAGS)
         KBUILD_CFLAGS += $(KCFLAGS)
+endif
+
+KBUILD_CFLAGS_NOGCOV := $(KBUILD_CFLAGS)
+ifeq ($(COV_FLAGS),1)
+KBUILD_CFLAGS += $(KBUILD_GCOV_FLAGS)
 endif
 
 # Use --build-id when available.
@@ -1215,7 +1228,9 @@ clean: archclean $(clean-dirs)
 		\( -name '*.[oas]' -o -name '*.ko' -o -name '.*.cmd' \
 		-o -name '.*.d' -o -name '.*.tmp' -o -name '*.mod.c' \
 		-o -name '*.symtypes' -o -name 'modules.order' \
-		-o -name 'Module.markers' -o -name '.tmp_*.o.*' \) \
+		-o -name 'Module.markers' -o -name '.tmp_*.o.*' \
+		-o -name '*.bb' -o -name '*.bbg' -o -name '*.da' \
+		-o -name '*.gcno' -o -name '*.gcda' \) \
 		-type f -print | xargs rm -f
 
 # mrproper - Delete all generated files, including .config

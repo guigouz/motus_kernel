@@ -1126,21 +1126,33 @@ config Q6_VENC
 	  Kernel driver for MSM QDSP6 video encoding.
 
 config MSM_KGSL
-	tristate "MSM 3D Graphics driver for QSD8x50 and MSM7x27"
+	tristate "MSM 3D Graphics driver"
 	default n
-	depends on FB && ARM && (ARCH_QSD8X50 || ARCH_MSM7X27) && !MSM_HW3D
+	depends on FB && ARM && (ARCH_QSD8X50 || ARCH_MSM7X27 || ARCH_MSM7X30) && !MSM_HW3D
 	select GENERIC_ALLOCATOR
 	select FW_LOADER
 	---help---
-	  3D graphics driver for QSD8x50 and MSM7x27. Required to
-	  use hardware accelerated OpenGL ES 2.0 and 1.1 on these
-	  chips.
+	  3D graphics driver. Required to use hardware accelerated
+	  OpenGL ES 2.0 and 1.1.
 
 config MSM_KGSL_DRM
 	bool "Build a DRM interface for the MSM_KGSL driver"
 	depends on MSM_KGSL && DRM
 
 source "drivers/s390/char/Kconfig"
+
+config GPIODEV_DEVICE_TREE
+	bool "Motorola GPIODev configuration by device tree"
+	depends on ARM_OF
+	default n
+	help
+	  This feature enables configuration of GPIODev module node by device tree.
+
+config GPIODEV
+	tristate "Enable Motorola GPIODev"
+	default n
+	help
+	  This feature enables GPIODev for accessing GPIO pins in user space.
 
 config MSM_Q6VDEC
 	tristate "MSM QDSP6 Video Decoder Driver"

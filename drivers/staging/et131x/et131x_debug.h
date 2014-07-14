@@ -100,8 +100,7 @@
 #define DBG_TRAP		{}	/* BUG() */
 #endif /* DBG_TRAP */
 
-#define _ENTER_STR	">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>"
-#define _LEAVE_STR	"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
+#define _ENTER_STR	"#define _LEAVE_STR	"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<"
 
 #define _DBG_ENTER(A)	printk(KERN_DEBUG "%s:%.*s:%s\n", DBG_NAME(A),	\
 				++DBG_LEVEL(A), _ENTER_STR, __func__)

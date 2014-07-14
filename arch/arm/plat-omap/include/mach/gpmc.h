@@ -25,8 +25,18 @@
 #define GPMC_CS_NAND_ADDRESS	0x20
 #define GPMC_CS_NAND_DATA	0x24
 
+/*
+ * The following gpmc registers are being used by
+ * nand driver and hence is defined here.
+ * TBD: Move them to gpmc.c by providing appropriate
+ *  methods to read and write into these registers
+ */
+#define GPMC_IRQSTATUS		0x18
 #define GPMC_CONFIG		0x50
 #define GPMC_STATUS		0x54
+#define GPMC_CS0_BASE           0x60
+#define GPMC_CS_SIZE            0x30
+
 
 #define GPMC_CONFIG1_WRAPBURST_SUPP     (1 << 31)
 #define GPMC_CONFIG1_READMULTIPLE_SUPP  (1 << 30)
@@ -52,6 +62,71 @@
 #define GPMC_CONFIG1_FCLK_DIV2          (GPMC_CONFIG1_FCLK_DIV(1))
 #define GPMC_CONFIG1_FCLK_DIV3          (GPMC_CONFIG1_FCLK_DIV(2))
 #define GPMC_CONFIG1_FCLK_DIV4          (GPMC_CONFIG1_FCLK_DIV(3))
+
+extern void __iomem *gpmc_base;
+#define gpmc_write_reg(idx, val)     __raw_writel((val), gpmc_base + (idx))
+#define gpmc_read_reg(idx)            __raw_readl(gpmc_base + (idx))
+
+#define GPMC_CONFIG7_CSVALID		(1 << 6)
+
+#define GPMC_PREFETCH_CONFIG1	0x1e0
+#define GPMC_PREFETCH_CONFIG2	0x1e4
+#define GPMC_PREFETCH_CONTROL	0x1ec
+
+
+#ifdef CONFIG_MTD_NAND_OMAP_PREFETCH
+
+#define GPMC_PREFETCH_CONFIG1_INIT   0x4000
+#define GPMC_PREFETCH_STATUS	0x1f0
+#define CS_NUM_SHIFT		24
+#define ENABLE_PREFETCH		7
+#define DMA_MPU_MODE		2
+
+static inline void gpmc_prefetch_start(int cs, int dma_mode,
+					unsigned int u32_count, int is_write)
+{
+	uint32_t prefetch_config1;
+
+		/* Set the amount of bytes to be prefetched */
+		gpmc_write_reg(GPMC_PREFETCH_CONFIG2, u32_count);
+
+		/* Set dma/mpu mode, the prefetch read / post write and
+		 * enable the engine Set which cs is using the post write
+		 */
+		prefetch_config1 = GPMC_PREFETCH_CONFIG1_INIT |
+					((cs << CS_NUM_SHIFT) |
+					(dma_mode << DMA_MPU_MODE) |
+					(1 << ENABLE_PREFETCH) |
+					(is_write & 0x1));
+		gpmc_write_reg(GPMC_PREFETCH_CONFIG1, prefetch_config1);
+
+	/*  Start the prefetch engine */
+	gpmc_write_reg(GPMC_PREFETCH_CONTROL, 0x1);
+}
+
+/*
+ * gpmc_prefetch_stop - disables and stops the prefetch engine
+ */
+static inline void gpmc_prefetch_stop(void)
+{
+	uint32_t prefetch_config1;
+	/* stop the PFPW engine */
+	gpmc_write_reg(GPMC_PREFETCH_CONTROL, 0x0);
+
+	/* Disable the PFPW engine */
+	prefetch_config1 = gpmc_read_reg(GPMC_PREFETCH_CONFIG1);
+	prefetch_config1 &= ~((0x07 << CS_NUM_SHIFT) |
+				(1 << ENABLE_PREFETCH) |
+					(1 << DMA_MPU_MODE) | 0x1);
+	gpmc_write_reg(GPMC_PREFETCH_CONFIG1, prefetch_config1);
+}
+
+/*
+ * gpmc_prefetch_status - reads prefetch status of engine
+ */
+#define gpmc_prefetch_status()  gpmc_read_reg(GPMC_PREFETCH_STATUS)
+
+#endif
 
 /*
  * Note that all values in this struct are in nanoseconds, while
@@ -103,6 +178,8 @@ extern int gpmc_cs_request(int cs, unsigned long size, unsigned long *base);
 extern void gpmc_cs_free(int cs);
 extern int gpmc_cs_set_reserved(int cs, int reserved);
 extern int gpmc_cs_reserved(int cs);
-extern void gpmc_init(void);
+extern void omap3_gpmc_save_context(void);
+extern void omap3_gpmc_restore_context(void);
+extern void __init gpmc_init(void);
 
 #endif

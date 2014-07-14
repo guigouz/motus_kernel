@@ -58,6 +58,10 @@
 #include <asm/io.h>
 #endif
 
+#ifdef CONFIG_DEBUG_MEMLEAK
+#include <linux/memleak.h>
+#endif
+
 static int deprecated_sysctl_warning(struct __sysctl_args *args);
 
 #if defined(CONFIG_SYSCTL)
@@ -96,11 +100,20 @@ static int sixty = 60;
 static int neg_one = -1;
 #endif
 
-static int zero;
+#if defined(CONFIG_DETECT_SOFTLOCKUP) || defined(CONFIG_HIGHMEM)
 static int one = 1;
+#endif
+
+#if defined(CONFIG_MMU) && defined(CONFIG_FILE_LOCKING)
 static int two = 2;
+#endif
+
+static int zero;
 static unsigned long one_ul = 1;
 static int one_hundred = 100;
+
+/* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
+static unsigned long dirty_bytes_min = 2 * PAGE_SIZE;
 
 /* this is needed for the proc_dointvec_minmax for [fs_]overflow UID and GID */
 static int maxolduid = 65535;
@@ -994,7 +1007,7 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &dirty_bytes_handler,
 		.strategy	= &sysctl_intvec,
-		.extra1		= &one_ul,
+		.extra1		= &dirty_bytes_min,
 	},
 	{
 		.procname	= "dirty_writeback_centisecs",
@@ -1008,7 +1021,7 @@ static struct ctl_table vm_table[] = {
 		.data		= &dirty_expire_interval,
 		.maxlen		= sizeof(dirty_expire_interval),
 		.mode		= 0644,
-		.proc_handler	= &proc_dointvec_userhz_jiffies,
+		.proc_handler	= &proc_dointvec,
 	},
 	{
 		.ctl_name	= VM_NR_PDFLUSH_THREADS,
@@ -1219,7 +1232,6 @@ static struct ctl_table vm_table[] = {
 		.strategy	= &sysctl_jiffies,
 	},
 #endif
-#ifdef CONFIG_SECURITY
 	{
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "mmap_min_addr",
@@ -1228,7 +1240,6 @@ static struct ctl_table vm_table[] = {
 		.mode		= 0644,
 		.proc_handler	= &proc_doulongvec_minmax,
 	},
-#endif
 #ifdef CONFIG_NUMA
 	{
 		.ctl_name	= CTL_UNNUMBERED,
@@ -1446,6 +1457,16 @@ static struct ctl_table debug_table[] = {
 		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "exception-trace",
 		.data		= &show_unhandled_signals,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+#endif
+#ifdef CONFIG_DEBUG_MEMLEAK
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "kmemleak_module",
+		.data		= &kmemleak_module,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec

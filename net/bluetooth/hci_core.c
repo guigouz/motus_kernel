@@ -39,6 +39,7 @@
 #include <linux/skbuff.h>
 #include <linux/interrupt.h>
 #include <linux/notifier.h>
+#include <linux/rfkill.h>
 #include <net/sock.h>
 
 #include <asm/system.h>
@@ -478,6 +479,13 @@ int hci_dev_open(__u16 dev)
 
 	hci_req_lock(hdev);
 
+	if (hdev->rfkill &&
+	    (hdev->rfkill->state == RFKILL_STATE_HARD_BLOCKED ||
+	     hdev->rfkill->state == RFKILL_STATE_SOFT_BLOCKED)) {
+		ret = -EBUSY;
+		goto done;
+	}
+
 	if (test_bit(HCI_UP, &hdev->flags)) {
 		ret = -EALREADY;
 		goto done;
@@ -815,6 +823,21 @@ int hci_get_dev_info(void __user *arg)
 
 /* ---- Interface to HCI drivers ---- */
 
+static int hci_rfkill_set_block(void *data, enum rfkill_state state)
+{
+	struct hci_dev *hdev = data;
+	bool blocked = !(state == RFKILL_STATE_UNBLOCKED);
+
+	BT_DBG("%p name %s blocked %d", hdev, hdev->name, blocked);
+
+	if (!blocked)
+		return 0;
+
+	hci_dev_do_close(hdev);
+
+	return 0;
+}
+
 /* Alloc HCI device */
 struct hci_dev *hci_alloc_dev(void)
 {
@@ -846,7 +869,8 @@ int hci_register_dev(struct hci_dev *hdev)
 	struct list_head *head = &hci_dev_list, *p;
 	int i, id = 0;
 
-	BT_DBG("%p name %s type %d owner %p", hdev, hdev->name, hdev->type, hdev->owner);
+	BT_DBG("%p name %s type %d owner %p", hdev, hdev->name,
+						hdev->type, hdev->owner);
 
 	if (!hdev->open || !hdev->close || !hdev->destruct)
 		return -EINVAL;
@@ -873,6 +897,7 @@ int hci_register_dev(struct hci_dev *hdev)
 	hdev->link_mode = (HCI_LM_ACCEPT);
 
 	hdev->idle_timeout = 0;
+	hdev->link_supervision_timeout = 0x7d00;
 	hdev->sniff_max_interval = 800;
 	hdev->sniff_min_interval = 80;
 
@@ -902,6 +927,17 @@ int hci_register_dev(struct hci_dev *hdev)
 
 	hci_register_sysfs(hdev);
 
+	hdev->rfkill = rfkill_allocate(&hdev->dev, RFKILL_TYPE_BLUETOOTH);
+	if (hdev->rfkill) {
+		hdev->rfkill->name = hdev->name;
+		hdev->rfkill->toggle_radio = hci_rfkill_set_block;
+		hdev->rfkill->data = hdev;
+		if (rfkill_register(hdev->rfkill) < 0) {
+			rfkill_free(hdev->rfkill);
+			hdev->rfkill = NULL;
+		}
+	}
+
 	hci_notify(hdev, HCI_DEV_REG);
 
 	return id;
@@ -925,6 +961,10 @@ int hci_unregister_dev(struct hci_dev *hdev)
 		kfree_skb(hdev->reassembly[i]);
 
 	hci_notify(hdev, HCI_DEV_UNREG);
+
+	if (hdev->rfkill) {
+		rfkill_unregister(hdev->rfkill);
+	}
 
 	hci_unregister_sysfs(hdev);
 
@@ -1194,16 +1234,53 @@ static void hci_add_acl_hdr(struct sk_buff *skb, __u16 handle, __u16 flags)
 	hdr->dlen   = cpu_to_le16(len);
 }
 
+
+int A2DP_prioritization_trigger=0;
+EXPORT_SYMBOL(A2DP_prioritization_trigger);
+
 int hci_send_acl(struct hci_conn *conn, struct sk_buff *skb, __u16 flags)
 {
+  static unsigned int acl_packet_counter = 0;
+  static unsigned long last_jiffy = 0;
+
 	struct hci_dev *hdev = conn->hdev;
 	struct sk_buff *list;
+
+	if(A2DP_prioritization_trigger)
+	  if( ((jiffies - last_jiffy) > msecs_to_jiffies(6000))
+	      ||
+	      ((acl_packet_counter++ & 0xff) == 0x0f) )
+	    { // mot change to minimize A2DP dropouts when WLAN is associated
+	      // Data/Command OGF  OCF    Data  Parameters
+	      // 57FC020B00   0x3F 0x0057 0B 00 # connection handle, uint16 (little endian) 
+
+	      __le16 param;
+	      last_jiffy = jiffies;
+
+	      //printk(KERN_INFO
+	      //     "BLUETOOTH: Counting down to sending Broadcom specific HCI command "
+	      //     "to prioritize A2DP traffic on ACL handle %d (0x%02X) [%u] (count=%d)\n",
+	      //     conn->handle,conn->handle,acl_packet_counter,A2DP_prioritization_trigger);
+
+	      param = cpu_to_le16(conn->handle);
+	      if(A2DP_prioritization_trigger){A2DP_prioritization_trigger--;}
+	      if(!A2DP_prioritization_trigger)
+		{
+		  //BT_DBG(
+		  printk(KERN_INFO
+			 "BLUETOOTH: Sending Broadcom specific command "
+			 "to prioritize A2DP traffic on ACL handle %d (0x%02X) [%u]\n",
+			 conn->handle,conn->handle,acl_packet_counter);
+
+		  hci_send_cmd(conn->hdev, 0xFC57, 2, &param);
+		}
+	    }
 
 	BT_DBG("%s conn %p flags 0x%x", hdev->name, conn, flags);
 
 	skb->dev = (void *) hdev;
 	bt_cb(skb)->pkt_type = HCI_ACLDATA_PKT;
-	hci_add_acl_hdr(skb, conn->handle, flags | ACL_START);
+	hci_add_acl_hdr(skb, conn->handle, flags);
 
 	if (!(list = skb_shinfo(skb)->frag_list)) {
 		/* Non fragmented */
@@ -1220,12 +1297,14 @@ int hci_send_acl(struct hci_conn *conn, struct sk_buff *skb, __u16 flags)
 		spin_lock_bh(&conn->data_q.lock);
 
 		__skb_queue_tail(&conn->data_q, skb);
+		flags &= ~ACL_PB_MASK;
+		flags |= ACL_CONT;
 		do {
 			skb = list; list = list->next;
 
 			skb->dev = (void *) hdev;
 			bt_cb(skb)->pkt_type = HCI_ACLDATA_PKT;
-			hci_add_acl_hdr(skb, conn->handle, flags | ACL_CONT);
+			hci_add_acl_hdr(skb, conn->handle, flags);
 
 			BT_DBG("%s frag %p len %d", hdev->name, skb, skb->len);
 

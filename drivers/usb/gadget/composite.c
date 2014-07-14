@@ -27,6 +27,9 @@
 
 #include <linux/usb/composite.h>
 
+#ifdef CONFIG_USB_MOT_ANDROID
+#include "f_mot_android.h"
+#endif
 
 /*
  * The code in this file is utility code, used to build a gadget driver
@@ -676,6 +679,7 @@ static void composite_setup_complete(struct usb_ep *ep, struct usb_request *req)
  * housekeeping for the gadget function we're implementing.  Most of
  * the work is in config and function specific setup.
  */
+
 static int
 composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 {
@@ -701,6 +705,9 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 
 	/* we handle all standard USB descriptors */
 	case USB_REQ_GET_DESCRIPTOR:
+#ifdef CONFIG_USB_MOT_ANDROID
+		usb_data_transfer_callback();
+#endif
 		if (ctrl->bRequestType != USB_DIR_IN)
 			goto unknown;
 		switch (w_value >> 8) {
@@ -755,11 +762,11 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	case USB_REQ_GET_CONFIGURATION:
 		if (ctrl->bRequestType != USB_DIR_IN)
 			goto unknown;
-		if (cdev->config)
+		if (cdev->config) {
 			*(u8 *)req->buf = cdev->config->bConfigurationValue;
-		else
+			value = min(w_length, (u16) 1);
+		} else
 			*(u8 *)req->buf = 0;
-		value = min(w_length, (u16) 1);
 		break;
 
 	/* function drivers must handle get/set altsetting; if there's
@@ -807,13 +814,14 @@ unknown:
 		 * take such requests too, if that's ever needed:  to work
 		 * in config 0, etc.
 		 */
+#ifndef CONFIG_USB_MOT_ANDROID
 		if ((ctrl->bRequestType & USB_RECIP_MASK)
 				== USB_RECIP_INTERFACE) {
-			struct usb_configuration	*config;
-			config = cdev->config;
-			if (w_index >= config->next_interface_id)
-				goto done;
+			if (cdev->config == NULL)
+				return value;
+
 			f = cdev->config->interface[intf];
+
 			if (f && f->setup)
 				value = f->setup(f, ctrl);
 			else
@@ -826,7 +834,16 @@ unknown:
 			if (c && c->setup)
 				value = c->setup(c, ctrl);
 		}
+#else
+		{
+			struct usb_configuration        *cfg;
 
+			list_for_each_entry(cfg, &cdev->configs, list) {
+				if (cfg && cfg->setup)
+					value = cfg->setup(cfg, ctrl);
+			}
+		}
+#endif
 		goto done;
 	}
 

@@ -7,51 +7,22 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
+ *     * Neither the name of Code Aurora nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
- *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -117,9 +88,9 @@ typedef enum {
 } mddi_host_type;
 
 typedef enum {
-	MDDI_DRIVER_RESET,	// host core registers have not been written.
-	MDDI_DRIVER_DISABLED,	// registers written, interrupts disabled.
-	MDDI_DRIVER_ENABLED	// registers written, interrupts enabled.
+	MDDI_DRIVER_RESET,	/* host core registers have not been written. */
+	MDDI_DRIVER_DISABLED,	/* registers written, interrupts disabled. */
+	MDDI_DRIVER_ENABLED	/* registers written, interrupts enabled. */
 } mddi_host_driver_state_type;
 
 typedef enum {
@@ -147,15 +118,13 @@ typedef struct {
 	uint32 value;
 } mddi_reg_write_type;
 
-boolean mddi_vsync_set_handler(msm_fb_vsync_handler_type handler,	/* ISR to be executed */
-			       void *arg);
+boolean mddi_vsync_set_handler(msm_fb_vsync_handler_type handler, void *arg);
 
 typedef void (*mddi_llist_done_cb_type) (void);
 
 typedef void (*mddi_rev_handler_type) (void *);
 
-boolean mddi_set_rev_handler(mddi_rev_handler_type handler,	/* ISR to be executed */
-			     uint16 pkt_type);
+boolean mddi_set_rev_handler(mddi_rev_handler_type handler, uint16 pkt_type);
 
 #define MDDI_DEFAULT_PRIM_PIX_ATTR 0xC3
 #define MDDI_DEFAULT_SECD_PIX_ATTR 0xC0
@@ -203,10 +172,10 @@ void mddi_queue_image
      int16 num_of_rows,
      int16 num_of_columns, int16 dst_starting_row, int16 dst_starting_column);
 
-void mddi_host_register_read
+int mddi_host_register_read
     (uint32 reg_addr,
      uint32 *reg_value_ptr, boolean wait, mddi_host_type host_idx);
-void mddi_host_register_write
+int mddi_host_register_write
     (uint32 reg_addr,
      uint32 reg_val,
      boolean wait, mddi_llist_done_cb_type done_cb, mddi_host_type host);

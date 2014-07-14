@@ -241,7 +241,7 @@ static int msm_new_mixer(struct snd_card *card)
 	unsigned int idx;
 	int err;
 
-	printk(KERN_ERR "msm_soc:ALSA MSM Mixer Setting");
+	pr_err("msm_soc: ALSA MSM Mixer Setting\n");
 	strcpy(card->mixername, "MSM Mixer");
 	for (idx = 0; idx < ARRAY_SIZE(snd_msm_controls); idx++) {
 		err = snd_ctl_add(card,
@@ -258,7 +258,7 @@ static int msm_soc_dai_init(struct snd_soc_codec *codec)
 	int ret = 0;
 	ret = msm_new_mixer(codec->card);
 	if (ret < 0) {
-		printk(KERN_ERR "msm_soc:ALSA MSM Mixer Fail");
+		pr_err("msm_soc: ALSA MSM Mixer Fail\n");
 	}
 
 	return ret;
@@ -308,6 +308,7 @@ static int __init msm_audio_init(void)
 	spin_lock_init(&the_locks.read_dsp_lock);
 	spin_lock_init(&the_locks.write_dsp_lock);
 	spin_lock_init(&the_locks.mixer_lock);
+	init_waitqueue_head(&the_locks.eos_wait);
 	init_waitqueue_head(&the_locks.write_wait);
 	init_waitqueue_head(&the_locks.read_wait);
 	msm_vol_ctl.volume = MSM_PLAYBACK_DEFAULT_VOLUME;

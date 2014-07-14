@@ -26,13 +26,18 @@
 #include <mach/msm_rpcrouter.h>
 #include <mach/board.h>
 
+#if defined(CONFIG_MACH_MOT)
+struct input_dev *msm_keypad_get_input_dev(void);
+#else
 #include "keypad-surf-ffa.h"
 
 #define DRIVER_NAME	"msm-handset"
+#endif
 
 #define HS_SERVER_PROG 0x30000062
 #define HS_SERVER_VERS 0x00010001
 
+#if !defined(CONFIG_MACH_MOT)
 #define HS_RPC_PROG 0x30000091
 #define HS_RPC_VERS 0x00010001
 
@@ -41,6 +46,7 @@
 
 #define HS_SUBSCRIBE_SRVC_PROC 0x03
 #define HS_EVENT_CB_PROC	1
+#endif
 
 #define RPC_KEYPAD_NULL_PROC 0
 #define RPC_KEYPAD_PASS_KEY_CODE_PROC 2
@@ -54,6 +60,7 @@
 
 #define KEY(hs_key, input_key) ((hs_key << 24) | input_key)
 
+#if !defined(CONFIG_MACH_MOT)
 struct hs_key_data {
 	uint32_t ver;        /* Version number to track sturcture changes */
 	uint32_t code;       /* which key? */
@@ -107,15 +114,23 @@ struct hs_event_cb_recv {
 	uint32_t hs_key_data_ptr;
 	struct hs_key_data key;
 };
+#endif
 
 static const uint32_t hs_key_map[] = {
+#if defined(CONFIG_MACH_MOT)
+	KEY(HS_END_K, KEY_POWER),
+#else
 	KEY(HS_PWR_K, KEY_POWER),
 	KEY(HS_END_K, KEY_END),
 	KEY(HS_STEREO_HEADSET_K, SW_HEADPHONE_INSERT),
+#endif
 	KEY(HS_HEADSET_SWITCH_K, KEY_MEDIA),
 	0
 };
 
+#if defined(CONFIG_MACH_MOT)
+static struct input_dev *kpdev;
+#else
 enum {
 	NO_DEVICE	= 0,
 	MSM_HEADSET	= 1,
@@ -126,9 +141,14 @@ struct msm_handset {
 	struct switch_dev sdev;
 };
 
-static struct input_dev *kpdev;
 static struct msm_rpc_client *rpc_client;
 static struct msm_handset *hs;
+#endif
+
+#if defined(CONFIG_KERNEL_MOTOROLA)
+static struct input_dev *kpdev;
+extern struct input_dev *msm_keypad_get_input_dev(void);
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 
 static int hs_find_key(uint32_t hscode)
 {
@@ -143,6 +163,7 @@ static int hs_find_key(uint32_t hscode)
 	return -1;
 }
 
+#if !defined(CONFIG_MACH_MOT)
 static void
 report_headset_switch(struct input_dev *dev, int key, int value)
 {
@@ -150,8 +171,8 @@ report_headset_switch(struct input_dev *dev, int key, int value)
 
 	input_report_switch(dev, key, value);
 	switch_set_state(&hs->sdev, value);
-	input_sync(dev);
 }
+#endif
 
 /*
  * tuple format: (key_code, key_param)
@@ -178,31 +199,44 @@ static void report_hs_key(uint32_t key_code, uint32_t key_parm)
 	if (key_parm == HS_REL_K)
 		key_code = key_parm;
 
+#if !defined(CONFIG_KERNEL_MOTOROLA) 
 	kpdev = msm_keypad_get_input_dev();
-
+#endif
 	switch (key) {
 	case KEY_POWER:
 	case KEY_END:
+#if defined(CONFIG_MACH_MOT)
 		if (!kpdev) {
 			printk(KERN_ERR "%s: No input device for reporting "
 					"pwr/end key press\n", __func__);
 			return;
 		}
+#endif
+        
+#if !defined(CONFIG_KERNEL_MOTOROLA)        
 		input_report_key(kpdev, key, (key_code != HS_REL_K));
 		input_sync(kpdev);
+#else
+       input_report_key(hs->ipdev, key, (key_code != HS_REL_K));
+#endif
 		break;
 	case SW_HEADPHONE_INSERT:
-		report_headset_switch(hs->ipdev, key, (key_code != HS_REL_K));
 		break;
 	case KEY_MEDIA:
-		input_report_key(hs->ipdev, key, (key_code != HS_REL_K));
-		input_sync(hs->ipdev);
 		break;
+	default:
+		printk(KERN_ERR "%s: Unhandled handset key %d\n", __func__,
+				key);
 	case -1:
 		printk(KERN_ERR "%s: No mapping for remote handset event %d\n",
 				 __func__, temp_key_code);
-		break;
+		return;
 	}
+#if !defined(CONFIG_KERNEL_MOTOROLA)    
+    input_sync(kpdev);
+#else
+    input_sync(hs->ipdev);
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */    
 }
 
 static int handle_hs_rpc_call(struct msm_rpc_server *server,
@@ -213,6 +247,9 @@ static int handle_hs_rpc_call(struct msm_rpc_server *server,
 		uint32_t key_parm;
 	};
 
+#if defined(CONFIG_MACH_MOT)
+	kpdev = msm_keypad_get_input_dev();
+#endif
 	switch (req->procedure) {
 	case RPC_KEYPAD_NULL_PROC:
 		return 0;
@@ -247,6 +284,13 @@ static struct msm_rpc_server hs_rpc_server = {
 	.rpc_call	= handle_hs_rpc_call,
 };
 
+#if defined(CONFIG_MACH_MOT)
+static int __init hs_rpc_server_init(void)
+{
+	return msm_rpc_create_server(&hs_rpc_server);
+}
+module_init(hs_rpc_server_init);
+#else
 static int process_subs_srvc_callback(struct hs_event_cb_recv *recv)
 {
 	if (!recv)
@@ -371,13 +415,18 @@ static int __devinit hs_rpc_init(void)
 	int rc;
 
 	if (machine_is_msm7x27_surf() || machine_is_msm7x27_ffa() ||
-		machine_is_qsd8x50_surf() || machine_is_qsd8x50_ffa()) {
+		machine_is_qsd8x50_surf() || machine_is_qsd8x50_ffa() ||
+		machine_is_msm7x30_surf() || machine_is_msm7x30_ffa()) {
 		rc = hs_rpc_cb_init();
 		if (rc)
 			pr_err("%s: failed to initialize\n", __func__);
 	}
 
-	return msm_rpc_create_server(&hs_rpc_server);
+	rc = msm_rpc_create_server(&hs_rpc_server);
+	if (rc < 0)
+		pr_err("%s: failed to create rpc server\n", __func__);
+
+	return 0;
 }
 
 static void __devexit hs_rpc_deinit(void)
@@ -433,6 +482,8 @@ static int __devinit hs_probe(struct platform_device *pdev)
 
 	input_set_capability(ipdev, EV_KEY, KEY_MEDIA);
 	input_set_capability(ipdev, EV_SW, SW_HEADPHONE_INSERT);
+	input_set_capability(ipdev, EV_KEY, KEY_POWER);
+	input_set_capability(ipdev, EV_KEY, KEY_END);
 
 	rc = input_register_device(ipdev);
 	if (rc) {
@@ -495,3 +546,4 @@ module_exit(hs_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("platform:msm-handset");
+#endif

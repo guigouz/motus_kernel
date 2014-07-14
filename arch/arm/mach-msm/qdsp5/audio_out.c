@@ -16,6 +16,7 @@
  *
  */
 
+#include <mach/debug_audio_mm.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -94,7 +95,58 @@ module_init(_pcm_log_init);
 #define BUFSZ (960 * 5)
 #define DMASZ (BUFSZ * 2)
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+#define AUDPP_CMD_CFG_OBJ_UPDATE 0x8000
+#define AUDPP_CMD_EQ_FLAG_DIS	0x0000
+#define AUDPP_CMD_EQ_FLAG_ENA	-1
+#define AUDPP_CMD_IIR_FLAG_DIS	  0x0000
+#define AUDPP_CMD_IIR_FLAG_ENA	  -1
+
+#define AUDPP_CMD_IIR_TUNING_FILTER  1
+#define AUDPP_CMD_EQUALIZER	2
+#define AUDPP_CMD_ADRC	3
+
+#define ADRC_ENABLE  0x0001
+#define EQ_ENABLE    0x0002
+#define IIR_ENABLE   0x0004
+
+struct adrc_filter {
+	uint16_t compression_th;
+	uint16_t compression_slope;
+	uint16_t rms_time;
+	uint16_t attack_const_lsw;
+	uint16_t attack_const_msw;
+	uint16_t release_const_lsw;
+	uint16_t release_const_msw;
+	uint16_t adrc_system_delay;
+};
+
+struct eqalizer {
+	uint16_t num_bands;
+	uint16_t eq_params[132];
+};
+
+struct rx_iir_filter {
+	uint16_t num_bands;
+	uint16_t iir_params[48];
+};
+
+typedef struct {
+	audpp_cmd_cfg_object_params_common common;
+	uint16_t eq_flag;
+	uint16_t num_bands;
+	uint16_t eq_params[132];
+} audpp_cmd_cfg_object_params_eq;
+
+typedef struct {
+	audpp_cmd_cfg_object_params_common common;
+	uint16_t active_flag;
+	uint16_t num_bands;
+	uint16_t iir_params[48];
+} audpp_cmd_cfg_object_params_rx_iir;
+#else
 #define COMMON_OBJ_ID 6
+#endif
 
 struct buffer {
 	void *data;
@@ -130,17 +182,35 @@ struct audio {
 	char *data;
 	dma_addr_t phys;
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	int teos; /* valid only if tunnel mode & no data left for decoder */
+#endif
 	int opened;
 	int enabled;
 	int running;
 	int stopped; /* set when stopped, cleared on flush */
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	unsigned volume;
+#endif
 
 	struct wake_lock wakelock;
 	struct wake_lock idlelock;
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	int adrc_enable;
+	struct adrc_filter adrc;
+
+	int eq_enable;
+	struct eqalizer eq;
+
+	int rx_iir_enable;
+	struct rx_iir_filter iir;
+#else
 	audpp_cmd_cfg_object_params_volume vol_pan;
+#endif
 };
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 struct audio_copp {
 	int mbadrc_enable;
 	int mbadrc_needs_commit;
@@ -169,10 +239,11 @@ struct audio_copp {
 
 	struct audpp_event_callback ecb;
 } the_audio_copp;
+#endif
 
 static void audio_prevent_sleep(struct audio *audio)
 {
-	printk(KERN_INFO "++++++++++++++++++++++++++++++\n");
+	MM_DBG("\n"); /* Macro prints the file name and function */
 	wake_lock(&audio->wakelock);
 	wake_lock(&audio->idlelock);
 }
@@ -181,11 +252,16 @@ static void audio_allow_sleep(struct audio *audio)
 {
 	wake_unlock(&audio->wakelock);
 	wake_unlock(&audio->idlelock);
-	printk(KERN_INFO "------------------------------\n");
+	MM_DBG("\n"); /* Macro prints the file name and function */
 }
 
 static int audio_dsp_out_enable(struct audio *audio, int yes);
 static int audio_dsp_send_buffer(struct audio *audio, unsigned id, unsigned len);
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static int audio_dsp_set_adrc(struct audio *audio);
+static int audio_dsp_set_eq(struct audio *audio);
+static int audio_dsp_set_rx_iir(struct audio *audio);
+#endif
 
 static void audio_dsp_event(void *private, unsigned id, uint16_t *msg);
 
@@ -195,7 +271,7 @@ static int audio_enable(struct audio *audio)
 	struct audmgr_config cfg;
 	int rc;
 
-	pr_info("audio_enable()\n");
+	MM_INFO("\n"); /* Macro prints the file name and function */
 
 	if (audio->enabled)
 		return 0;	
@@ -222,23 +298,29 @@ static int audio_enable(struct audio *audio)
 		audio_allow_sleep(audio);
 		return rc;
 	}
+	/*mot/cvk011c  : enable Speaker 100ms before codec to match
+     100 ms delay in PMIC speaker enable function added to fix POP sound*/
+
+    htc_pwrsink_set(PWRSINK_AUDIO, 100);
+	msleep(100);
+
 
 	if (audpp_enable(-1, audio_dsp_event, audio)) {
-		pr_err("audio: audpp_enable() failed\n");
+		MM_ERR("audpp_enable() failed\n");
 		audmgr_disable(&audio->audmgr);
 		audio_allow_sleep(audio);
+		htc_pwrsink_set(PWRSINK_AUDIO, 0);
 		return -ENODEV;
 	}
 
 	audio->enabled = 1;
-	htc_pwrsink_set(PWRSINK_AUDIO, 100);
 	return 0;
 }
 
 /* must be called with audio->lock held */
 static int audio_disable(struct audio *audio)
 {
-	pr_info("audio_disable()\n");
+	MM_INFO("\n"); /* Macro prints the file name and function */
 	if (audio->enabled) {
 		audio->enabled = 0;
 		audio_dsp_out_enable(audio, 0);
@@ -253,6 +335,7 @@ static int audio_disable(struct audio *audio)
 	return 0;
 }
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 void audio_commit_pending_pp_params(void *priv, unsigned id, uint16_t *msg)
 {
 	struct audio_copp *audio_copp = priv;
@@ -278,6 +361,7 @@ void audio_commit_pending_pp_params(void *priv, unsigned id, uint16_t *msg)
 				&audio_copp->qconcert_plus);
 }
 EXPORT_SYMBOL(audio_commit_pending_pp_params);
+#endif
 
 /* ------------------- dsp --------------------- */
 static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
@@ -292,13 +376,13 @@ static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
 		unsigned id = msg[2];
 		unsigned idx = msg[3] - 1;
 
-		/* pr_info("audio_dsp_event: HOST_PCM id %d idx %d\n", id, idx); */
+		/* MM_INFO("HOST_PCM id %d idx %d\n", id, idx); */
 		if (id != AUDPP_MSG_HOSTPCM_ID_ARM_RX) {
-			pr_err("bogus id\n");
+			MM_ERR("bogus id\n");
 			break;
 		}
 		if (idx > 1) {
-			pr_err("bogus buffer idx\n");
+			MM_ERR("bogus buffer idx\n");
 			break;
 		}
 
@@ -321,26 +405,37 @@ static void audio_dsp_event(void *private, unsigned id, uint16_t *msg)
 		break;
 	}
 	case AUDPP_MSG_PCMDMAMISSED:
-		pr_info("audio_dsp_event: PCMDMAMISSED %d\n", msg[0]);
+		MM_INFO("PCMDMAMISSED %d\n", msg[0]);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+		audio->teos = 1;
+		wake_up(&audio->wait);
+#endif
 		break;
 	case AUDPP_MSG_CFG_MSG:
 		if (msg[0] == AUDPP_MSG_ENA_ENA) {
 			LOG(EV_ENABLE, 1);
-			pr_info("audio_dsp_event: CFG_MSG ENABLE\n");
+			MM_INFO("CFG_MSG ENABLE\n");
 			audio->out_needed = 0;
 			audio->running = 1;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+			audpp_set_volume_and_pan(5, audio->volume, 0);
+			audio_dsp_set_adrc(audio);
+			audio_dsp_set_eq(audio);
+			audio_dsp_set_rx_iir(audio);
+#else
 			audpp_dsp_set_vol_pan(5, &audio->vol_pan);
+#endif
 			audio_dsp_out_enable(audio, 1);
 		} else if (msg[0] == AUDPP_MSG_ENA_DIS) {
 			LOG(EV_ENABLE, 0);
-			pr_info("audio_dsp_event: CFG_MSG DISABLE\n");
+			MM_INFO("CFG_MSG DISABLE\n");
 			audio->running = 0;
 		} else {
-			pr_err("audio_dsp_event: CFG_MSG %d?\n", msg[0]);
+			MM_ERR("CFG_MSG %d?\n", msg[0]);
 		}
 		break;
 	default:
-		pr_err("audio_dsp_event: UNKNOWN (%d)\n", id);
+		MM_ERR("UNKNOWN (%d)\n", id);
 	}
 }
 
@@ -357,16 +452,24 @@ static int audio_dsp_out_enable(struct audio *audio, int yes)
 	if (yes) {
 		cmd.write_buf1LSW	= audio->out[0].addr;
 		cmd.write_buf1MSW	= audio->out[0].addr >> 16;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 		if (audio->out[0].used)
 			cmd.write_buf1_len	= audio->out[0].used;
 		else
 			cmd.write_buf1_len	= audio->out[0].size;
+#else
+		cmd.write_buf1_len	= audio->out[0].size;
+#endif
 		cmd.write_buf2LSW	= audio->out[1].addr;
 		cmd.write_buf2MSW	= audio->out[1].addr >> 16;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 		if (audio->out[1].used)
 			cmd.write_buf2_len	= audio->out[1].used;
 		else
 			cmd.write_buf2_len	= audio->out[1].size;
+#else
+		cmd.write_buf2_len	= audio->out[1].size;
+#endif
 		cmd.arm_to_rx_flag	= AUDPP_CMD_PCM_INTF_ENA_V;
 		cmd.weight_decoder_to_rx = audio->out_weight;
 		cmd.weight_arm_to_rx	= 1;
@@ -394,8 +497,90 @@ static int audio_dsp_send_buffer(struct audio *audio, unsigned idx, unsigned len
 	return audpp_send_queue2(&cmd, sizeof(cmd));
 }
 
-/* ------------------- device --------------------- */
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static int audio_dsp_set_adrc(struct audio *audio)
+{
+	audpp_cmd_cfg_object_params_adrc cmd;
 
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.common.comman_cfg = AUDPP_CMD_CFG_OBJ_UPDATE;
+	cmd.common.command_type = AUDPP_CMD_ADRC;
+
+	if (audio->adrc_enable) {
+		cmd.adrc_flag = AUDPP_CMD_ADRC_FLAG_ENA;
+		cmd.compression_th = audio->adrc.compression_th;
+		cmd.compression_slope = audio->adrc.compression_slope;
+		cmd.rms_time = audio->adrc.rms_time;
+		cmd.attack_const_lsw = audio->adrc.attack_const_lsw;
+		cmd.attack_const_msw = audio->adrc.attack_const_msw;
+		cmd.release_const_lsw = audio->adrc.release_const_lsw;
+		cmd.release_const_msw = audio->adrc.release_const_msw;
+		cmd.adrc_system_delay = audio->adrc.adrc_system_delay;
+	} else {
+		cmd.adrc_flag = AUDPP_CMD_ADRC_FLAG_DIS;
+	}
+	return audpp_send_queue3(&cmd, sizeof(cmd));
+}
+
+static int audio_dsp_set_eq(struct audio *audio)
+{
+	audpp_cmd_cfg_object_params_eq cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.common.comman_cfg = AUDPP_CMD_CFG_OBJ_UPDATE;
+	cmd.common.command_type = AUDPP_CMD_EQUALIZER;
+
+	if (audio->eq_enable) {
+		cmd.eq_flag = AUDPP_CMD_EQ_FLAG_ENA;
+		cmd.num_bands = audio->eq.num_bands;
+		memcpy(&cmd.eq_params, audio->eq.eq_params,
+		       sizeof(audio->eq.eq_params));
+	} else {
+		cmd.eq_flag = AUDPP_CMD_EQ_FLAG_DIS;
+	}
+	return audpp_send_queue3(&cmd, sizeof(cmd));
+}
+
+static int audio_dsp_set_rx_iir(struct audio *audio)
+{
+	audpp_cmd_cfg_object_params_rx_iir cmd;
+
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.common.comman_cfg = AUDPP_CMD_CFG_OBJ_UPDATE;
+	cmd.common.command_type = AUDPP_CMD_IIR_TUNING_FILTER;
+
+	if (audio->rx_iir_enable) {
+		cmd.active_flag = AUDPP_CMD_IIR_FLAG_ENA;
+		cmd.num_bands = audio->iir.num_bands;
+		memcpy(&cmd.iir_params, audio->iir.iir_params,
+		       sizeof(audio->iir.iir_params));
+	} else {
+		cmd.active_flag = AUDPP_CMD_IIR_FLAG_DIS;
+	}
+
+	return audpp_send_queue3(&cmd, sizeof(cmd));
+}
+#endif
+
+/* ------------------- device --------------------- */
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static int audio_enable_adrc(struct audio *audio, int enable)
+{
+	/* 	This was added based on Qcom SR 00176377 and this helps
+		the kernel to apply the different compressor profiles.
+		At first there was only ONE set of compressor settings
+		for all devices We've now incorporated 3 different compressor
+		profiles and the MODS below will allow for each
+		device to use their own set of ADRC compressor settings
+		if they're enabled. */
+
+	audio->adrc_enable = enable;
+	if (audio->running)
+		audio_dsp_set_adrc(audio);
+
+	return 0;
+}
+#else
 static int audio_enable_mbadrc(struct audio_copp *audio_copp, int enable)
 {
 	if (audio_copp->mbadrc_enable == enable &&
@@ -411,7 +596,19 @@ static int audio_enable_mbadrc(struct audio_copp *audio_copp, int enable)
 
 	return 0;
 }
+#endif
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static int audio_enable_eq(struct audio *audio, int enable)
+{
+	if (audio->eq_enable != enable) {
+		audio->eq_enable = enable;
+		if (audio->running)
+			audio_dsp_set_eq(audio);
+	}
+	return 0;
+}
+#else
 static int audio_enable_eq(struct audio_copp *audio_copp, int enable)
 {
 	if (audio_copp->eq_enable == enable &&
@@ -426,7 +623,19 @@ static int audio_enable_eq(struct audio_copp *audio_copp, int enable)
 	}
 	return 0;
 }
+#endif
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+static int audio_enable_rx_iir(struct audio *audio, int enable)
+{
+	if (audio->rx_iir_enable != enable) {
+		audio->rx_iir_enable = enable;
+		if (audio->running)
+			audio_dsp_set_rx_iir(audio);
+	}
+	return 0;
+}
+#else
 static int audio_enable_rx_iir(struct audio_copp *audio_copp, int enable)
 {
 	if (audio_copp->rx_iir_enable == enable &&
@@ -441,7 +650,9 @@ static int audio_enable_rx_iir(struct audio_copp *audio_copp, int enable)
 	}
 	return 0;
 }
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 static int audio_enable_vol_pan(struct audio_copp *audio_copp)
 {
 	if (is_audpp_enable())
@@ -464,6 +675,7 @@ static int audio_enable_qconcert_plus(struct audio_copp *audio_copp, int enable)
 	}
 	return 0;
 }
+#endif
 
 static void audio_flush(struct audio *audio)
 {
@@ -488,6 +700,15 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		return 0;
 	}
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	if (cmd == AUDIO_SET_VOLUME) {
+		spin_lock_irqsave(&audio->dsp_lock, flags);
+		audio->volume = arg;
+		if (audio->running)
+			audpp_set_volume_and_pan(6, arg, 0);
+		spin_unlock_irqrestore(&audio->dsp_lock, flags);
+	}
+#else
 	switch (cmd) {
 	case AUDIO_SET_VOLUME:
 		spin_lock_irqsave(&audio->dsp_lock, flags);
@@ -505,7 +726,7 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		spin_unlock_irqrestore(&audio->dsp_lock, flags);
 		return 0;
 	}
-
+#endif
 	LOG(EV_IOCTL, cmd);
 	mutex_lock(&audio->lock);
 	switch (cmd) {
@@ -560,6 +781,9 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		config.unused[0] = 0;
 		config.unused[1] = 0;
 		config.unused[2] = 0;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		config.unused[3] = 0;
+#endif
 		if (copy_to_user((void*) arg, &config, sizeof(config))) {
 			rc = -EFAULT;
 		} else {
@@ -573,6 +797,41 @@ static long audio_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	mutex_unlock(&audio->lock);
 	return rc;
 }
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+/* Only useful in tunnel-mode */
+static int audio_fsync(struct file *file, struct dentry *dentry,
+			int datasync)
+{
+	struct audio *audio = file->private_data;
+	int rc = 0;
+
+	if (!audio->running)
+		return -EINVAL;
+
+	mutex_lock(&audio->write_lock);
+
+	rc = wait_event_interruptible(audio->wait,
+		(!audio->out[0].used &&
+		!audio->out[1].used));
+
+	if (rc < 0)
+		goto done;
+
+	/* pcm dmamiss message is sent continously when
+	 * decoder is starved so no race condition concern
+	 */
+
+	audio->teos = 0;
+
+	rc = wait_event_interruptible(audio->wait,
+		audio->teos);
+
+done:
+	mutex_unlock(&audio->write_lock);
+	return rc;
+}
+#endif
 
 static ssize_t audio_read(struct file *file, char __user *buf, size_t count, loff_t *pos)
 {
@@ -613,7 +872,7 @@ static ssize_t audio_write(struct file *file, const char __user *buf,
 		cap_raise(new->cap_effective, CAP_SYS_NICE);
 		commit_creds(new);
 		if ((sched_setscheduler(current, SCHED_RR, &s)) < 0)
-			pr_err("audio: sched_setscheduler failed\n");
+			MM_ERR("sched_setscheduler failed\n");
 	}
 
 	mutex_lock(&audio->write_lock);
@@ -658,13 +917,11 @@ static ssize_t audio_write(struct file *file, const char __user *buf,
 	if (!rt_policy(old_policy)) {
 		struct sched_param v = { .sched_priority = old_prio };
 		if ((sched_setscheduler(current, old_policy, &v)) < 0)
-			pr_err("audio: sched_setscheduler failed\n");
+			MM_ERR("sched_setscheduler failed\n");
 		if (likely(!cap_nice)) {
 			struct cred *new = prepare_creds();
 			cap_lower(new->cap_effective, CAP_SYS_NICE);
 			commit_creds(new);
-			if ((sched_setscheduler(current, SCHED_RR, &s)) < 0)
-				pr_err("audio: sched_setscheduler failed\n");
 		}
 	}
 
@@ -698,7 +955,7 @@ static int audio_open(struct inode *inode, struct file *file)
 	mutex_lock(&audio->lock);
 
 	if (audio->opened) {
-		pr_err("audio: busy\n");
+		MM_ERR("busy\n");
 		rc = -EBUSY;
 		goto done;
 	}
@@ -707,7 +964,7 @@ static int audio_open(struct inode *inode, struct file *file)
 		audio->data = dma_alloc_coherent(NULL, DMASZ, 
 						 &audio->phys, GFP_KERNEL);
 		if (!audio->data) {
-			pr_err("audio: could not allocate DMA buffers\n");
+			MM_ERR("could not allocate DMA buffers\n");
 			rc = -ENOMEM;
 			goto done;
 		}
@@ -730,8 +987,12 @@ static int audio_open(struct inode *inode, struct file *file)
 	audio->out[1].addr = audio->phys + BUFSZ;
 	audio->out[1].size = BUFSZ;
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	audio->volume = 0x2000;
+#else
 	audio->vol_pan.volume = 0x2000;
 	audio->vol_pan.pan = 0x0;
+#endif
 
 	audio_flush(audio);
 
@@ -746,14 +1007,37 @@ done:
 
 static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	struct audio *audio = file->private_data;
+#else
 	struct audio_copp *audio_copp = file->private_data;
+#endif
 	int rc = 0, enable;
 	uint16_t enable_mask;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	int prev_state;
+#endif
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	mutex_lock(&audio->lock);
+#else
 	mutex_lock(&audio_copp->lock);
+#endif
 	switch (cmd) {
 	case AUDIO_ENABLE_AUDPP:
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		if (copy_from_user(&enable_mask, (void *) arg,
+						sizeof(enable_mask)))
+			goto out_fault;
+
+		enable = (enable_mask & ADRC_ENABLE)? 1 : 0;
+		audio_enable_adrc(audio, enable);
+		enable = (enable_mask & EQ_ENABLE)? 1 : 0;
+		audio_enable_eq(audio, enable);
+		enable = (enable_mask & IIR_ENABLE)? 1 : 0;
+		audio_enable_rx_iir(audio, enable);
+		break;
+#else
 		if (copy_from_user(&enable_mask, (void *) arg,
 						sizeof(enable_mask))) {
 			rc = -EFAULT;
@@ -770,7 +1054,9 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		enable = (enable_mask & QCONCERT_PLUS_ENABLE) ? 1 : 0;
 		audio_enable_qconcert_plus(audio_copp, enable);
 		break;
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	case AUDIO_SET_MBADRC: {
 		uint32_t mbadrc_coeff_buf;
 		prev_state = audio_copp->mbadrc_enable;
@@ -799,8 +1085,15 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			audio_copp->mbadrc_needs_commit = 1;
 		break;
 	}
+#endif
 
 	case AUDIO_SET_ADRC: {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		if (copy_from_user(&audio->adrc, (void*) arg, sizeof(audio->adrc)))
+			goto out_fault;
+		break;
+		}
+#else
 			struct audpp_cmd_cfg_object_params_adrc adrc;
 			prev_state = audio_copp->mbadrc_enable;
 			audio_copp->mbadrc_enable = 0;
@@ -836,8 +1129,14 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			audio_copp->mbadrc_needs_commit = 1;
 			break;
 		}
+#endif
 
 	case AUDIO_SET_EQ:
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		if (copy_from_user(&audio->eq, (void*) arg, sizeof(audio->eq)))
+			goto out_fault;
+		break;
+#else
 		prev_state = audio_copp->eq_enable;
 		audio_copp->eq_enable = 0;
 		if (copy_from_user(&audio_copp->eq.num_bands, (void *) arg,
@@ -847,8 +1146,14 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		audio_copp->eq_enable = prev_state;
 		audio_copp->eq_needs_commit = 1;
 		break;
+#endif
 
 	case AUDIO_SET_RX_IIR:
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		if (copy_from_user(&audio->iir, (void*) arg, sizeof(audio->iir)))
+			goto out_fault;
+		break;
+#else
 		prev_state = audio_copp->rx_iir_enable;
 		audio_copp->rx_iir_enable = 0;
 		if (copy_from_user(&audio_copp->iir.num_bands, (void *) arg,
@@ -858,7 +1163,9 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		audio_copp->rx_iir_enable = prev_state;
 		audio_copp->rx_iir_needs_commit = 1;
 		break;
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	case AUDIO_SET_VOLUME:
 		audio_copp->vol_pan.volume = arg;
 		audio_enable_vol_pan(audio_copp);
@@ -880,17 +1187,32 @@ static long audpp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		audio_copp->qconcert_plus_enable = prev_state;
 		audio_copp->qconcert_plus_needs_commit = 1;
 		break;
-
+#endif
 	default:
 		rc = -EINVAL;
 	}
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	goto out;
+
+ out_fault:
+	rc = -EFAULT;
+ out:
+	mutex_unlock(&audio->lock);
+#else
 	mutex_unlock(&audio_copp->lock);
+#endif
 	return rc;
 }
 
 static int audpp_open(struct inode *inode, struct file *file)
 {
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	struct audio *audio = &the_audio;
+
+	file->private_data = audio;
+	return 0;
+#else
 	struct audio_copp *audio_copp = &the_audio_copp;
 	int rc;
 
@@ -915,7 +1237,7 @@ static int audpp_open(struct inode *inode, struct file *file)
 				AUDPP_MBADRC_EXTERNAL_BUF_SIZE * 2,
 				 &audio_copp->mbadrc_phys, GFP_KERNEL);
 		if (!audio_copp->mbadrc_data) {
-			pr_err("audio: could not allocate DMA buffers\n");
+			MM_ERR("could not allocate DMA buffers\n");
 			audio_copp->opened = 0;
 			audpp_unregister_event_callback(&audio_copp->ecb);
 			mutex_unlock(&audio_copp->lock);
@@ -930,8 +1252,10 @@ static int audpp_open(struct inode *inode, struct file *file)
 	mutex_unlock(&audio_copp->lock);
 
 	return 0;
+#endif
 }
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 static int audpp_release(struct inode *inode, struct file *file)
 {
 	struct audio_copp *audio_copp = &the_audio_copp;
@@ -940,6 +1264,7 @@ static int audpp_release(struct inode *inode, struct file *file)
 
 	return 0;
 }
+#endif
 
 static struct file_operations audio_fops = {
 	.owner		= THIS_MODULE,
@@ -948,12 +1273,17 @@ static struct file_operations audio_fops = {
 	.read		= audio_read,
 	.write		= audio_write,
 	.unlocked_ioctl	= audio_ioctl,
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	.fsync		= audio_fsync,
+#endif
 };
 
 static struct file_operations audpp_fops = {
 	.owner		= THIS_MODULE,
 	.open		= audpp_open,
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	.release	= audpp_release,
+#endif
 	.unlocked_ioctl	= audpp_ioctl,
 };
 
@@ -973,7 +1303,9 @@ static int __init audio_init(void)
 {
 	mutex_init(&the_audio.lock);
 	mutex_init(&the_audio.write_lock);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	mutex_init(&the_audio_copp.lock);
+#endif
 	spin_lock_init(&the_audio.dsp_lock);
 	init_waitqueue_head(&the_audio.wait);
 	wake_lock_init(&the_audio.wakelock, WAKE_LOCK_SUSPEND, "audio_pcm");

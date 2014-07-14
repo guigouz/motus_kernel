@@ -23,7 +23,6 @@
 #include <linux/rcupdate.h>
 #include <linux/smp.h>
 #include <linux/tick.h>
-
 #include <asm/irq.h>
 /*
    - No shared variables, all the data are CPU local.

@@ -535,6 +535,12 @@ config CPU_TLB_V6
 config CPU_TLB_V7
 	bool
 
+config EMULATE_DOMAIN_MANAGER_V7
+	bool
+
+config VERIFY_PERMISSION_FAULT
+	bool
+
 endif
 
 config CPU_HAS_ASID
@@ -676,7 +682,7 @@ config TLS_REG_EMUL
 config HAS_TLS_REG
 	bool
 	depends on !TLS_REG_EMUL
-	default y if SMP || CPU_32v7
+	default n if SMP || CPU_32v7
 	help
 	  This selects support for the CP15 thread register.
 	  It is defined to be available on some ARMv6 processors (including
@@ -711,9 +717,11 @@ config CACHE_FEROCEON_L2_WRITETHROUGH
 	  Say Y here to use the Feroceon L2 cache in writethrough mode.
 	  Unless you specifically require this, say N for writeback mode.
 
+#MOT: changed the dependency on MACH_MSM7X27_SURF and MACH_MSM7X27_FFA to ARCH_MSM7X27
+
 config CACHE_L2X0
 	bool "Enable the L2x0 outer cache controller"
-	depends on REALVIEW_EB_ARM11MP || MACH_REALVIEW_PB11MP || MACH_REALVIEW_PB1176 || REALVIEW_EB_A9MP || MACH_MSM7X27_SURF || MACH_MSM7X27_FFA
+	depends on REALVIEW_EB_ARM11MP || MACH_REALVIEW_PB11MP || MACH_REALVIEW_PB1176 || REALVIEW_EB_A9MP || MACH_MSM7X27 || KERNEL_MOTOROLA
 	default y
 	select OUTER_CACHE
 	help
@@ -726,3 +734,8 @@ config CACHE_XSC3L2
 	select OUTER_CACHE
 	help
 	  This option enables the L2 cache on XScale3.
+
+config ARM_L1_CACHE_SHIFT
+	int
+	default 6 if ARCH_OMAP3
+	default 5

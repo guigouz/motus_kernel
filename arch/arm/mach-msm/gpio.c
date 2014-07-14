@@ -104,7 +104,11 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 		},
 		.chip = {
 			.start = 16,
+#if defined(CONFIG_ARCH_MSM7X30)
+			.end = 43,
+#else
 			.end = 42,
+#endif
 			.configure = msm_gpio_configure,
 			.get_irq_num = msm_gpio_get_irq_num,
 			.read = msm_gpio_read,
@@ -125,7 +129,11 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 			.oe =          GPIO_OE_2,
 		},
 		.chip = {
+#if defined(CONFIG_ARCH_MSM7X30)
+			.start = 44,
+#else
 			.start = 43,
+#endif
 			.end = 67,
 			.configure = msm_gpio_configure,
 			.get_irq_num = msm_gpio_get_irq_num,
@@ -170,7 +178,7 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 		},
 		.chip = {
 			.start = 95,
-#if defined(CONFIG_ARCH_MSM_SCORPION)
+#if defined(CONFIG_ARCH_QSD8X50)
 			.end = 103,
 #else
 			.end = 106,
@@ -195,9 +203,12 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 			.oe =          GPIO_OE_5,
 		},
 		.chip = {
-#if defined(CONFIG_ARCH_MSM_SCORPION)
+#if defined(CONFIG_ARCH_QSD8X50)
 			.start = 104,
 			.end = 121,
+#elif defined(CONFIG_ARCH_MSM7X30)
+			.start = 107,
+			.end = 133,
 #else
 			.start = 107,
 			.end = 132,
@@ -223,8 +234,13 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 			.oe =          GPIO_OE_6,
 		},
 		.chip = {
+#if defined(CONFIG_ARCH_MSM7X30)
+			.start = 134,
+			.end = 150,
+#else
 			.start = 122,
 			.end = 152,
+#endif
 			.configure = msm_gpio_configure,
 			.get_irq_num = msm_gpio_get_irq_num,
 			.read = msm_gpio_read,
@@ -245,8 +261,13 @@ struct msm_gpio_chip msm_gpio_chips[] = {
 			.oe =          GPIO_OE_7,
 		},
 		.chip = {
+#if defined(CONFIG_ARCH_MSM7X30)
+			.start = 151,
+			.end = 181,
+#else
 			.start = 153,
 			.end = 164,
+#endif
 			.configure = msm_gpio_configure,
 			.get_irq_num = msm_gpio_get_irq_num,
 			.read = msm_gpio_read,
@@ -475,8 +496,11 @@ static void msm_gpio_sleep_int(unsigned long arg)
 	struct tramp_gpio_smem *smem_gpio;
 
 	BUILD_BUG_ON(NR_GPIO_IRQS > NUM_GPIO_SMEM_BANKS * 32);
-
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(struct tramp_gpio_smem)); 
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(*smem_gpio)); 
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	if (smem_gpio == NULL)
 		return;
 
@@ -497,9 +521,11 @@ void msm_gpio_enter_sleep(int from_idle)
 {
 	int i;
 	struct tramp_gpio_smem *smem_gpio;
-
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(struct tramp_gpio_smem)); 
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(*smem_gpio)); 
-
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	if (smem_gpio) {
 		for (i = 0; i < ARRAY_SIZE(smem_gpio->enabled); i++) {
 			smem_gpio->enabled[i] = 0;
@@ -546,8 +572,11 @@ void msm_gpio_exit_sleep(void)
 {
 	int i;
 	struct tramp_gpio_smem *smem_gpio;
-
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(struct tramp_gpio_smem)); 
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	smem_gpio = smem_alloc(SMEM_GPIO_INT, sizeof(*smem_gpio)); 
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 
 	for (i = 0; i < ARRAY_SIZE(msm_gpio_chips); i++) {
 		writel(msm_gpio_chips[i].int_enable[0], msm_gpio_chips[i].regs.int_en);

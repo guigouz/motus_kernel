@@ -107,8 +107,13 @@ enum {
 	PCOM_SET_FTM_BOOT_COUNT,
 	PCOM_RESERVED0,
 	PCOM_RESERVED1,
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	PCOM_CHECK_BATTERY_VALID,
+	PCOM_SLIDE_STATUS,
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	PCOM_CUSTOMER_CMD1,
 	PCOM_CUSTOMER_CMD2,
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	PCOM_CUSTOMER_CMD3,
 	PCOM_CLK_REGIME_ENTER_APPSBL_CHG_MODE,
 	PCOM_CLK_REGIME_EXIT_APPSBL_CHG_MODE,
@@ -117,6 +122,9 @@ enum {
 	POCM_CLK_REGIME_SEC_RAIL_CONTROL,
 	POCM_SET_SW_WATCHDOG_STATE,
 	POCM_PM_MPP_CONFIG_DIGITAL_INPUT,
+#ifdef CONFIG_MACH_MOT
+	PCOM_PM_MPP_CONFIG_I_SINK,
+#endif
 	POCM_PM_MPP_CONFIG_I_SINK,
 	POCM_RESERVED_101,
 	POCM_MSM_HSUSB_PHY_RESET,
@@ -127,7 +135,24 @@ enum {
 	PCOM_CHG_USB_IS_AVAILABLE,
 	PCOM_CLK_REGIME_SEC_MSM_SEL_FREQ,
 	PCOM_CLK_REGIME_SEC_SET_PCLK_AXI_POLICY,
+	PCOM_CLKCTL_RPC_RESET_ASSERT,
+	PCOM_CLKCTL_RPC_RESET_DEASSERT,
+	PCOM_CLKCTL_RPC_RAIL_ON,
+	PCOM_CLKCTL_RPC_RAIL_OFF,
+	PCOM_CLKCTL_RPC_RAIL_ENABLE,
+	PCOM_CLKCTL_RPC_RAIL_DISABLE,
+	PCOM_CLKCTL_RPC_RAIL_CONTROL,
+	PCOM_CLKCTL_RPC_MIN_MSMC1,
 	PCOM_NUM_CMDS,
+};
+
+enum {
+	PCOM_OEM_FIRST_CMD = 0x10000000,
+	PCOM_OEM_TEST_CMD = PCOM_OEM_FIRST_CMD,
+
+	/* add OEM PROC COMM commands here */
+
+	PCOM_OEM_LAST = PCOM_OEM_TEST_CMD,
 };
 
 enum {
@@ -148,6 +173,40 @@ enum {
 	PCOM_CMD_FAIL_PROC_COMM_BUSY,
 	PCOM_CMD_FAIL_PROC_COMM_NOT_INIT,
 };
+
+#if defined(CONFIG_MACH_MOT)
+
+/*  Enumeration for meta-proc function */
+enum {
+	PROCCOMM_MODEM_FORCEPANIC = 1,
+	PROCCOMM_MODEM_WDOGSTATUS,
+	PROCCOMM_MODEM_SET_PANIC_REASON,
+	PROCCOMM_MODEM_SET_HARD_RESET_REASON,
+	PROCCOMM_NV_READ,
+	PROCCOMM_NV_WRITE,
+	PROCCOMM_MODEM_SET_AP_FLASH_REASON,
+	PROCCOMM_MODEM_STAY_IN_AP_FLASH,
+	PROCCOMM_MODEM_SET_SYSTEM_REBOOT_REASON,
+	PROCCOMM_MODEM_SET_FTI,
+	PROCCOMM_FACTORY_BYTE,
+	PROCCOMM_GET_PANIC,
+	PROCCOMM_CLEAR_PANIC,
+	PROCCOMM_NUM_METAFUNCS
+};
+
+/* meta_proc - Executes the metaproc command that was sent.
+ * @cmd  Which processor sent the command.
+ * @data A pointer to an integer for general purpose use.
+ *
+ * Command will be executed by modem.  Data passed to modem in
+ * data pointer may be modified by the modem.
+ * The modem code that handles this command is in:
+ * AMSS/products/7600/services/mproc/smem/mot_smem_metaproc.c
+ */
+
+int meta_proc(unsigned cmd, unsigned *data);
+
+#endif
 
 void msm_proc_comm_reset_modem_now(void);
 int msm_proc_comm(unsigned cmd, unsigned *data1, unsigned *data2);

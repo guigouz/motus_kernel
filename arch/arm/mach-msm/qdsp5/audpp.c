@@ -17,13 +17,21 @@
  *
  */
 
+#include <mach/debug_audio_mm.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/wait.h>
 #include <linux/delay.h>
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#include <linux/sched.h>
+#include <linux/platform_device.h>
+#endif
 
 #include <asm/atomic.h>
 #include <asm/ioctls.h>
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+#include <mach/board.h>
+#endif
 #include <mach/msm_adsp.h>
 
 #include "audmgr.h"
@@ -31,8 +39,10 @@
 #include <mach/qdsp5/qdsp5audppcmdi.h>
 #include <mach/qdsp5/qdsp5audppmsg.h>
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
 /* for queue ids - should be relative to module number*/
 #include "adsp.h"
+#endif
 
 #include "evlog.h"
 
@@ -63,11 +73,15 @@ module_init(_dsp_log_init);
 #define LOG(id,arg) ev_log_write(&dsp_log, id, arg)
 
 static DEFINE_MUTEX(audpp_lock);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static DEFINE_MUTEX(audpp_dec_lock);
+#endif
 
 #define CH_COUNT 5
 #define AUDPP_CLNT_MAX_COUNT 6
 #define AUDPP_AVSYNC_INFO_SIZE 7
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 #define AUDPP_CMD_CFG_OBJ_UPDATE 0x8000
 #define AUDPP_CMD_EQ_FLAG_DIS	0x0000
 #define AUDPP_CMD_EQ_FLAG_ENA	-1
@@ -88,6 +102,18 @@ static DEFINE_MUTEX(audpp_lock);
 
 #define MAX_EVENT_CALLBACK_CLIENTS 	1
 
+#define AUDPP_CONCURRENCY_DEFAULT 6	/* All non tunnel mode */
+#define AUDPP_MAX_DECODER_CNT 5
+#define AUDPP_CODEC_MASK 0x000000FF
+#define AUDPP_MODE_MASK 0x00000F00
+#define AUDPP_OP_MASK 0xF0000000
+
+struct audpp_decoder_info {
+	unsigned int codec;
+	pid_t pid;
+};
+#endif
+
 struct audpp_state {
 	struct msm_adsp_module *mod;
 	audpp_event_func func[AUDPP_CLNT_MAX_COUNT];
@@ -96,16 +122,29 @@ struct audpp_state {
 	unsigned open_count;
 	unsigned enabled;
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	/* Related to decoder allocation */
+	struct mutex *lock_dec;
+	struct msm_adspdec_database *dec_database;
+	struct audpp_decoder_info dec_info_table[AUDPP_MAX_DECODER_CNT];
+	unsigned dec_inuse;
+	unsigned long concurrency;
+#endif
 	/* which channels are actually enabled */
 	unsigned avsync_mask;
 
 	/* flags, 48 bits sample/bytes counter per channel */
 	uint16_t avsync[CH_COUNT * AUDPP_CLNT_MAX_COUNT + 1];
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	struct audpp_event_callback *cb_tbl[MAX_EVENT_CALLBACK_CLIENTS];
+#endif
 };
 
 struct audpp_state the_audpp_state = {
 	.lock = &audpp_lock,
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	.lock_dec = &audpp_dec_lock,
+#endif
 };
 
 int audpp_send_queue1(void *cmd, unsigned len)
@@ -139,6 +178,7 @@ static int audpp_dsp_config(int enable)
 	return audpp_send_queue1(&cmd, sizeof(cmd));
 }
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int is_audpp_enable(void)
 {
 	struct audpp_state *audpp = &the_audpp_state;
@@ -146,7 +186,9 @@ int is_audpp_enable(void)
 	return audpp->enabled;
 }
 EXPORT_SYMBOL(is_audpp_enable);
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_register_event_callback(struct audpp_event_callback *ecb)
 {
 	struct audpp_state *audpp = &the_audpp_state;
@@ -161,7 +203,9 @@ int audpp_register_event_callback(struct audpp_event_callback *ecb)
 	return -1;
 }
 EXPORT_SYMBOL(audpp_register_event_callback);
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_unregister_event_callback(struct audpp_event_callback *ecb)
 {
 	struct audpp_state *audpp = &the_audpp_state;
@@ -176,6 +220,7 @@ int audpp_unregister_event_callback(struct audpp_event_callback *ecb)
 	return -1;
 }
 EXPORT_SYMBOL(audpp_unregister_event_callback);
+#endif
 
 static void audpp_broadcast(struct audpp_state *audpp, unsigned id,
 			    uint16_t *msg)
@@ -186,10 +231,12 @@ static void audpp_broadcast(struct audpp_state *audpp, unsigned id,
 			audpp->func[n] (audpp->private[n], id, msg);
 	}
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	for (n = 0; n < MAX_EVENT_CALLBACK_CLIENTS; ++n)
 		if (audpp->cb_tbl[n] && audpp->cb_tbl[n]->fn)
 			audpp->cb_tbl[n]->fn(audpp->cb_tbl[n]->private, id,
-									msg);
+					     msg);
+#endif
 }
 
 static void audpp_notify_clnt(struct audpp_state *audpp, unsigned clnt_id,
@@ -200,19 +247,20 @@ static void audpp_notify_clnt(struct audpp_state *audpp, unsigned clnt_id,
 }
 
 static void audpp_handle_pcmdmamiss(struct audpp_state *audpp,
-	uint16_t bit_mask)
+				    uint16_t bit_mask)
 {
-	 uint8_t b_index;
+	uint8_t b_index;
 
 	for (b_index = 0; b_index < AUDPP_CLNT_MAX_COUNT; b_index++) {
-		if (bit_mask & (0x1 << b_index))
+		if ((bit_mask & (0x1 << b_index)) && (audpp->func[b_index]))
 			audpp->func[b_index] (audpp->private[b_index],
-				AUDPP_MSG_PCMDMAMISSED, &bit_mask);
+					      AUDPP_MSG_PCMDMAMISSED,
+					      &bit_mask);
 	}
 }
 
 static void audpp_dsp_event(void *data, unsigned id, size_t len,
-			    void (*getevent)(void *ptr, size_t len))
+			    void (*getevent) (void *ptr, size_t len))
 {
 	struct audpp_state *audpp = data;
 	uint16_t msg[8];
@@ -237,8 +285,7 @@ static void audpp_dsp_event(void *data, unsigned id, size_t len,
 	switch (id) {
 	case AUDPP_MSG_STATUS_MSG:{
 			unsigned cid = msg[0];
-			pr_info("audpp: status %d %d %d\n", cid, msg[1],
-				msg[2]);
+			MM_DBG("status %d %d %d\n", cid, msg[1], msg[2]);
 			if ((cid < 5) && audpp->func[cid])
 				audpp->func[cid] (audpp->private[cid], id, msg);
 			break;
@@ -252,26 +299,34 @@ static void audpp_dsp_event(void *data, unsigned id, size_t len,
 		break;
 	case AUDPP_MSG_CFG_MSG:
 		if (msg[0] == AUDPP_MSG_ENA_ENA) {
-			pr_info("audpp: ENABLE\n");
+			MM_INFO("ENABLE\n");
 			audpp->enabled = 1;
 			audpp_broadcast(audpp, id, msg);
 		} else if (msg[0] == AUDPP_MSG_ENA_DIS) {
-			pr_info("audpp: DISABLE\n");
+			MM_INFO("DISABLE\n");
 			audpp->enabled = 0;
 			audpp_broadcast(audpp, id, msg);
 		} else {
-			pr_err("audpp: invalid config msg %d\n", msg[0]);
+			MM_ERR("invalid config msg %d\n", msg[0]);
 		}
 		break;
 	case AUDPP_MSG_ROUTING_ACK:
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+		audpp_broadcast(audpp, id, msg);
+#else
 		audpp_notify_clnt(audpp, msg[0], id, msg);
+#endif
 		break;
 	case AUDPP_MSG_FLUSH_ACK:
 		audpp_notify_clnt(audpp, msg[0], id, msg);
 		break;
-
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+	case ADSP_MESSAGE_ID:
+		MM_DBG("Received ADSP event: module enable/disable(audpptask)");
+		break;
+#endif
 	default:
-	  pr_info("audpp: unhandled msg id %x\n", id);
+		MM_ERR("unhandled msg id %x\n", id);
 	}
 }
 
@@ -309,10 +364,10 @@ int audpp_enable(int id, audpp_event_func func, void *private)
 
 	LOG(EV_ENABLE, 1);
 	if (audpp->open_count++ == 0) {
-		pr_info("audpp: enable\n");
+		MM_DBG("enable\n");
 		res = msm_adsp_get("AUDPPTASK", &audpp->mod, &adsp_ops, audpp);
 		if (res < 0) {
-			pr_err("audpp: cannot open AUDPPTASK\n");
+			MM_ERR("cannot open AUDPPTASK\n");
 			audpp->open_count = 0;
 			audpp->func[id] = NULL;
 			audpp->private[id] = NULL;
@@ -329,7 +384,7 @@ int audpp_enable(int id, audpp_event_func func, void *private)
 					 AUDPP_MSG_CFG_MSG, AUDPP_MSG_ENA_ENA);
 		local_irq_restore(flags);
 	}
-			
+
 	res = 0;
 out:
 	mutex_unlock(audpp->lock);
@@ -362,7 +417,7 @@ void audpp_disable(int id, void *private)
 	local_irq_restore(flags);
 
 	if (--audpp->open_count == 0) {
-		pr_info("audpp: disable\n");
+		MM_DBG("disable\n");
 		LOG(EV_DISABLE, 2);
 		audpp_dsp_config(0);
 		msm_adsp_disable(audpp->mod);
@@ -409,7 +464,7 @@ unsigned audpp_avsync_sample_count(int id)
 
 	if (BAD_ID(id))
 		return 0;
-	
+
 	mask = 1 << id;
 	id = id * AUDPP_AVSYNC_INFO_SIZE + 2;
 	local_irq_save(flags);
@@ -446,11 +501,16 @@ unsigned audpp_avsync_byte_count(int id)
 }
 EXPORT_SYMBOL(audpp_avsync_byte_count);
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+#define AUDPP_CMD_CFG_OBJ_UPDATE 0x8000
+#define AUDPP_CMD_VOLUME_PAN 0
+#endif
+
 int audpp_set_volume_and_pan(unsigned id, unsigned volume, int pan)
 {
 	/* cmd, obj_cfg[7], cmd_type, volume, pan */
 	uint16_t cmd[11];
-	
+
 	if (id > 6)
 		return -EINVAL;
 
@@ -465,9 +525,10 @@ int audpp_set_volume_and_pan(unsigned id, unsigned volume, int pan)
 }
 EXPORT_SYMBOL(audpp_set_volume_and_pan);
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 /* Implementation of COPP features */
 int audpp_dsp_set_mbadrc(unsigned id, unsigned enable,
-			audpp_cmd_cfg_object_params_mbadrc *mbadrc)
+			 audpp_cmd_cfg_object_params_mbadrc *mbadrc)
 {
 	audpp_cmd_cfg_object_params_mbadrc cmd;
 
@@ -480,7 +541,8 @@ int audpp_dsp_set_mbadrc(unsigned id, unsigned enable,
 
 	if (enable) {
 		memcpy(&cmd.num_bands, &mbadrc->num_bands,
-		sizeof(*mbadrc) - (AUDPP_CMD_CFG_OBJECT_PARAMS_COMMON_LEN + 2));
+		       sizeof(*mbadrc) -
+		       (AUDPP_CMD_CFG_OBJECT_PARAMS_COMMON_LEN + 2));
 		cmd.enable = AUDPP_CMD_ADRC_FLAG_ENA;
 	} else
 		cmd.enable = AUDPP_CMD_ADRC_FLAG_DIS;
@@ -488,9 +550,12 @@ int audpp_dsp_set_mbadrc(unsigned id, unsigned enable,
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 EXPORT_SYMBOL(audpp_dsp_set_mbadrc);
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_dsp_set_qconcert_plus(unsigned id, unsigned enable,
-			audpp_cmd_cfg_object_params_qconcert *qconcert_plus)
+				audpp_cmd_cfg_object_params_qconcert *
+				qconcert_plus)
 {
 	audpp_cmd_cfg_object_params_qconcert cmd;
 	if (id != 6)
@@ -502,17 +567,19 @@ int audpp_dsp_set_qconcert_plus(unsigned id, unsigned enable,
 
 	if (enable) {
 		memcpy(&cmd.op_mode, &qconcert_plus->op_mode,
-			sizeof(audpp_cmd_cfg_object_params_qconcert) -
-			(AUDPP_CMD_CFG_OBJECT_PARAMS_COMMON_LEN + 2));
+		       sizeof(audpp_cmd_cfg_object_params_qconcert) -
+		       (AUDPP_CMD_CFG_OBJECT_PARAMS_COMMON_LEN + 2));
 		cmd.enable_flag = AUDPP_CMD_ADRC_FLAG_ENA;
 	} else
 		cmd.enable_flag = AUDPP_CMD_ADRC_FLAG_DIS;
 
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_dsp_set_rx_iir(unsigned id, unsigned enable,
-				audpp_cmd_cfg_object_params_pcm *iir)
+			 audpp_cmd_cfg_object_params_pcm *iir)
 {
 	audpp_cmd_cfg_object_params_pcm cmd;
 
@@ -527,17 +594,19 @@ int audpp_dsp_set_rx_iir(unsigned id, unsigned enable,
 		cmd.active_flag = AUDPP_CMD_IIR_FLAG_ENA;
 		cmd.num_bands = iir->num_bands;
 		memcpy(&cmd.params_filter, &iir->params_filter,
-					sizeof(iir->params_filter));
+		       sizeof(iir->params_filter));
 	} else
 		cmd.active_flag = AUDPP_CMD_IIR_FLAG_DIS;
 
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 EXPORT_SYMBOL(audpp_dsp_set_rx_iir);
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 /* Implementation Of COPP + POPP */
 int audpp_dsp_set_eq(unsigned id, unsigned enable,
-			audpp_cmd_cfg_object_params_eqalizer *eq)
+		     audpp_cmd_cfg_object_params_eqalizer *eq)
 {
 	audpp_cmd_cfg_object_params_eqalizer cmd;
 	unsigned short *id_ptr = (unsigned short *)&cmd;
@@ -559,9 +628,11 @@ int audpp_dsp_set_eq(unsigned id, unsigned enable,
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 EXPORT_SYMBOL(audpp_dsp_set_eq);
+#endif
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_dsp_set_vol_pan(unsigned id,
-				audpp_cmd_cfg_object_params_volume *vol_pan)
+			  audpp_cmd_cfg_object_params_volume *vol_pan)
 {
 	audpp_cmd_cfg_object_params_volume cmd;
 	unsigned short *id_ptr = (unsigned short *)&cmd;
@@ -579,6 +650,7 @@ int audpp_dsp_set_vol_pan(unsigned id,
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 EXPORT_SYMBOL(audpp_dsp_set_vol_pan);
+#endif
 
 int audpp_pause(unsigned id, int pause)
 {
@@ -617,3 +689,230 @@ int audpp_flush(unsigned id)
 	return audpp_send_queue1(flush_cmd, sizeof(flush_cmd));
 }
 EXPORT_SYMBOL(audpp_flush);
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+/* dec_attrb = 7:0, 0 - No Decoder, else supported decoder *
+ * like mp3, aac, wma etc ... *
+ *           =  15:8, bit[8] = 1 - Tunnel, bit[9] = 1 - NonTunnel *
+ *           =  31:16, reserved */
+int audpp_adec_alloc(unsigned dec_attrb, const char **module_name,
+		     unsigned *queueid)
+{
+	struct audpp_state *audpp = &the_audpp_state;
+	int decid = -1, idx, lidx, mode, codec;
+	int codecs_supported, min_codecs_supported;
+	unsigned int *concurrency_entry;
+	mutex_lock(audpp->lock_dec);
+	/* Represents in bit mask */
+	mode = ((dec_attrb & AUDPP_MODE_MASK) << 16);
+	codec = (1 << (dec_attrb & AUDPP_CODEC_MASK));
+	/* Point to Last entry of the row */
+	concurrency_entry = ((audpp->dec_database->dec_concurrency_table +
+			      ((audpp->concurrency + 1) *
+			       (audpp->dec_database->num_dec))) - 1);
+
+	lidx = audpp->dec_database->num_dec;
+	min_codecs_supported = sizeof(unsigned int) * 8;
+
+	MM_DBG("mode = 0x%08x codec = 0x%08x\n", mode, codec);
+
+	for (idx = lidx; idx > 0; idx--, concurrency_entry--) {
+		if (!(audpp->dec_inuse & (1 << (idx - 1)))) {
+			if ((mode & *concurrency_entry) &&
+			    (codec & *concurrency_entry)) {
+				/* Check supports minimum number codecs */
+				codecs_supported =
+				    audpp->dec_database->dec_info_list[idx -
+								       1].
+				    nr_codec_support;
+				if (codecs_supported < min_codecs_supported) {
+					lidx = idx - 1;
+					min_codecs_supported = codecs_supported;
+				}
+			}
+		}
+	}
+
+	if (lidx < audpp->dec_database->num_dec) {
+		audpp->dec_inuse |= (1 << lidx);
+		*module_name =
+		    audpp->dec_database->dec_info_list[lidx].module_name;
+		*queueid =
+		    audpp->dec_database->dec_info_list[lidx].module_queueid;
+		decid = audpp->dec_database->dec_info_list[lidx].module_decid;
+		audpp->dec_info_table[lidx].codec =
+		    (dec_attrb & AUDPP_CODEC_MASK);
+		audpp->dec_info_table[lidx].pid = current->pid;
+		/* point to row to get supported operation */
+		concurrency_entry =
+		    ((audpp->dec_database->dec_concurrency_table +
+		      ((audpp->concurrency) * (audpp->dec_database->num_dec))) +
+		     lidx);
+		decid |= ((*concurrency_entry & AUDPP_OP_MASK) >> 12);
+		MM_INFO("decid =0x%08x module_name=%s, queueid=%d \n",
+			decid, *module_name, *queueid);
+	}
+	mutex_unlock(audpp->lock_dec);
+	return decid;
+
+}
+EXPORT_SYMBOL(audpp_adec_alloc);
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+void audpp_adec_free(int decid)
+{
+	struct audpp_state *audpp = &the_audpp_state;
+	int idx;
+	mutex_lock(audpp->lock_dec);
+	for (idx = audpp->dec_database->num_dec; idx > 0; idx--) {
+		if (audpp->dec_database->dec_info_list[idx - 1].module_decid ==
+		    decid) {
+			audpp->dec_inuse &= ~(1 << (idx - 1));
+			audpp->dec_info_table[idx - 1].codec = -1;
+			audpp->dec_info_table[idx - 1].pid = 0;
+			MM_INFO("free decid =%d \n", decid);
+			break;
+		}
+	}
+	mutex_unlock(audpp->lock_dec);
+	return;
+
+}
+EXPORT_SYMBOL(audpp_adec_free);
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static ssize_t concurrency_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct audpp_state *audpp = &the_audpp_state;
+	int rc;
+	mutex_lock(audpp->lock_dec);
+	rc = sprintf(buf, "%ld\n", audpp->concurrency);
+	mutex_unlock(audpp->lock_dec);
+	return rc;
+}
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static ssize_t concurrency_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct audpp_state *audpp = &the_audpp_state;
+	unsigned long concurrency;
+	int rc = -1;
+	mutex_lock(audpp->lock_dec);
+	if (audpp->dec_inuse) {
+		MM_ERR("Can not change profile, while playback in progress\n");
+		goto done;
+	}
+	rc = strict_strtoul(buf, 10, &concurrency);
+	if (!rc &&
+		(concurrency < audpp->dec_database->num_concurrency_support)) {
+		audpp->concurrency = concurrency;
+		MM_DBG("Concurrency case %ld\n", audpp->concurrency);
+		rc = count;
+	} else {
+		MM_ERR("Not a valid Concurrency case\n");
+		rc = -EINVAL;
+	}
+done:
+	mutex_unlock(audpp->lock_dec);
+	return rc;
+}
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static ssize_t decoder_info_show(struct device *dev,
+				 struct device_attribute *attr, char *buf);
+static struct device_attribute dev_attr_decoder[AUDPP_MAX_DECODER_CNT] = {
+	__ATTR(decoder0, S_IRUGO, decoder_info_show, NULL),
+	__ATTR(decoder1, S_IRUGO, decoder_info_show, NULL),
+	__ATTR(decoder2, S_IRUGO, decoder_info_show, NULL),
+	__ATTR(decoder3, S_IRUGO, decoder_info_show, NULL),
+	__ATTR(decoder4, S_IRUGO, decoder_info_show, NULL),
+};
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static ssize_t decoder_info_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	int cpy_sz = 0;
+	struct audpp_state *audpp = &the_audpp_state;
+	const ptrdiff_t off = attr - dev_attr_decoder;	/* decoder number */
+	mutex_lock(audpp->lock_dec);
+	cpy_sz += scnprintf(buf + cpy_sz, PAGE_SIZE - cpy_sz, "%d:",
+			    audpp->dec_info_table[off].codec);
+	cpy_sz += scnprintf(buf + cpy_sz, PAGE_SIZE - cpy_sz, "%d\n",
+			    audpp->dec_info_table[off].pid);
+	mutex_unlock(audpp->lock_dec);
+	return cpy_sz;
+}
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static DEVICE_ATTR(concurrency, S_IWUSR | S_IRUGO, concurrency_show,
+	    concurrency_store);
+static int audpp_probe(struct platform_device *pdev)
+{
+	int rc, idx;
+	struct audpp_state *audpp = &the_audpp_state;
+	audpp->concurrency = AUDPP_CONCURRENCY_DEFAULT;
+	audpp->dec_database =
+	    (struct msm_adspdec_database *)pdev->dev.platform_data;
+
+	MM_INFO("Number of decoder supported %d\n",
+			audpp->dec_database->num_dec);
+	MM_INFO("Number of concurrency supported %d\n",
+			audpp->dec_database->num_concurrency_support);
+	for (idx = 0; idx < audpp->dec_database->num_dec; idx++) {
+		audpp->dec_info_table[idx].codec = -1;
+		audpp->dec_info_table[idx].pid = 0;
+		MM_INFO("module_name:%s\n",
+			audpp->dec_database->dec_info_list[idx].module_name);
+		MM_INFO("queueid:%d\n",
+			audpp->dec_database->dec_info_list[idx].module_queueid);
+		MM_INFO("decid:%d\n",
+			audpp->dec_database->dec_info_list[idx].module_decid);
+		MM_INFO("nr_codec_support:%d\n",
+			audpp->dec_database->dec_info_list[idx].
+			nr_codec_support);
+	}
+
+	for (idx = 0; idx < audpp->dec_database->num_dec; idx++) {
+		rc = device_create_file(&pdev->dev, &dev_attr_decoder[idx]);
+		if (rc)
+			goto err;
+	}
+	rc = device_create_file(&pdev->dev, &dev_attr_concurrency);
+	if (rc)
+		goto err;
+	else
+		goto done;
+err:
+	while (idx--)
+		device_remove_file(&pdev->dev, &dev_attr_decoder[idx]);
+done:
+	return rc;
+}
+#endif
+
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+static struct platform_driver audpp_plat_driver = {
+	.probe = audpp_probe,
+	.driver = {
+		   .name = "msm_adspdec",
+		   .owner = THIS_MODULE,
+		   },
+};
+
+static int __init audpp_init(void)
+{
+	return platform_driver_register(&audpp_plat_driver);
+}
+
+device_initcall(audpp_init);
+#endif

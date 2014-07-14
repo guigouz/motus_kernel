@@ -33,16 +33,35 @@ extern struct platform_device msm_device_sdc4;
 
 extern struct platform_device msm_device_hsusb_otg;
 extern struct platform_device msm_device_hsusb_peripheral;
+extern struct platform_device msm_device_gadget_peripheral;
 extern struct platform_device msm_device_hsusb_host;
 extern struct platform_device msm_device_hsusb_host2;
 
+extern struct platform_device msm_device_otg;
+
+#if defined(CONFIG_MACH_MOT)
+extern struct platform_device msm_device_i2c_gpio;
+#endif
+
 extern struct platform_device msm_device_i2c;
 
+extern struct platform_device msm_device_i2c_2;
+
+extern struct platform_device qup_device_i2c;
+
 extern struct platform_device msm_device_smd;
+extern struct platform_device msm_device_dmov;
 
 extern struct platform_device msm_device_nand;
 
 extern struct platform_device msm_device_tssc;
+
+extern struct platform_device msm_device_tsif;
+
+#ifdef CONFIG_I2C_SSBI
+extern struct platform_device msm_device_ssbi6;
+extern struct platform_device msm_device_ssbi7;
+#endif
 
 extern struct clk msm_clocks_7x01a[];
 extern unsigned msm_num_clocks_7x01a;
@@ -62,5 +81,6 @@ extern unsigned msm_num_clocks_8x50;
 
 void __init msm_fb_register_device(char *name, void *data);
 void __init msm_camera_register_device(void *, uint32_t, void *);
+extern struct platform_device msm_device_touchscreen;
 
 #endif

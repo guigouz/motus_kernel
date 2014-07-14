@@ -131,6 +131,7 @@ static int rpc_clients_thread(void *data)
 	struct msm_rpc_client *client;
 	int rc = 0;
 	struct msm_rpc_client_cb_item *cb_item;
+	struct rpc_request_hdr *req;
 
 	client = data;
 	for (;;) {
@@ -154,7 +155,12 @@ static int rpc_clients_thread(void *data)
 			}
 
 			if (client->cb_thread == NULL) {
-				client->cb_func(client, buffer, rc);
+				req = (struct rpc_request_hdr *)buffer;
+
+				if ((be32_to_cpu(req->rpc_vers) == 2) &&
+				    (be32_to_cpu(req->prog) ==
+				     (client->prog | 0x01000000)))
+					client->cb_func(client, buffer, rc);
 				kfree(buffer);
 			} else {
 				INIT_LIST_HEAD(&cb_item->list);
@@ -510,6 +516,8 @@ EXPORT_SYMBOL(msm_rpc_send_accepted_reply);
  *
  * Return Value:
  *         callback ID on success, otherwise returns an error code.
+ *         If cb_func is NULL, the callback Id returned is 0xffffffff.
+ *         This tells the other processor that no callback is reqested.
  */
 int msm_rpc_add_cb_func(struct msm_rpc_client *client, void *cb_func)
 {
@@ -582,6 +590,9 @@ EXPORT_SYMBOL(msm_rpc_get_cb_func);
 void msm_rpc_remove_cb_func(struct msm_rpc_client *client, void *cb_func)
 {
 	struct msm_rpc_cb_table_item *cb_item, *tmp_cb_item;
+
+	if (cb_func == NULL)
+		return;
 
 	mutex_lock(&client->cb_list_lock);
 	list_for_each_entry_safe(cb_item, tmp_cb_item,

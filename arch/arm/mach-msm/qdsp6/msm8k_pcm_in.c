@@ -83,6 +83,7 @@
 struct pcm {
 	u32 cad_w_handle;
 	struct msm_audio_config cfg;
+	struct msm_voicerec_mode voicerec_mode;
 };
 
 
@@ -105,6 +106,7 @@ static int msm8k_pcm_in_open(struct inode *inode, struct file *f)
 	pcm->cfg.buffer_count = 2;
 	pcm->cfg.channel_count = 1;
 	pcm->cfg.sample_rate = 8000;
+	pcm->voicerec_mode.rec_mode = VOC_REC_UPLINK;
 
 	cos.format = CAD_FORMAT_PCM;
 	cos.op_code = CAD_OPEN_OP_READ;
@@ -176,7 +178,11 @@ static int msm8k_pcm_in_ioctl(struct inode *inode, struct file *f,
 	switch (cmd) {
 	case AUDIO_START:
 
-		cad_stream_info.app_type = CAD_STREAM_APP_RECORD;
+		if (p->voicerec_mode.rec_mode == VOC_REC_BOTH)
+			cad_stream_info.app_type = CAD_STREAM_APP_MIXED_RECORD;
+		else
+			cad_stream_info.app_type = CAD_STREAM_APP_RECORD;
+
 		cad_stream_info.priority = 0;
 		cad_stream_info.buf_mem_type = CAD_STREAM_BUF_MEM_HEAP;
 		cad_stream_info.ses_buf_max_size = p->cfg.buffer_size;
@@ -185,17 +191,6 @@ static int msm8k_pcm_in_ioctl(struct inode *inode, struct file *f,
 			sizeof(struct cad_stream_info_struct_type));
 		if (rc) {
 			pr_err("cad_ioctl() SET_STREAM_INFO failed\n");
-			break;
-		}
-
-		stream_device[0] = CAD_HW_DEVICE_ID_DEFAULT_TX;
-		cad_stream_dev.device = (u32 *)&stream_device[0];
-		cad_stream_dev.device_len = 1;
-		rc = cad_ioctl(p->cad_w_handle, CAD_IOCTL_CMD_SET_STREAM_DEVICE,
-			&cad_stream_dev,
-			sizeof(struct cad_stream_device_struct_type));
-		if (rc) {
-			pr_err("cad_ioctl() SET_STREAM_DEVICE failed\n");
 			break;
 		}
 
@@ -251,6 +246,17 @@ static int msm8k_pcm_in_ioctl(struct inode *inode, struct file *f,
 			break;
 		}
 
+		stream_device[0] = CAD_HW_DEVICE_ID_DEFAULT_TX;
+		cad_stream_dev.device = (u32 *)&stream_device[0];
+		cad_stream_dev.device_len = 1;
+		rc = cad_ioctl(p->cad_w_handle, CAD_IOCTL_CMD_SET_STREAM_DEVICE,
+			&cad_stream_dev,
+			sizeof(struct cad_stream_device_struct_type));
+		if (rc) {
+			pr_err("cad_ioctl() SET_STREAM_DEVICE failed\n");
+			break;
+		}
+
 		rc = cad_ioctl(p->cad_w_handle, CAD_IOCTL_CMD_STREAM_START,
 			NULL, 0);
 		if (rc) {
@@ -270,9 +276,22 @@ static int msm8k_pcm_in_ioctl(struct inode *inode, struct file *f,
 		if (copy_to_user((void *)arg, &p->cfg,
 				sizeof(struct msm_audio_config)))
 			return -EFAULT;
+		break;
 	case AUDIO_SET_CONFIG:
 		rc = copy_from_user(&p->cfg, (void *)arg,
 				sizeof(struct msm_audio_config));
+		break;
+	case AUDIO_SET_INCALL:
+		if (copy_from_user(&p->voicerec_mode, (void *)arg,
+				sizeof(struct msm_voicerec_mode)))
+			return -EFAULT;
+		if (p->voicerec_mode.rec_mode != VOC_REC_BOTH &&
+			p->voicerec_mode.rec_mode != VOC_REC_UPLINK &&
+			p->voicerec_mode.rec_mode != VOC_REC_DOWNLINK) {
+			p->voicerec_mode.rec_mode = VOC_REC_UPLINK;
+			pr_err("invalid rec_mode\n");
+			return -EINVAL;
+		}
 		break;
 	default:
 		rc = -EINVAL;

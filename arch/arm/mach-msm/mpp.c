@@ -114,6 +114,19 @@ int mpp_config_digital_out(struct mpp *mpp, unsigned config)
 }
 EXPORT_SYMBOL(mpp_config_digital_out);
 
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_LAJOLLA)
+int mpp_config_analog_sink(struct mpp *mpp, unsigned config)
+{
+	unsigned id = mpp->id;
+	int err;
+	err = msm_proc_comm(PCOM_PM_MPP_CONFIG_I_SINK, &id, &config);
+	mpp->status = err;
+	return err;
+}
+EXPORT_SYMBOL(mpp_config_analog_sink);
+#endif
+
+
 #if defined(CONFIG_DEBUG_FS)
 static int mpp_debug_set(void *data, u64 val)
 {

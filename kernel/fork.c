@@ -60,6 +60,9 @@
 #include <linux/tty.h>
 #include <linux/proc_fs.h>
 #include <linux/blkdev.h>
+#ifdef CONFIG_LTT_LITE
+#include <linux/lttlite-events.h>
+#endif
 #include <trace/sched.h>
 
 #include <asm/pgtable.h>
@@ -135,6 +138,9 @@ struct kmem_cache *vm_area_cachep;
 /* SLAB cache for mm_struct structures (tsk->mm) */
 static struct kmem_cache *mm_cachep;
 
+/* Notifier list called when a task struct is freed */
+static ATOMIC_NOTIFIER_HEAD(task_free_notifier);
+
 void free_task(struct task_struct *tsk)
 {
 	prop_local_destroy_single(&tsk->dirties);
@@ -144,6 +150,18 @@ void free_task(struct task_struct *tsk)
 	free_task_struct(tsk);
 }
 EXPORT_SYMBOL(free_task);
+
+int task_free_register(struct notifier_block *n)
+{
+	return atomic_notifier_chain_register(&task_free_notifier, n);
+}
+EXPORT_SYMBOL(task_free_register);
+
+int task_free_unregister(struct notifier_block *n)
+{
+	return atomic_notifier_chain_unregister(&task_free_notifier, n);
+}
+EXPORT_SYMBOL(task_free_unregister);
 
 void __put_task_struct(struct task_struct *tsk)
 {
@@ -155,6 +173,7 @@ void __put_task_struct(struct task_struct *tsk)
 	put_cred(tsk->cred);
 	delayacct_tsk_free(tsk);
 
+	atomic_notifier_call_chain(&task_free_notifier, 0, tsk);
 	if (!profile_handoff_task(tsk))
 		free_task(tsk);
 }
@@ -857,6 +876,8 @@ static int copy_signal(unsigned long clone_flags, struct task_struct *tsk)
 
 	tty_audit_fork(sig);
 
+	sig->oom_adj = current->signal->oom_adj;
+
 	return 0;
 }
 
@@ -1108,7 +1129,7 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		goto bad_fork_cleanup_mm;
 	if ((retval = copy_io(clone_flags, p)))
 		goto bad_fork_cleanup_namespaces;
-	retval = copy_thread(0, clone_flags, stack_start, stack_size, p, regs);
+	retval = copy_thread(clone_flags, stack_start, stack_size, p, regs);
 	if (retval)
 		goto bad_fork_cleanup_io;
 
@@ -1246,8 +1267,6 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 			p->signal->leader_pid = pid;
 			tty_kref_put(p->signal->tty);
 			p->signal->tty = tty_kref_get(current->signal->tty);
-			set_task_pgrp(p, task_pgrp_nr(current));
-			set_task_session(p, task_session_nr(current));
 			attach_pid(p, PIDTYPE_PGID, task_pgrp(current));
 			attach_pid(p, PIDTYPE_SID, task_session(current));
 			list_add_tail_rcu(&p->tasks, &init_task.tasks);
@@ -1256,6 +1275,10 @@ static struct task_struct *copy_process(unsigned long clone_flags,
 		attach_pid(p, PIDTYPE_PID, pid);
 		nr_threads++;
 	}
+
+#ifdef CONFIG_LTT_LITE
+	ltt_lite_ev_process(LTT_LITE_EV_PROCESS_FORK, p);
+#endif
 
 	total_forks++;
 	spin_unlock(&current->sighand->siglock);

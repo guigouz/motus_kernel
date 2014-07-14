@@ -23,6 +23,7 @@
 #define ANDROID_ACM_NMEA	0x0005
 #define ANDROID_GENERIC_MODEM	0x0006
 #define ANDROID_GENERIC_NMEA	0x0007
+#define ANDROID_CDC_ECM		0x0008
 
 struct android_usb_platform_data {
 	/* USB device descriptor fields */
@@ -48,11 +49,24 @@ struct android_usb_platform_data {
 
 	/* number of LUNS for mass storage function */
 	int nluns;
+
+	/* Factory Enabled Bit set on Powerup */
+	int factory_enabled;
+};
+
+/* Platform data for "usb_mass_storage" driver.
+ * Contains values for the SC_INQUIRY SCSI command. */
+struct usb_mass_storage_platform_data {
+	char *vendor;
+	char *product;
+	int release;
 };
 /* composition support structure */
 struct usb_composition {
 	__u16   product_id;
 	unsigned long functions;
 };
+
+extern void android_usb_set_connected(int on);
 
 #endif	/* __LINUX_USB_ANDROID_H */

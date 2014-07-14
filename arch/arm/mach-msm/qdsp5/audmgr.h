@@ -16,8 +16,9 @@
 
 #ifndef _AUDIO_RPC_H_
 #define _AUDIO_RPC_H_
-
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 #include <mach/qdsp5/qdsp5audppcmdi.h>
+#endif
 
 enum rpc_aud_def_sample_rate_type {
 	RPC_AUD_DEF_SAMPLE_RATE_NONE,
@@ -169,7 +170,9 @@ struct rpc_audmgr_cb_func_ptr {
 		uint32_t status_disabled;
 		uint32_t volume_change;
 	} u;
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 	uint32_t client_data;
+#endif
 };
 
 #define AUDMGR_CB_FUNC_PTR			1
@@ -183,7 +186,14 @@ struct rpc_audmgr_cb_func_ptr {
 struct audmgr {
 	wait_queue_head_t wait;
 	uint32_t handle;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	struct msm_rpc_endpoint *ept;
+	struct task_struct *task;
+#endif
 	int state;
+#if defined(CONFIG_MACH_MOT) || defined(CONFIG_MACH_PITTSBURGH)
+	uint32_t rpc_version; /* used only by audmgr not the caller */
+#endif
 };
 
 struct audmgr_config {
@@ -202,6 +212,28 @@ int audmgr_disable(struct audmgr *am);
 typedef void (*audpp_event_func)(void *private, unsigned id, uint16_t *msg);
 typedef void (*audrec_event_func)(void *private, unsigned id, uint16_t *msg);
 
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
+/* worst case delay of 100ms for response */
+#define MSM_AUD_DECODER_WAIT_MS 100
+#define MSM_AUD_MODE_TUNNEL  0x00000100
+#define MSM_AUD_MODE_NONTUNNEL  0x00000200
+#define MSM_AUD_DECODER_MASK  0x0000FFFF
+#define MSM_AUD_OP_MASK  0xFFFF0000
+
+/*Playback mode*/
+#define NON_TUNNEL_MODE_PLAYBACK 1
+#define TUNNEL_MODE_PLAYBACK 0
+
+enum msm_aud_decoder_state {
+	MSM_AUD_DECODER_STATE_NONE = 0,
+	MSM_AUD_DECODER_STATE_FAILURE = 1,
+	MSM_AUD_DECODER_STATE_SUCCESS = 2,
+};
+
+int audpp_adec_alloc(unsigned dec_attrb, const char **module_name,
+			unsigned *queueid);
+void audpp_adec_free(int decid);
+
 struct audpp_event_callback {
 	audpp_event_func fn;
 	void *private;
@@ -210,6 +242,7 @@ struct audpp_event_callback {
 int audpp_register_event_callback(struct audpp_event_callback *eh);
 int audpp_unregister_event_callback(struct audpp_event_callback *eh);
 int is_audpp_enable(void);
+#endif /* #ifndef CONFIG_MACH_MOT */
 
 int audpp_enable(int id, audpp_event_func func, void *private);
 void audpp_disable(int id, void *private);
@@ -224,6 +257,7 @@ int audpp_flush(unsigned id);
 void audpp_avsync(int id, unsigned rate);
 unsigned audpp_avsync_sample_count(int id);
 unsigned audpp_avsync_byte_count(int id);
+#if !defined(CONFIG_MACH_MOT) && !defined(CONFIG_MACH_PITTSBURGH)
 int audpp_dsp_set_mbadrc(unsigned id, unsigned enable,
 			audpp_cmd_cfg_object_params_mbadrc *mbadrc);
 int audpp_dsp_set_eq(unsigned id, unsigned enable,
@@ -234,6 +268,7 @@ int audpp_dsp_set_vol_pan(unsigned id,
 				audpp_cmd_cfg_object_params_volume *vol_pan);
 int audpp_dsp_set_qconcert_plus(unsigned id, unsigned enable,
 			audpp_cmd_cfg_object_params_qconcert *qconcert_plus);
+#endif /* #ifndef CONFIG_MACH_MOT */
 int audrectask_enable(unsigned enc_type, audrec_event_func func, void *private);
 void audrectask_disable(unsigned enc_type, void *private);
 

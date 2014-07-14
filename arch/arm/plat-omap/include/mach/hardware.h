@@ -12,6 +12,8 @@
  * Reorganized for Linux-2.6 by Tony Lindgren <tony@atomide.com>
  *                          and Dirk Behme <dirk.behme@de.bosch.com>
  *
+ * Copyright (C) 2009 Motorola, Inc.
+ *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
  * Free Software Foundation; either version 2 of the License, or (at your
@@ -318,8 +320,29 @@
 #include "board-h4.h"
 #endif
 
+#if defined(CONFIG_MACH_NOKIA_N800) || defined(CONFIG_MACH_NOKIA770)
+#include "board-nokia.h"
+#endif
+
+#ifdef CONFIG_MACH_NOKIA_RX51
+#include "board-rx51.h"
+#endif
+
+
 #ifdef CONFIG_MACH_OMAP_2430SDP
 #include "board-2430sdp.h"
+#endif
+
+#ifdef CONFIG_MACH_OMAP2EVM
+#include "board-omap2evm.h"
+#endif
+
+#ifdef CONFIG_MACH_OMAP_3430SDP
+#include "board-3430sdp.h"
+#endif
+
+#ifdef CONFIG_MACH_OMAP3EVM
+#include "board-omap3evm.h"
 #endif
 
 #ifdef CONFIG_MACH_OMAP3_BEAGLE
@@ -358,6 +381,15 @@
 #include "board-sx1.h"
 #endif
 
+#ifdef CONFIG_MACH_SHOLEST
+#include "board-sholest.h"
+#else /* !CONFIG_MACH_SHOLEST */
+
+#ifdef CONFIG_MACH_MAPPHONE
+#include "board-mapphone.h"
+#endif
+
+#endif
 #endif /* !__ASSEMBLER__ */
 
 #endif	/* __ASM_ARCH_OMAP_HARDWARE_H */

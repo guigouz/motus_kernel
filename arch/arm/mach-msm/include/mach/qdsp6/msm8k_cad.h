@@ -7,51 +7,22 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
+ *     * Neither the name of Code Aurora nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
- *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -72,16 +43,19 @@
 #define CAD_FORMAT_ADPCM	0x01
 #define CAD_FORMAT_MP3		0x02
 #define CAD_FORMAT_RA		0x03
-#define CAD_FORMAT_WMA		0x04
+#define CAD_FORMAT_WMA		0x04	/* WMA std (V9) */
 #define CAD_FORMAT_AAC		0x05
 #define CAD_FORMAT_MIDI		0x07
 #define CAD_FORMAT_YADPCM	0x08
-#define CAD_FORMAT_QCELP	0x09
+#define CAD_FORMAT_QCELP8K	0x09
 #define CAD_FORMAT_AMRWB	0x0A
 #define CAD_FORMAT_AMRNB	0x0B
 #define CAD_FORMAT_EVRC		0x0C
 #define CAD_FORMAT_DTMF		0x0D
 #define CAD_FORMAT_QCELP13K	0x0E
+#define CAD_FORMAT_SBC		0x0F
+#define CAD_FORMAT_WMA_PRO	0x10	/* WMA Pro (V10) */
+#define CAD_FORMAT_EVRCB	0x11
 
 #define CAD_OPEN_OP_READ   0x01
 #define CAD_OPEN_OP_WRITE  0x02
@@ -90,8 +64,11 @@
 
 
 struct cad_open_struct_type {
-	u32  op_code;
-	u32  format;
+	u32	op_code;
+	u32	format;
+	u32	group_id;
+	u32	payload_len;
+	u32	payload;
 };
 
 
@@ -125,5 +102,7 @@ int audio_set_device_volume(int vol);
 int audio_set_device_volume_path(struct msm_vol_info *v);
 
 int audio_set_device_mute(struct msm_mute_info *m);
+
+int audio_resync_afe_clk(void);
 
 #endif

@@ -7,51 +7,22 @@
  *     * Redistributions in binary form must reproduce the above copyright
  *       notice, this list of conditions and the following disclaimer in the
  *       documentation and/or other materials provided with the distribution.
- *     * Neither the name of Code Aurora Forum nor
+ *     * Neither the name of Code Aurora nor
  *       the names of its contributors may be used to endorse or promote
  *       products derived from this software without specific prior written
  *       permission.
  *
- * Alternatively, provided that this notice is retained in full, this software
- * may be relicensed by the recipient under the terms of the GNU General Public
- * License version 2 ("GPL") and only version 2, in which case the provisions of
- * the GPL apply INSTEAD OF those given above.  If the recipient relicenses the
- * software under the GPL, then the identification text in the MODULE_LICENSE
- * macro must be changed to reflect "GPLv2" instead of "Dual BSD/GPL".  Once a
- * recipient changes the license terms to the GPL, subsequent recipients shall
- * not relicense under alternate licensing terms, including the BSD or dual
- * BSD/GPL terms.  In addition, the following license statement immediately
- * below and between the words START and END shall also then apply when this
- * software is relicensed under the GPL:
- *
- * START
- *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 and only version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
- * details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
- *
- * END
- *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+ * IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NON-INFRINGEMENT ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
+ * OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
+ * WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+ * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
+ * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
 
@@ -92,28 +63,19 @@
 #define MDPOP_TRANSP            BIT(9)	/* enable transparency */
 #define MDPOP_DITHER            BIT(10)	/* enable dither */
 #define MDPOP_SHARPENING	BIT(11) /* enable sharpening */
+#define MDPOP_BLUR		BIT(12) /* enable blur */
 
-/* -----------------------------------------------------------------------
-** {3x3} + {3} ccs matrix
-** ----------------------------------------------------------------------- */
-typedef struct mdp_ccs_type_ {
-	uint16 ccs1;
-	uint16 ccs2;
-	uint16 ccs3;
-	uint16 ccs4;
-	uint16 ccs5;
-	uint16 ccs6;
-	uint16 ccs7;
-	uint16 ccs8;
-	uint16 ccs9;
-	uint16 ccs10;
-	uint16 ccs11;
-	uint16 ccs12;
-} MDP_CCS_TYPE;
+struct mdp_table_entry {
+	uint32_t reg;
+	uint32_t val;
+};
 
-/* -----------------------------------------------------------------------
-** MDP Image Structure
-** ----------------------------------------------------------------------- */
+extern struct mdp_ccs mdp_ccs_yuv2rgb ;
+extern struct mdp_ccs mdp_ccs_rgb2yuv ;
+
+/*
+ * MDP Image Structure
+ */
 typedef struct mdpImg_ {
 	uint32 imgType;		/* Image type */
 	uint32 *bmy_addr;	/* bitmap or y addr */
@@ -125,7 +87,6 @@ typedef struct mdpImg_ {
 	int    sp_value;        /* sharpening strength */
 } MDPIMG;
 
-///////////////////////////////////////////////////////////////
 #define MDP_OUTP(addr, data) outpdw((addr), (data))
 #define MDP_KTIME2USEC(kt) (kt.tv.sec*1000000 + kt.tv.nsec/1000)
 
@@ -142,6 +103,7 @@ typedef enum {
 	MDP_PR_SCALE_POINT6_POINT8,
 	MDP_PR_SCALE_POINT8_1,
 	MDP_PR_SCALE_UP,
+	MDP_SCALE_BLUR,
 	MDP_INIT_SCALE
 } MDP_SCALE_MODE;
 
@@ -157,6 +119,9 @@ typedef enum {
 	MDP_DMA2_BLOCK,
 	MDP_DMA3_BLOCK,
 	MDP_DMA_S_BLOCK,
+	MDP_DMA_E_BLOCK,
+	MDP_OVERLAY0_BLOCK,
+	MDP_OVERLAY1_BLOCK,
 	MDP_MAX_BLOCK
 } MDP_BLOCK_TYPE;
 
@@ -175,7 +140,7 @@ typedef enum {
 #define MDP_MIN_Y_SCALE_FACTOR (MDP_SCALE_Q_FACTOR/4)
 #endif
 
-//SHIM Q Factor
+/* SHIM Q Factor */
 #define PHI_Q_FACTOR          29
 #define PQF_PLUS_5            (PHI_Q_FACTOR + 5)	/* due to 32 phases */
 #define PQF_PLUS_4            (PHI_Q_FACTOR + 4)
@@ -203,8 +168,9 @@ struct mdp_dirty_region {
 	__u32 height;		/* number of pixels in the y-axis */
 };
 
-//MDP extended data types
-//
+/*
+ * MDP extended data types
+ */
 typedef struct mdp_roi_s {
 	uint32 x;
 	uint32 y;
@@ -245,8 +211,13 @@ struct mdp_dma_data {
 
 #define MDP_DMA2_TERM 0x1
 #define MDP_DMA3_TERM 0x2
-#define MDP_PPP_TERM 0x3
-#define MDP_DMA_S_TERM 0x4
+#define MDP_PPP_TERM 0x4
+#define MDP_DMA_S_TERM 0x8
+#ifdef CONFIG_FB_MSM_MDP40
+#define MDP_DMA_E_TERM 0x10
+#define MDP_OVERLAY0_TERM 0x20
+#define MDP_OVERLAY1_TERM 0x40
+#endif
 
 #define ACTIVE_START_X_EN BIT(31)
 #define ACTIVE_START_Y_EN BIT(31)
@@ -299,12 +270,12 @@ struct mdp_dma_data {
 #define CLR_CB CLR_B
 #define CLR_CR CLR_R
 
-// from lsb to msb
+/* from lsb to msb */
 #define MDP_GET_PACK_PATTERN(a,x,y,z,bit) (((a)<<(bit*3))|((x)<<(bit*2))|((y)<<bit)|(z))
 
-//-------------------------------------------------
-// 0x0000 0x0004 0x0008 MDP sync config
-//-------------------------------------------------
+/*
+ * 0x0000 0x0004 0x0008 MDP sync config
+ */
 #ifdef CONFIG_FB_MSM_MDP22
 #define MDP_SYNCFG_HGT_LOC 22
 #define MDP_SYNCFG_VSYNC_EXT_EN BIT(21)
@@ -315,22 +286,22 @@ struct mdp_dma_data {
 #define MDP_SYNCFG_VSYNC_INT_EN BIT(19)
 #endif
 
-//-------------------------------------------------
-// 0x0018 MDP VSYNC THREASH
-//-------------------------------------------------
+/*
+ * 0x0018 MDP VSYNC THREASH
+ */
 #define MDP_PRIM_BELOW_LOC 0
 #define MDP_PRIM_ABOVE_LOC 8
 
-//-------------------------------------------------
-// MDP_PRIMARY_VSYNC_OUT_CTRL
-// 0x0080,84,88 internal vsync pulse config
-//-------------------------------------------------
+/*
+ * MDP_PRIMARY_VSYNC_OUT_CTRL
+ * 0x0080,84,88 internal vsync pulse config
+ */
 #define VSYNC_PULSE_EN BIT(31)
 #define VSYNC_PULSE_INV BIT(30)
 
-//-------------------------------------------------
-// 0x008c MDP VSYNC CONTROL
-//-------------------------------------------------
+/*
+ * 0x008c MDP VSYNC CONTROL
+ */
 #define DISP0_VSYNC_MAP_VSYNC0 0
 #define DISP0_VSYNC_MAP_VSYNC1 BIT(0)
 #define DISP0_VSYNC_MAP_VSYNC2 BIT(0)|BIT(1)
@@ -348,21 +319,21 @@ struct mdp_dma_data {
 #define EXTERNAL_LCD_SYNC_EN BIT(6)
 #define EXTERNAL_LCD_SYNC_DISABLE 0
 
-//-------------------------------------------------
-// 0x101f0 MDP VSYNC Threshold
-//-------------------------------------------------
+/*
+ * 0x101f0 MDP VSYNC Threshold
+ */
 #define VSYNC_THRESHOLD_ABOVE_LOC 0
 #define VSYNC_THRESHOLD_BELOW_LOC 16
 #define VSYNC_ANTI_TEAR_EN BIT(31)
 
-//-------------------------------------------------
-// 0x10004 command config
-//-------------------------------------------------
+/*
+ * 0x10004 command config
+ */
 #define MDP_CMD_DBGBUS_EN BIT(0)
 
-//-------------------------------------------------
-// 0x10124 or 0x101d4PPP source config
-//-------------------------------------------------
+/*
+ * 0x10124 or 0x101d4PPP source config
+ */
 #define PPP_SRC_C0G_8BITS (BIT(1)|BIT(0))
 #define PPP_SRC_C1B_8BITS (BIT(3)|BIT(2))
 #define PPP_SRC_C2R_8BITS (BIT(5)|BIT(4))
@@ -389,10 +360,12 @@ struct mdp_dma_data {
 #define PPP_SRC_INTERLVD_3COMPONENTS BIT(14)
 #define PPP_SRC_INTERLVD_4COMPONENTS (BIT(14)|BIT(13))
 
-// RGB666 unpack format
-// TIGHT means R6+G6+B6 together
-// LOOSE means R6+2 +G6+2+ B6+2 (with MSB)
-//          or 2+R6 +2+G6 +2+B6 (with LSB)
+/*
+ * RGB666 unpack format
+ * TIGHT means R6+G6+B6 together
+ * LOOSE means R6+2 +G6+2+ B6+2 (with MSB)
+ * or 2+R6 +2+G6 +2+B6 (with LSB)
+ */
 #define PPP_SRC_UNPACK_TIGHT BIT(17)
 #define PPP_SRC_UNPACK_LOOSE 0
 #define PPP_SRC_UNPACK_ALIGN_LSB 0
@@ -401,11 +374,11 @@ struct mdp_dma_data {
 #define PPP_SRC_FETCH_PLANES_INTERLVD 0
 #define PPP_SRC_FETCH_PLANES_PSEUDOPLNR BIT(20)
 
-#define PPP_SRC_WMV9_MODE BIT(21)	//window media version 9
+#define PPP_SRC_WMV9_MODE BIT(21)	/* window media version 9 */
 
-//-------------------------------------------------
-// 0x10138 PPP operation config
-//-------------------------------------------------
+/*
+ * 0x10138 PPP operation config
+ */
 #define PPP_OP_SCALE_X_ON BIT(0)
 #define PPP_OP_SCALE_Y_ON BIT(1)
 
@@ -420,7 +393,7 @@ struct mdp_dma_data {
 #define PPP_OP_LUT_C1_ON BIT(6)
 #define PPP_OP_LUT_C2_ON BIT(7)
 
-// rotate or blend enable
+/* rotate or blend enable */
 #define PPP_OP_ROT_ON BIT(8)
 
 #define PPP_OP_ROT_90 BIT(9)
@@ -468,9 +441,9 @@ struct mdp_dma_data {
 
 #define PPP_OP_DST_RGB 0
 #define PPP_OP_DST_YCBCR BIT(30)
-//-------------------------------------------------
-// 0x10150 PPP destination config
-//-------------------------------------------------
+/*
+ * 0x10150 PPP destination config
+ */
 #define PPP_DST_C0G_8BIT (BIT(0)|BIT(1))
 #define PPP_DST_C1B_8BIT (BIT(3)|BIT(2))
 #define PPP_DST_C2R_8BIT (BIT(5)|BIT(4))
@@ -514,9 +487,9 @@ struct mdp_dma_data {
 #define PPP_DST_MDDI_SECONDARY BIT(21)
 #define PPP_DST_MDDI_EXTERNAL BIT(22)
 
-//-------------------------------------------------
-// 0x10180 DMA config
-//-------------------------------------------------
+/*
+ * 0x10180 DMA config
+ */
 #define DMA_DSTC0G_8BITS (BIT(1)|BIT(0))
 #define DMA_DSTC1B_8BITS (BIT(3)|BIT(2))
 #define DMA_DSTC2R_8BITS (BIT(5)|BIT(4))
@@ -532,8 +505,10 @@ struct mdp_dma_data {
 #define DMA_PACK_TIGHT                      BIT(6)
 #define DMA_PACK_LOOSE                      0
 #define DMA_PACK_ALIGN_LSB                  0
-// use DMA_PACK_ALIGN_MSB if the upper 6 bits from 8 bits output
-// from LCDC block maps into 6 pins out to the panel
+/*
+ * use DMA_PACK_ALIGN_MSB if the upper 6 bits from 8 bits output
+ * from LCDC block maps into 6 pins out to the panel
+ */
 #define DMA_PACK_ALIGN_MSB                  BIT(7)
 #define DMA_PACK_PATTERN_RGB \
        (MDP_GET_PACK_PATTERN(0, CLR_R, CLR_G, CLR_B, 2)<<8)
@@ -569,17 +544,30 @@ struct mdp_dma_data {
 #define DMA_IBUF_NONCONTIGUOUS 0
 #endif
 
-//-------------------------------------------------
-// MDDI Register
-//-------------------------------------------------
+/*
+ * MDDI Register
+ */
 #define MDDI_VDO_PACKET_DESC  0x5666
 
+#ifdef CONFIG_FB_MSM_MDP40
+#define MDP_INTR_ENABLE		(msm_mdp_base + 0x0050)
+#define MDP_INTR_STATUS		(msm_mdp_base + 0x0054)
+#define MDP_INTR_CLEAR		(msm_mdp_base + 0x0058)
+#define MDP_EBI2_LCD0		(msm_mdp_base + 0x0060)
+#define MDP_EBI2_LCD1		(msm_mdp_base + 0x0064)
+#define MDP_EBI2_PORTMAP_MODE	(msm_mdp_base + 0x0070)
+
+#define MDP_DMA_P_HIST_INTR_STATUS 	(msm_mdp_base + 0x95014)
+#define MDP_DMA_P_HIST_INTR_CLEAR 	(msm_mdp_base + 0x95018)
+#define MDP_DMA_P_HIST_INTR_ENABLE 	(msm_mdp_base + 0x9501C)
+#else
 #define MDP_INTR_ENABLE		(msm_mdp_base + 0x0020)
 #define MDP_INTR_STATUS		(msm_mdp_base + 0x0024)
 #define MDP_INTR_CLEAR		(msm_mdp_base + 0x0028)
 #define MDP_EBI2_LCD0		(msm_mdp_base + 0x003c)
 #define MDP_EBI2_LCD1		(msm_mdp_base + 0x0040)
 #define MDP_EBI2_PORTMAP_MODE	(msm_mdp_base + 0x005c)
+#endif
 
 #define MDP_FULL_BYPASS_WORD43  (msm_mdp_base + 0x101ac)
 
@@ -659,6 +647,8 @@ int mdp_lcdc_on(struct platform_device *pdev);
 int mdp_lcdc_off(struct platform_device *pdev);
 void mdp_lcdc_update(struct msm_fb_data_type *mfd);
 int mdp_hw_cursor_update(struct fb_info *info, struct fb_cursor *cursor);
+void mdp_enable_irq(uint32 term);
+void mdp_disable_irq(uint32 term);
 
 #ifdef MDP_HW_VSYNC
 void mdp_hw_vsync_clk_enable(struct msm_fb_data_type *mfd);

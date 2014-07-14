@@ -28,6 +28,9 @@
 #include <linux/reboot.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
+#ifdef CONFIG_HAS_WAKELOCK
+#include <linux/wakelock.h>
+#endif
 #include <mach/msm_iomap.h>
 #include <mach/system.h>
 #ifdef CONFIG_CACHE_L2X0
@@ -372,6 +375,7 @@ static void msm_pm_config_hw_before_power_down(void)
 static void msm_pm_config_hw_after_power_up(void)
 {
 	writel(0, APPS_PWRDOWN);
+	writel(0, APPS_CLK_SLEEP_EN);
 }
 
 /*
@@ -379,7 +383,31 @@ static void msm_pm_config_hw_after_power_up(void)
  */
 static void msm_pm_config_hw_before_swfi(void)
 {
+#ifdef CONFIG_ARCH_MSM_SCORPION
 	writel(0x1f, APPS_CLK_SLEEP_EN);
+#else
+	writel(0x0f, APPS_CLK_SLEEP_EN);
+#endif
+}
+
+/*
+ * Respond to timing out waiting for Modem
+ *
+ * NOTE: The function never returns.
+ */
+static void msm_pm_timeout(void)
+{
+#if defined(CONFIG_MSM_PM_TIMEOUT_RESET_CHIP)
+	printk(KERN_EMERG "%s(): resetting chip\n", __func__);
+	msm_proc_comm(PCOM_RESET_CHIP_IMM, NULL, NULL);
+#elif defined(CONFIG_MSM_PM_TIMEOUT_RESET_MODEM)
+	printk(KERN_EMERG "%s(): resetting modem\n", __func__);
+	msm_proc_comm_reset_modem_now();
+#elif defined(CONFIG_MSM_PM_TIMEOUT_HALT)
+	printk(KERN_EMERG "%s(): halting\n", __func__);
+#endif
+	for (;;)
+		;
 }
 
 
@@ -450,7 +478,7 @@ static int msm_pm_poll_state(int nr_grps, struct msm_pm_polled_group *grps)
 {
 	int i, k;
 
-	for (i = 0; i < 100000; i++)
+	for (i = 0; i < 500000; i++)
 		for (k = 0; k < nr_grps; k++) {
 			bool all_set, all_clear;
 			bool any_set, any_clear;
@@ -785,7 +813,7 @@ write_proc_failed:
  * Shared Memory Bits
  *****************************************************************************/
 
-#define DEM_MASTER_BITS_PER_CPU             5
+#define DEM_MASTER_BITS_PER_CPU             6
 
 /* Power Master State Bits - Per CPU */
 #define DEM_MASTER_SMSM_RUN \
@@ -798,6 +826,8 @@ write_proc_failed:
 	(0x08UL << (DEM_MASTER_BITS_PER_CPU * SMSM_APPS_STATE))
 #define DEM_MASTER_SMSM_READY \
 	(0x10UL << (DEM_MASTER_BITS_PER_CPU * SMSM_APPS_STATE))
+#define DEM_MASTER_SMSM_SLEEP \
+	(0x20UL << (DEM_MASTER_BITS_PER_CPU * SMSM_APPS_STATE))
 
 /* Power Slave State Bits */
 #define DEM_SLAVE_SMSM_RUN                  (0x0001)
@@ -837,6 +867,13 @@ struct msm_pm_smem_t {
 	uint32_t reserved2;
 };
 
+#ifdef CONFIG_VFP
+static void vfp_flush_context(void)
+{
+	struct thread_info *thread = current_thread_info();
+	vfp_sync_state(thread);
+}
+#endif
 
 /******************************************************************************
  *
@@ -912,11 +949,9 @@ static int msm_pm_power_collapse
 	ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
 
 	if (ret < 0) {
-		MSM_PM_DPRINTK(
-			MSM_PM_DEBUG_SUSPEND|MSM_PM_DEBUG_POWER_COLLAPSE,
-			KERN_INFO,
-			"%s(): msm_pm_poll_state failed, %d\n", __func__, ret);
-		goto power_collapse_restore_gpio_bail;
+		printk(KERN_EMERG "%s(): power collapse entry "
+			"timed out waiting for Modem's response\n", __func__);
+		msm_pm_timeout();
 	}
 
 	if (ret == 1) {
@@ -925,8 +960,7 @@ static int msm_pm_power_collapse
 			KERN_INFO,
 			"%s(): msm_pm_poll_state detected Modem reset\n",
 			__func__);
-		ret = -EAGAIN;
-		goto power_collapse_restore_gpio_bail;
+		goto power_collapse_early_exit;
 	}
 
 	/* DEM Master in RSA */
@@ -994,10 +1028,6 @@ static int msm_pm_power_collapse
 	msm_pm_reset_vector[1] = saved_vector[1];
 
 	if (collapsed) {
-#ifdef CONFIG_VFP
-		if (from_idle)
-			vfp_reinit();
-#endif
 		cpu_init();
 		local_fiq_enable();
 	}
@@ -1028,16 +1058,20 @@ static int msm_pm_power_collapse
 	msm_pm_config_hw_after_power_up();
 	MSM_PM_DEBUG_PRINT_STATE("msm_pm_power_collapse(): post power up");
 
-	do {
-		memset(state_grps, 0, sizeof(state_grps));
-		state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
-		state_grps[0].bits_any_set =
-			DEM_MASTER_SMSM_RSA | DEM_MASTER_SMSM_PWRC_EARLY_EXIT;
-		state_grps[1].group_id = SMSM_MODEM_STATE;
-		state_grps[1].bits_all_set = SMSM_RESET;
+	memset(state_grps, 0, sizeof(state_grps));
+	state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
+	state_grps[0].bits_any_set =
+		DEM_MASTER_SMSM_RSA | DEM_MASTER_SMSM_PWRC_EARLY_EXIT;
+	state_grps[1].group_id = SMSM_MODEM_STATE;
+	state_grps[1].bits_all_set = SMSM_RESET;
 
-		ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
-	} while (ret < 0);
+	ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
+
+	if (ret < 0) {
+		printk(KERN_EMERG "%s(): power collapse exit "
+			"timed out waiting for Modem's response\n", __func__);
+		msm_pm_timeout();
+	}
 
 	if (ret == 1) {
 		MSM_PM_DPRINTK(
@@ -1045,8 +1079,7 @@ static int msm_pm_power_collapse
 			KERN_INFO,
 			"%s(): msm_pm_poll_state detected Modem reset\n",
 			__func__);
-		ret = -EAGAIN;
-		goto power_collapse_restore_gpio_bail;
+		goto power_collapse_early_exit;
 	}
 
 	/* Sanity check */
@@ -1066,15 +1099,19 @@ static int msm_pm_power_collapse
 
 	MSM_PM_DEBUG_PRINT_STATE("msm_pm_power_collapse(): WFPI");
 
-	do {
-		memset(state_grps, 0, sizeof(state_grps));
-		state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
-		state_grps[0].bits_all_set = DEM_MASTER_SMSM_RUN;
-		state_grps[1].group_id = SMSM_MODEM_STATE;
-		state_grps[1].bits_all_set = SMSM_RESET;
+	memset(state_grps, 0, sizeof(state_grps));
+	state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
+	state_grps[0].bits_all_set = DEM_MASTER_SMSM_RUN;
+	state_grps[1].group_id = SMSM_MODEM_STATE;
+	state_grps[1].bits_all_set = SMSM_RESET;
 
-		ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
-	} while (ret < 0);
+	ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
+
+	if (ret < 0) {
+		printk(KERN_EMERG "%s(): power collapse WFPI "
+			"timed out waiting for Modem's response\n", __func__);
+		msm_pm_timeout();
+	}
 
 	if (ret == 1) {
 		MSM_PM_DPRINTK(
@@ -1116,17 +1153,20 @@ power_collapse_early_exit:
 
 	MSM_PM_DEBUG_PRINT_STATE("msm_pm_power_collapse(): EARLY_EXIT");
 
-	do {
-		memset(state_grps, 0, sizeof(state_grps));
-		state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
-		state_grps[0].bits_all_set = DEM_MASTER_SMSM_PWRC_EARLY_EXIT;
-		state_grps[1].group_id = SMSM_MODEM_STATE;
-		state_grps[1].bits_all_set = SMSM_RESET;
+	memset(state_grps, 0, sizeof(state_grps));
+	state_grps[0].group_id = SMSM_POWER_MASTER_DEM;
+	state_grps[0].bits_all_set = DEM_MASTER_SMSM_PWRC_EARLY_EXIT;
+	state_grps[1].group_id = SMSM_MODEM_STATE;
+	state_grps[1].bits_all_set = SMSM_RESET;
 
-		ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
-	} while (ret < 0);
-
+	ret = msm_pm_poll_state(ARRAY_SIZE(state_grps), state_grps);
 	MSM_PM_DEBUG_PRINT_STATE("msm_pm_power_collapse(): EARLY_EXIT EE");
+
+	if (ret < 0) {
+		printk(KERN_EMERG "%s(): power collapse EARLY_EXIT "
+			"timed out waiting for Modem's response\n", __func__);
+		msm_pm_timeout();
+	}
 
 	if (ret == 1) {
 		MSM_PM_DPRINTK(
@@ -1274,6 +1314,9 @@ void arch_idle(void)
 	}
 
 	if ((timer_expiration < msm_pm_idle_sleep_min_time) ||
+#ifdef CONFIG_HAS_WAKELOCK
+		has_wake_lock(WAKE_LOCK_IDLE) ||
+#endif
 		!msm_irq_idle_sleep_allowed()) {
 		allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE] = false;
 		allow[MSM_PM_SLEEP_MODE_POWER_COLLAPSE_NO_XO_SHUTDOWN] = false;
@@ -1284,7 +1327,7 @@ void arch_idle(void)
 		struct msm_pm_platform_data *mode = &msm_pm_modes[i];
 		if (!mode->supported || !mode->idle_enabled ||
 			mode->latency >= latency_qos ||
-			mode->residency >= timer_expiration)
+			mode->residency * 1000ULL >= timer_expiration)
 			allow[i] = false;
 	}
 
@@ -1300,8 +1343,8 @@ void arch_idle(void)
 #endif
 
 	MSM_PM_DPRINTK(MSM_PM_DEBUG_IDLE, KERN_INFO,
-		"%s(): next timer %lld, sleep limit %u\n",
-		__func__, timer_expiration, sleep_limit);
+		"%s(): latency qos %d, next timer %lld, sleep limit %u\n",
+		__func__, latency_qos, timer_expiration, sleep_limit);
 
 	for (i = 0; i < ARRAY_SIZE(allow); i++)
 		MSM_PM_DPRINTK(MSM_PM_DEBUG_IDLE, KERN_INFO,
@@ -1417,6 +1460,9 @@ static int msm_pm_enter(suspend_state_t state)
 		sleep_limit = SLEEP_LIMIT_NO_TCXO_SHUTDOWN;
 #endif
 
+	MSM_PM_DPRINTK(MSM_PM_DEBUG_SUSPEND, KERN_INFO,
+		"%s(): sleep limit %u\n", __func__, sleep_limit);
+
 	for (i = 0; i < ARRAY_SIZE(allow); i++)
 		allow[i] = true;
 
@@ -1500,6 +1546,9 @@ static int msm_pm_enter(suspend_state_t state)
 	} else if (allow[MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT]) {
 		msm_pm_swfi(false);
 	}
+
+	MSM_PM_DPRINTK(MSM_PM_DEBUG_SUSPEND, KERN_INFO,
+		"%s(): return %d\n", __func__, ret);
 
 	return ret;
 }

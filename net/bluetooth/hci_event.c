@@ -579,7 +579,7 @@ static inline void hci_cs_create_conn(struct hci_dev *hdev, __u8 status)
 		}
 	} else {
 		if (!conn) {
-			conn = hci_conn_add(hdev, ACL_LINK, &cp->bdaddr);
+			conn = hci_conn_add(hdev, ACL_LINK, 0, &cp->bdaddr);
 			if (conn) {
 				conn->out = 1;
 				conn->link_mode |= HCI_LM_MASTER;
@@ -785,8 +785,12 @@ static void hci_cs_sniff_mode(struct hci_dev *hdev, __u8 status)
 	hci_dev_lock(hdev);
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
-	if (conn)
+	if (conn) {
 		clear_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend);
+
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, status);
+	}
 
 	hci_dev_unlock(hdev);
 }
@@ -808,8 +812,12 @@ static void hci_cs_exit_sniff_mode(struct hci_dev *hdev, __u8 status)
 	hci_dev_lock(hdev);
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
-	if (conn)
+	if (conn) {
 		clear_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend);
+
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, status);
+	}
 
 	hci_dev_unlock(hdev);
 }
@@ -902,23 +910,24 @@ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 			hci_send_cmd(hdev, HCI_OP_CHANGE_CONN_PTYPE,
 							sizeof(cp), &cp);
 		}
+
+		/* Set non-default link supervision timeout */
+		if ((conn->type == ACL_LINK) &&
+				(hdev->link_supervision_timeout != 0x7d00) &&
+				(conn->link_mode == HCI_LM_MASTER)) {
+			struct hci_cp_write_link_supervision_timeout cp;
+			cp.handle = ev->handle;
+			cp.link_supervision_timeout =
+				hdev->link_supervision_timeout;
+			hci_send_cmd(hdev,
+					HCI_OP_WRITE_LINK_SUPERVISION_TIMEOUT,
+					sizeof(cp), &cp);
+		}
 	} else
 		conn->state = BT_CLOSED;
 
-	if (conn->type == ACL_LINK) {
-		struct hci_conn *sco = conn->link;
-		if (sco) {
-			if (!ev->status) {
-				if (lmp_esco_capable(hdev))
-					hci_setup_sync(sco, conn->handle);
-				else
-					hci_add_sco(sco, conn->handle);
-			} else {
-				hci_proto_connect_cfm(sco, ev->status);
-				hci_conn_del(sco);
-			}
-		}
-	}
+	if (conn->type == ACL_LINK)
+		hci_sco_setup(conn, ev->status);
 
 	if (ev->status) {
 		hci_proto_connect_cfm(conn, ev->status);
@@ -954,7 +963,9 @@ static inline void hci_conn_request_evt(struct hci_dev *hdev, struct sk_buff *sk
 
 		conn = hci_conn_hash_lookup_ba(hdev, ev->link_type, &ev->bdaddr);
 		if (!conn) {
-			if (!(conn = hci_conn_add(hdev, ev->link_type, &ev->bdaddr))) {
+			/* pkt_type not yet used for incoming connections */
+			if (!(conn = hci_conn_add(hdev, ev->link_type, 0,
+							&ev->bdaddr))) {
 				BT_ERR("No memmory for new connection");
 				hci_dev_unlock(hdev);
 				return;
@@ -988,8 +999,9 @@ static inline void hci_conn_request_evt(struct hci_dev *hdev, struct sk_buff *sk
 			cp.rx_bandwidth   = cpu_to_le32(0x00001f40);
 			cp.max_latency    = cpu_to_le16(0xffff);
 			cp.content_format = cpu_to_le16(hdev->voice_setting);
-			cp.retrans_effort = 0xff;
-
+			//cp.retrans_effort = 0xff;
+			//using 01 per HFP
+			cp.retrans_effort = 0x01;
 			hci_send_cmd(hdev, HCI_OP_ACCEPT_SYNC_CONN_REQ,
 							sizeof(cp), &cp);
 		}
@@ -1464,6 +1476,9 @@ static inline void hci_mode_change_evt(struct hci_dev *hdev, struct sk_buff *skb
 			else
 				conn->power_save = 0;
 		}
+
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, ev->status);
 	}
 
 	hci_dev_unlock(hdev);
@@ -1646,7 +1661,8 @@ static inline void hci_sync_conn_complete_evt(struct hci_dev *hdev, struct sk_bu
 		conn->type = SCO_LINK;
 	}
 
-	if (conn->out && (ev->status == 0x1c || ev->status == 0x1f) &&
+	if (conn->out && (ev->status == 0x1a || ev->status == 0x1c ||
+			ev->status == 0x1f || ev->status == 0x10) &&
 			conn->attempt < 2) {
 		conn->pkt_type = (hdev->esco_type & SCO_ESCO_MASK) |
 					(hdev->esco_type & EDR_ESCO_MASK);

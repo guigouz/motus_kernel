@@ -40,17 +40,20 @@
 #include <linux/android_pmem.h>
 #include <linux/leds.h>
 
+#include <linux/msm_hw3d.h>
+
 #define MSM_FB_C
 #include "msm_fb.h"
 #include "mddihosti.h"
 #include "tvenc.h"
+#include "mdp.h"
 
 #ifdef CONFIG_FB_MSM_LOGO
 #define INIT_IMAGE_FILE "/logo.rle"
 extern int load_565rle_image(char *filename);
+static int load_image_result = 0;
 #endif
 
-///////////////////////////////////////////
 static unsigned char *fbram;
 static unsigned char *fbram_phys;
 static int fbram_size;
@@ -59,7 +62,11 @@ static struct platform_device *pdev_list[MSM_FB_MAX_DEV_LIST];
 static int pdev_list_cnt;
 
 int vsync_mode = 1;
-
+#ifdef CONFIG_MACH_MOT
+static wait_queue_head_t disp_util_wq;
+static int motfb_is_waiting_for_frame = 0;
+static int en_pan_display = 1;
+#endif
 #define MAX_FBI_LIST 32
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
@@ -75,8 +82,11 @@ static u32 msm_fb_pseudo_palette[16] = {
 };
 
 u32 msm_fb_debug_enabled;
-u32 msm_fb_msg_level = 7;	// Setting msm_fb_msg_level to 8 prints out ALL messages
-u32 mddi_msg_level = 5;		// Setting mddi_msg_level to 8 prints out ALL messages
+/* Setting msm_fb_msg_level to 8 prints out ALL messages */
+u32 msm_fb_msg_level = 7;
+
+/* Setting mddi_msg_level to 8 prints out ALL messages */
+u32 mddi_msg_level = 5;
 
 extern int32 mdp_block_power_cnt[MDP_MAX_BLOCK];
 extern unsigned long mdp_timer_duration;
@@ -137,7 +147,7 @@ int msm_fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 }
 
 static int msm_fb_resource_initialized;
-
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 #ifndef CONFIG_FB_BACKLIGHT
 static int lcd_backlight_registered;
 
@@ -191,7 +201,7 @@ int msm_fb_detect_client(const char *name)
 
 	return ret;
 }
-
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 static int msm_fb_probe(struct platform_device *pdev)
 {
 	struct msm_fb_data_type *mfd;
@@ -200,7 +210,9 @@ static int msm_fb_probe(struct platform_device *pdev)
 	MSM_FB_DEBUG("msm_fb_probe\n");
 
 	if ((pdev->id == 0) && (pdev->num_resources > 0)) {
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 		msm_fb_pdata = pdev->dev.platform_data;
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 		fbram_size =
 			pdev->resource[0].end - pdev->resource[0].start + 1;
 		fbram_phys = (char *)pdev->resource[0].start;
@@ -210,10 +222,9 @@ static int msm_fb_probe(struct platform_device *pdev)
 			printk(KERN_ERR "fbram ioremap failed!\n");
 			return -ENOMEM;
 		}
+		MSM_FB_INFO("msm_fb_probe:  phy_Addr = 0x%x virt = 0x%x\n",
+			     (int)fbram_phys, (int)fbram);
 
-		printk(KERN_INFO
-			"msm_fb_probe: resource fbram = 0x%x phys=0x%x\n",
-			     (int)fbram, (int)fbram_phys);
 		msm_fb_resource_initialized = 1;
 		return 0;
 	}
@@ -230,23 +241,27 @@ static int msm_fb_probe(struct platform_device *pdev)
 
 	if (pdev_list_cnt >= MSM_FB_MAX_DEV_LIST)
 		return -ENOMEM;
-
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 	mfd->bl_level = mfd->panel_info.bl_max;
-
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 	rc = msm_fb_register(mfd);
 	if (rc)
 		return rc;
 
+#ifndef CONFIG_MACH_MOT
 #ifdef CONFIG_FB_BACKLIGHT
 	msm_fb_config_backlight(mfd);
 #else
 	/* android supports only one lcd-backlight/lcd for now */
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 	if (!lcd_backlight_registered) {
 		if (led_classdev_register(&pdev->dev, &backlight_led))
 			printk(KERN_ERR "led_classdev_register failed\n");
 		else
 			lcd_backlight_registered = 1;
 	}
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
+#endif
 #endif
 
 	pdev_list[pdev_list_cnt++] = pdev;
@@ -285,17 +300,19 @@ static int msm_fb_remove(struct platform_device *pdev)
 	if (mfd->dma_hrtimer.function)
 		hrtimer_cancel(&mfd->dma_hrtimer);
 
-	// remove /dev/fb*
+	/* remove /dev/fb* */
 	unregister_framebuffer(mfd->fbi);
 
 #ifdef CONFIG_FB_BACKLIGHT
-	// remove /sys/class/backlight
+	/* remove /sys/class/backlight */
 	backlight_device_unregister(mfd->fbi->bl_dev);
 #else
+#if !defined(CONFIG_KERNEL_MOTOROLA)
 	if (lcd_backlight_registered) {
 		lcd_backlight_registered = 0;
 		led_classdev_unregister(&backlight_led);
 	}
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 #endif
 
 #ifdef MSM_FB_ENABLE_DBGFS
@@ -344,9 +361,9 @@ static int msm_fb_suspend_sub(struct msm_fb_data_type *mfd)
 	if ((!mfd) || (mfd->key != MFD_KEY))
 		return 0;
 
-	////////////////////////////////////////////////////
-	// suspend this channel
-	////////////////////////////////////////////////////
+	/*
+	 * suspend this channel
+	 */
 	mfd->suspend.sw_refreshing_enable = mfd->sw_refreshing_enable;
 	mfd->suspend.op_enable = mfd->op_enable;
 	mfd->suspend.panel_power_on = mfd->panel_power_on;
@@ -362,15 +379,15 @@ static int msm_fb_suspend_sub(struct msm_fb_data_type *mfd)
 		}
 		mfd->op_enable = FALSE;
 	}
-	////////////////////////////////////////////////////
-	// try to power down
-	////////////////////////////////////////////////////
+	/*
+	 * try to power down
+	 */
 	mdp_pipe_ctrl(MDP_MASTER_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 
-	////////////////////////////////////////////////////
-	// detach display channel irq if there's any
-	// or wait until vsync-resync completes
-	////////////////////////////////////////////////////
+	/*
+	 * detach display channel irq if there's any
+	 * or wait until vsync-resync completes
+	 */
 	if ((mfd->dest == DISPLAY_LCD)) {
 		if (mfd->panel_info.lcd.vsync_enable) {
 			if (mfd->panel_info.lcd.hw_vsync_mode) {
@@ -669,31 +686,41 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	struct fb_var_screeninfo *var;
 	int *id;
 	int fbram_offset;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	struct fb_info *fbir = 0;
 
-	///////////////////////////////////////////////////////
-	// fb info initialization
-	///////////////////////////////////////////////////////
+	if (panel_info->fb_reuse) {
+		fbir = registered_fb[panel_info->fb_reuse - 1];
+		if (!fbir)
+			MSM_FB_ERR("msm_fb_init: reuse fb %d not found!\n",
+				panel_info->fb_reuse);
+	}
+#endif /* CONFIG_KERNEL_MOTOROLA */
+
+	/*
+	 * fb info initialization
+	 */
 	fix = &fbi->fix;
 	var = &fbi->var;
 
-	fix->type_aux = 0;	// if type == FB_TYPE_INTERLEAVED_PLANES
-	fix->visual = FB_VISUAL_TRUECOLOR;	// True Color
-	fix->ywrapstep = 0;	// No support
-	fix->mmio_start = 0;	// No MMIO Address
-	fix->mmio_len = 0;	// No MMIO Address
-	fix->accel = FB_ACCEL_NONE;	// FB_ACCEL_MSM needes to be added in fb.h
+	fix->type_aux = 0;	/* if type == FB_TYPE_INTERLEAVED_PLANES */
+	fix->visual = FB_VISUAL_TRUECOLOR;	/* True Color */
+	fix->ywrapstep = 0;	/* No support */
+	fix->mmio_start = 0;	/* No MMIO Address */
+	fix->mmio_len = 0;	/* No MMIO Address */
+	fix->accel = FB_ACCEL_NONE;/* FB_ACCEL_MSM needes to be added in fb.h */
 
-	var->xoffset = 0,	// Offset from virtual to visible
-	    var->yoffset = 0,	// resolution
-	    var->grayscale = 0,	// No graylevels
-	    var->nonstd = 0,	// standard pixel format
-	    var->activate = FB_ACTIVATE_VBL,	// activate it at vsync
-	    var->height = -1,	// height of picture in mm
-	    var->width = -1,	// width of picture in mm
-	    var->accel_flags = 0,	// acceleration flags
-	    var->sync = 0,	// see FB_SYNC_*
-	    var->rotate = 0,	// angle we rotate counter clockwise
-	    mfd->op_enable = FALSE;
+	var->xoffset = 0,	/* Offset from virtual to visible */
+	var->yoffset = 0,	/* resolution */
+	var->grayscale = 0,	/* No graylevels */
+	var->nonstd = 0,	/* standard pixel format */
+	var->activate = FB_ACTIVATE_VBL,	/* activate it at vsync */
+	var->height = -1,	/* height of picture in mm */
+	var->width = -1,	/* width of picture in mm */
+	var->accel_flags = 0,	/* acceleration flags */
+	var->sync = 0,	/* see FB_SYNC_* */
+	var->rotate = 0,	/* angle we rotate counter clockwise */
+	mfd->op_enable = FALSE;
 
 	switch (mfd->fb_imgType) {
 	case MDP_RGB_565:
@@ -782,9 +809,18 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 		return ret;
 	}
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if (fbir) {
+		fix->smem_len = fbir->fix.smem_len;
+		fix->line_length = fbir->fix.line_length;
+	} else {
+#endif /* CONFIG_KERNEL_MOTOROLA */
 	fix->smem_len =
 	    panel_info->xres * panel_info->yres * bpp * mfd->fb_page;
 	fix->line_length = panel_info->xres * bpp;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	}
+#endif /* CONFIG_KERNEL_MOTOROLA */
 
 	mfd->var_xres = panel_info->xres;
 	mfd->var_yres = panel_info->yres;
@@ -794,8 +830,17 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 
 	var->xres = panel_info->xres;
 	var->yres = panel_info->yres;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if (fbir) {
+		var->xres_virtual = fbir->var.xres_virtual;
+		var->yres_virtual = fbir->var.yres_virtual;
+	} else {
+#endif /* CONFIG_KERNEL_MOTOROLA */
 	var->xres_virtual = panel_info->xres;
 	var->yres_virtual = panel_info->yres * mfd->fb_page;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	}
+#endif /* CONFIG_KERNEL_MOTOROLA */
 	var->bits_per_pixel = bpp * 8,	// FrameBuffer color depth
 	    //////////////////////////////////////////
 	    // id field for fb app
@@ -808,6 +853,8 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	snprintf(fix->id, sizeof(fix->id), "msmfb30_%x", (__u32) *id);
 #elif defined(CONFIG_FB_MSM_MDP31)
 	snprintf(fix->id, sizeof(fix->id), "msmfb31_%x", (__u32) *id);
+#elif defined(CONFIG_FB_MSM_MDP40)
+	snprintf(fix->id, sizeof(fix->id), "msmfb40_%x", (__u32) *id);
 #else
 	error CONFIG_FB_MSM_MDP undefined !
 #endif
@@ -825,6 +872,12 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 	init_completion(&mfd->refresher_comp);
 	init_MUTEX(&mfd->sem);
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if (fbir) {
+		fbi->screen_base = fbir->screen_base;
+		fbi->fix.smem_start = fbir->fix.smem_start;
+	} else {
+#endif /* CONFIG_KERNEL_MOTOROLA */
 	fbram_offset = PAGE_ALIGN((int)fbram)-(int)fbram;
 	fbram += fbram_offset;
 	fbram_phys += fbram_offset;
@@ -837,9 +890,15 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 
 	fbi->screen_base = fbram;
 	fbi->fix.smem_start = (unsigned long)fbram_phys;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	}
+#endif /* CONFIG_KERNEL_MOTOROLA */
 
+#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+ 	memset(fbi->screen_base, 0, fix->smem_len);
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 	memset(fbi->screen_base, 0x0, fix->smem_len);
-
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	mfd->op_enable = TRUE;
 	mfd->panel_power_on = FALSE;
 
@@ -874,16 +933,30 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 		return -EPERM;
 	}
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	if (!fbir) {
+#endif /* CONFIG_KERNEL_MOTOROLA */
 	fbram += fix->smem_len;
 	fbram_phys += fix->smem_len;
 	fbram_size -= fix->smem_len;
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	}
+#endif /* CONFIG_KERNEL_MOTOROLA */
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+	MSM_FB_INFO
+	    ("FrameBuffer[%d]=%x %dx%d size=%d bytes is registered successfully!\n",
+	     mfd->index, fbi->screen_base, fbi->var.xres, fbi->var.yres, fbi->fix.smem_len);
+#else
 	MSM_FB_INFO
 	    ("FrameBuffer[%d] %dx%d size=%d bytes is registered successfully!\n",
 	     mfd->index, fbi->var.xres, fbi->var.yres, fbi->fix.smem_len);
+#endif /* CONFIG_KERNEL_MOTOROLA */
 
 #ifdef CONFIG_FB_MSM_LOGO
-	if (!load_565rle_image(INIT_IMAGE_FILE)) ;	/* Flip buffer */
+    MSM_FB_INFO("CONFIG_FB_MSM_LOGO is enabled\n");
+    load_image_result = load_565rle_image(INIT_IMAGE_FILE);	/* Flip buffer */
+    MSM_FB_INFO("Called load_565rle_image %d\n",load_image_result);
 #endif
 	ret = 0;
 
@@ -958,87 +1031,56 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 			switch (mfd->dest) {
 			case DISPLAY_LCD:
 				msm_fb_debugfs_file_create(sub_dir,
-							   "vsync_enable",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   vsync_enable);
-				msm_fb_debugfs_file_create(sub_dir, "refx100",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   refx100);
+				"vsync_enable",
+				(u32 *)&mfd->panel_info.lcd.vsync_enable);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_back_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   v_back_porch);
+				"refx100",
+				(u32 *) &mfd->panel_info.lcd. refx100);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_front_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   v_front_porch);
+				"v_back_porch",
+				(u32 *) &mfd->panel_info.lcd.v_back_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_pulse_width",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   v_pulse_width);
+				"v_front_porch",
+				(u32 *) &mfd->panel_info.lcd.v_front_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "hw_vsync_mode",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   hw_vsync_mode);
+				"v_pulse_width",
+				(u32 *) &mfd->panel_info.lcd.v_pulse_width);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "vsync_notifier_period",
-							   (u32 *) &mfd->
-							   panel_info.lcd.
-							   vsync_notifier_period);
+				"hw_vsync_mode",
+				(u32 *) &mfd->panel_info.lcd.hw_vsync_mode);
+				msm_fb_debugfs_file_create(sub_dir,
+				"vsync_notifier_period", (u32 *)
+				&mfd->panel_info.lcd.vsync_notifier_period);
 				break;
 
 			case DISPLAY_LCDC:
 				msm_fb_debugfs_file_create(sub_dir,
-							   "h_back_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   h_back_porch);
+				"h_back_porch",
+				(u32 *) &mfd->panel_info.lcdc.h_back_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "h_front_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   h_front_porch);
+				"h_front_porch",
+				(u32 *) &mfd->panel_info.lcdc.h_front_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "h_pulse_width",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   h_pulse_width);
+				"h_pulse_width",
+				(u32 *) &mfd->panel_info.lcdc.h_pulse_width);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_back_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   v_back_porch);
+				"v_back_porch",
+				(u32 *) &mfd->panel_info.lcdc.v_back_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_front_porch",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   v_front_porch);
+				"v_front_porch",
+				(u32 *) &mfd->panel_info.lcdc.v_front_porch);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "v_pulse_width",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   v_pulse_width);
+				"v_pulse_width",
+				(u32 *) &mfd->panel_info.lcdc.v_pulse_width);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "border_clr",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   border_clr);
+				"border_clr",
+				(u32 *) &mfd->panel_info.lcdc.border_clr);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "underflow_clr",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   underflow_clr);
+				"underflow_clr",
+				(u32 *) &mfd->panel_info.lcdc.underflow_clr);
 				msm_fb_debugfs_file_create(sub_dir,
-							   "hsync_skew",
-							   (u32 *) &mfd->
-							   panel_info.lcdc.
-							   hsync_skew);
+				"hsync_skew",
+				(u32 *) &mfd->panel_info.lcdc.hsync_skew);
 				break;
 
 			default:
@@ -1046,7 +1088,7 @@ static int msm_fb_register(struct msm_fb_data_type *mfd)
 			}
 		}
 	}
-#endif //MSM_FB_ENABLE_DBGFS
+#endif /* MSM_FB_ENABLE_DBGFS */
 
 	return ret;
 }
@@ -1098,9 +1140,16 @@ DECLARE_MUTEX(msm_fb_pan_sem);
 static int msm_fb_pan_display(struct fb_var_screeninfo *var,
 			      struct fb_info *info)
 {
+#if !defined(CONFIG_KERNEL_MOTOROLA) && !defined(CONFIG_MACH_MOT)
 	struct mdp_dirty_region dirty;
+#endif
 	struct mdp_dirty_region *dirtyPtr = NULL;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+#ifdef CONFIG_MACH_MOT
+
+	if (!en_pan_display)
+		return 0;
+#endif
 
 	if ((!mfd->op_enable) || (!mfd->panel_power_on))
 		return -EPERM;
@@ -1119,6 +1168,7 @@ static int msm_fb_pan_display(struct fb_var_screeninfo *var,
 		info->var.yoffset =
 		    (var->yoffset / info->fix.ypanstep) * info->fix.ypanstep;
 
+#if !defined(CONFIG_KERNEL_MOTOROLA) && !defined(CONFIG_MACH_MOT)
 	/* "UPDT" */
 	if (var->reserved[0] == 0x54445055) {
 		dirty.xoffset = var->reserved[1] & 0xffff;
@@ -1151,12 +1201,22 @@ static int msm_fb_pan_display(struct fb_var_screeninfo *var,
 
 		dirtyPtr = &dirty;
 	}
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 	down(&msm_fb_pan_sem);
 	mdp_set_dma_pan_info(info, dirtyPtr,
 			     (var->activate == FB_ACTIVATE_VBL));
 	mdp_dma_pan_update(info);
 	up(&msm_fb_pan_sem);
+#ifdef CONFIG_MACH_MOT
+	if (motfb_is_waiting_for_frame) {
+		motfb_is_waiting_for_frame = 0;
+		wake_up(&disp_util_wq);
+	}
+#ifdef CONFIG_FB_MSM_ESD
+    msm_fb_sent_frame++;
+#endif
+#endif
 
 	return 0;
 }
@@ -1291,7 +1351,7 @@ static int msm_fb_stop_sw_refresher(struct msm_fb_data_type *mfd)
 		mfd->sw_currently_refreshing = FALSE;
 		up(&mfd->sem);
 
-		// wait until the refresher finishes the last job
+		/* wait until the refresher finishes the last job */
 		wait_for_completion_killable(&mfd->refresher_comp);
 	}
 
@@ -1324,10 +1384,18 @@ void mdp_ppp_put_img(struct mdp_blit_req *req, struct file *p_src_file,
 		struct file *p_dst_file)
 {
 #ifdef CONFIG_ANDROID_PMEM
-	if (p_src_file)
-		put_pmem_file(p_src_file);
-	if (p_dst_file)
-		put_pmem_file(p_dst_file);
+    if (p_src_file) {
+            if (is_pmem_file(p_src_file))
+                    put_pmem_file(p_src_file);
+            else if (is_msm_hw3d_file(p_src_file))
+                    put_msm_hw3d_file(p_src_file);
+    }
+    if (p_dst_file) {
+            if (is_pmem_file(p_dst_file))
+                    put_pmem_file(p_dst_file);
+            else if (is_msm_hw3d_file(p_dst_file))
+                    put_msm_hw3d_file(p_dst_file);
+    }
 #endif
 }
 
@@ -1372,6 +1440,45 @@ DECLARE_MUTEX(msm_fb_ioctl_ppp_sem);
 DEFINE_MUTEX(msm_fb_ioctl_lut_sem);
 DEFINE_MUTEX(msm_fb_ioctl_hist_sem);
 
+/*Set color conversion matrix from user space */
+
+#ifndef CONFIG_FB_MSM_MDP40
+static void msmfb_set_color_conv(struct mdp_ccs *p)
+{
+	int i;
+
+	if (p->direction == MDP_CCS_RGB2YUV) {
+		/* MDP cmd block enable */
+		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
+
+		/* RGB->YUV primary forward matrix */
+		for (i = 0; i < MDP_CCS_SIZE; i++)
+			writel(p->ccs[i], MDP_CSC_PFMVn(i));
+
+		#ifdef CONFIG_FB_MSM_MDP31
+		for (i = 0; i < MDP_BV_SIZE; i++)
+			writel(p->bv[i], MDP_CSC_POST_BV2n(i));
+		#endif
+
+		/* MDP cmd block disable */
+		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
+	} else {
+		/* MDP cmd block enable */
+		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
+
+		/* YUV->RGB primary reverse matrix */
+		for (i = 0; i < MDP_CCS_SIZE; i++)
+			writel(p->ccs[i], MDP_CSC_PRMVn(i));
+		for (i = 0; i < MDP_BV_SIZE; i++)
+			writel(p->bv[i], MDP_CSC_PRE_BV1n(i));
+
+		/* MDP cmd block disable */
+		mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
+	}
+}
+#endif
+
+
 static int msm_fb_ioctl(struct fb_info *info, unsigned int cmd,
 			unsigned long arg)
 {
@@ -1380,7 +1487,9 @@ static int msm_fb_ioctl(struct fb_info *info, unsigned int cmd,
 	struct fb_cursor cursor;
 	struct fb_cmap cmap;
 	struct mdp_histogram hist;
-
+#ifndef CONFIG_FB_MSM_MDP40
+	struct mdp_ccs ccs_matrix;
+#endif
 	int ret = 0;
 
 	if (!mfd->op_enable)
@@ -1391,6 +1500,63 @@ static int msm_fb_ioctl(struct fb_info *info, unsigned int cmd,
 		down(&msm_fb_ioctl_ppp_sem);
 		ret = msmfb_blit(info, argp);
 		up(&msm_fb_ioctl_ppp_sem);
+
+		break;
+
+	/* Ioctl for setting ccs matrix from user space */
+	case MSMFB_SET_CCS_MATRIX:
+#ifndef CONFIG_FB_MSM_MDP40
+		ret = copy_from_user(&ccs_matrix, argp, sizeof(ccs_matrix));
+		if (ret) {
+			printk(KERN_ERR
+				"%s:MSMFB_SET_CCS_MATRIX ioctl failed \n",
+				__func__);
+			return ret;
+		}
+
+		down(&msm_fb_ioctl_ppp_sem);
+		if (ccs_matrix.direction == MDP_CCS_RGB2YUV)
+			mdp_ccs_rgb2yuv = ccs_matrix;
+		else
+			mdp_ccs_yuv2rgb = ccs_matrix;
+
+		msmfb_set_color_conv(&ccs_matrix) ;
+		up(&msm_fb_ioctl_ppp_sem);
+#else
+		ret = -EINVAL;
+#endif
+
+		break;
+
+	/* Ioctl for getting ccs matrix to user space */
+	case MSMFB_GET_CCS_MATRIX:
+#ifndef CONFIG_FB_MSM_MDP40
+		ret = copy_from_user(&ccs_matrix, argp, sizeof(ccs_matrix)) ;
+		if (ret) {
+			printk(KERN_ERR
+				"%s:MSMFB_GET_CCS_MATRIX ioctl failed \n",
+				 __func__);
+			return ret;
+		}
+
+		down(&msm_fb_ioctl_ppp_sem);
+		if (ccs_matrix.direction == MDP_CCS_RGB2YUV)
+			ccs_matrix = mdp_ccs_rgb2yuv;
+		 else
+			ccs_matrix =  mdp_ccs_yuv2rgb;
+
+		ret = copy_to_user(argp, &ccs_matrix, sizeof(ccs_matrix));
+
+		if (ret)	{
+			printk(KERN_ERR
+				"%s:MSMFB_GET_CCS_MATRIX ioctl failed \n",
+				 __func__);
+			return ret ;
+		}
+		up(&msm_fb_ioctl_ppp_sem);
+#else
+		ret = -EINVAL;
+#endif
 
 		break;
 
@@ -1473,6 +1639,54 @@ static int msm_fb_register_driver(void)
 	return platform_driver_register(&msm_fb_driver);
 }
 
+#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+void msm_fb_up(struct platform_device *pdev)
+{
+   static struct platform_device *cache_pdev = NULL;
+   static struct msm_fb_data_type *mfd = NULL;
+
+   if (!pdev)
+   {
+      return;
+   }
+
+   if (cache_pdev != pdev)
+   {
+      mfd = (struct msm_fb_data_type *)platform_get_drvdata(pdev);
+      if (!mfd)
+      {
+         printk("!!Bad sem pointer!!\n"); return;
+         return;
+      }
+      cache_pdev = pdev;
+   }
+   up(&mfd->dma->mutex);
+}
+
+void msm_fb_down(struct platform_device *pdev)
+{
+   static struct platform_device *cache_pdev = NULL;
+   static struct msm_fb_data_type *mfd = NULL;
+
+   if (!pdev)
+   {
+      return;
+   }
+
+   if (cache_pdev != pdev)
+   {
+      mfd = (struct msm_fb_data_type *)platform_get_drvdata(pdev);
+      if (!mfd)
+      {
+         printk("!!Bad sem pointer!!\n"); return;
+         return;
+      }
+      cache_pdev = pdev;
+   }
+   down(&mfd->dma->mutex);
+}
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+
 void msm_fb_add_device(struct platform_device *pdev)
 {
 	struct msm_fb_panel_data *pdata;
@@ -1498,9 +1712,9 @@ void msm_fb_add_device(struct platform_device *pdev)
 		printk(KERN_ERR "msm_fb: no more framebuffer info list!\n");
 		return;
 	}
-	/////////////////////////////////////////
-	// alloc panel device data
-	/////////////////////////////////////////
+	/*
+	 * alloc panel device data
+	 */
 	this_dev = msm_fb_device_alloc(pdata, type, id);
 
 	if (!this_dev) {
@@ -1509,9 +1723,9 @@ void msm_fb_add_device(struct platform_device *pdev)
 		return;
 	}
 
-	/////////////////////////////////////////
-	// alloc framebuffer info + par data
-	/////////////////////////////////////////
+	/*
+	 * alloc framebuffer info + par data
+	 */
 	fbi = framebuffer_alloc(sizeof(struct msm_fb_data_type), NULL);
 	if (fbi == NULL) {
 		platform_device_put(this_dev);
@@ -1527,15 +1741,15 @@ void msm_fb_add_device(struct platform_device *pdev)
 	mfd->fb_page = fb_num;
 	mfd->index = fbi_list_index;
 
-	// link to the latest pdev
+	/* link to the latest pdev */
 	mfd->pdev = this_dev;
 
 	mfd_list[mfd_list_index++] = mfd;
 	fbi_list[fbi_list_index++] = fbi;
 
-	/////////////////////////////////////////
-	// set driver data
-	/////////////////////////////////////////
+	/*
+	 * set driver data
+	 */
 	platform_set_drvdata(this_dev, mfd);
 
 	if (platform_device_add(this_dev)) {

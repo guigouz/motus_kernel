@@ -67,6 +67,8 @@
 #include <mach/msm_iomap.h>
 
 #include "acpuclock.h"
+#include "avs.h"
+#include "clock.h"
 
 #define SHOT_SWITCH 4
 #define HOP_SWITCH 5
@@ -89,6 +91,7 @@ struct clkctl_acpu_speed {
 	unsigned int     a11clk_src_div;
 	unsigned int     ahbclk_khz;
 	unsigned int     ahbclk_div;
+	unsigned int     axiclk_khz;
 	unsigned int     sc_core_src_sel_mask;
 	unsigned int     sc_l_value;
 	int              vdd;
@@ -96,33 +99,33 @@ struct clkctl_acpu_speed {
 };
 
 struct clkctl_acpu_speed acpu_freq_tbl[] = {
-	{ 0, 19200, ACPU_PLL_TCXO, 0, 0, 0, 0, 0, 0, 1000},
-	{ 0, 48000, ACPU_PLL_1, 1, 0xF, 0, 0, 0, 0, 1000},
-	{ 0, 64000, ACPU_PLL_1, 1, 0xB, 0, 0, 0, 0, 1000},
-	{ 0, 96000, ACPU_PLL_1, 1, 7, 0, 0, 0, 0, 1000},
-	{ 0, 128000, ACPU_PLL_1, 1, 5, 0, 0, 2, 0, 1000},
-	{ 0, 192000, ACPU_PLL_1, 1, 3, 0, 0, 0, 0, 1000},
+	{ 0, 19200, ACPU_PLL_TCXO, 0, 0, 0, 0, 14000, 0, 0, 1000},
+	{ 0, 48000, ACPU_PLL_1, 1, 0xF, 0, 0, 14000, 0, 0, 1000},
+	{ 0, 64000, ACPU_PLL_1, 1, 0xB, 0, 0, 14000, 0, 0, 1000},
+	{ 0, 96000, ACPU_PLL_1, 1, 7, 0, 0, 14000, 0, 0, 1000},
+	{ 0, 128000, ACPU_PLL_1, 1, 5, 0, 0, 14000, 2, 0, 1000},
+	{ 0, 192000, ACPU_PLL_1, 1, 3, 0, 0, 14000, 0, 0, 1000},
 	/* 235.93 on CDMA only. */
-	{ 1, 245000, ACPU_PLL_0, 4, 0, 0, 0, 0, 0, 1000},
-	{ 0, 256000, ACPU_PLL_1, 1, 2, 0, 0, 0, 0, 1000},
-	{ 1, 384000, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xA, 1000},
-	{ 0, 422400, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xB, 1000},
-	{ 0, 460800, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xC, 1000},
-	{ 0, 499200, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xD, 1025},
-	{ 0, 537600, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xE, 1050},
-	{ 1, 576000, ACPU_PLL_3, 0, 0, 0, 0, 1, 0xF, 1050},
-	{ 0, 614400, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x10, 1075},
-	{ 0, 652800, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x11, 1100},
-	{ 0, 691200, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x12, 1125},
-	{ 0, 729600, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x13, 1150},
-	{ 1, 768000, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x14, 1150},
-	{ 0, 806400, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x15, 1175},
-	{ 0, 844800, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x16, 1200},
-	{ 0, 883200, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x17, 1225},
-	{ 0, 921600, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x18, 1250},
-	{ 0, 960000, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x19, 1250},
-	{ 1, 998400, ACPU_PLL_3, 0, 0, 0, 0, 1, 0x1A, 1250},
-	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+	{ 1, 245000, ACPU_PLL_0, 4, 0, 0, 0, 29000, 0, 0, 1000},
+	{ 0, 256000, ACPU_PLL_1, 1, 2, 0, 0, 29000, 0, 0, 1000},
+	{ 1, 384000, ACPU_PLL_3, 0, 0, 0, 0, 58000, 1, 0xA, 1000},
+	{ 0, 422400, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0xB, 1000},
+	{ 0, 460800, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0xC, 1000},
+	{ 0, 499200, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0xD, 1025},
+	{ 0, 537600, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0xE, 1050},
+	{ 1, 576000, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0xF, 1050},
+	{ 0, 614400, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0x10, 1075},
+	{ 0, 652800, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0x11, 1100},
+	{ 0, 691200, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0x12, 1125},
+	{ 0, 729600, ACPU_PLL_3, 0, 0, 0, 0, 117000, 1, 0x13, 1150},
+	{ 1, 768000, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x14, 1150},
+	{ 0, 806400, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x15, 1175},
+	{ 0, 844800, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x16, 1200},
+	{ 0, 883200, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x17, 1225},
+	{ 0, 921600, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x18, 1250},
+	{ 0, 960000, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x19, 1250},
+	{ 1, 998400, ACPU_PLL_3, 0, 0, 0, 0, 128000, 1, 0x1A, 1250},
+	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 };
 
 #ifdef CONFIG_CPU_FREQ_MSM
@@ -170,6 +173,12 @@ struct clock_state {
 };
 
 static struct clock_state drv_state = { 0 };
+
+unsigned long clk_get_max_axi_khz(void)
+{
+	return 128000;
+}
+EXPORT_SYMBOL(clk_get_max_axi_khz);
 
 static void scpll_set_freq(uint32_t lval, unsigned freq_switch)
 {
@@ -323,7 +332,8 @@ static void config_pll(struct clkctl_acpu_speed *s)
 
 	if (s->pll == ACPU_PLL_3)
 		scpll_set_freq(s->sc_l_value, HOP_SWITCH);
-	else {
+	/* Configure the PLL divider mux if we plan to use it. */
+	else if (s->sc_core_src_sel_mask == 0) {
 		/* get the current clock source selection */
 		regval = readl(SPSS_CLK_SEL_ADDR) & 0x1;
 
@@ -395,23 +405,38 @@ int acpuclk_set_rate(unsigned long rate, enum setrate_reason reason)
 {
 	struct clkctl_acpu_speed *tgt_s, *strt_s;
 	int rc = 0;
+	int freq_index = 0;
+
+	if (reason == SETRATE_CPUFREQ)
+		mutex_lock(&drv_state.lock);
 
 	strt_s = drv_state.current_speed;
 
 	if (rate == (strt_s->a11clk_khz * 1000))
-		return 0;
+		goto out;
 
 	for (tgt_s = acpu_freq_tbl; tgt_s->a11clk_khz != 0; tgt_s++) {
 		if (tgt_s->a11clk_khz == (rate / 1000))
 			break;
+		freq_index++;
 	}
 
-	if (tgt_s->a11clk_khz == 0)
-		return -EINVAL;
+	if (tgt_s->a11clk_khz == 0) {
+		rc = -EINVAL;
+		goto out;
+	}
 
 	if (reason == SETRATE_CPUFREQ) {
-		mutex_lock(&drv_state.lock);
-
+#ifdef CONFIG_MSM_CPU_AVS
+		/* Notify avs before changing frequency */
+		rc = avs_adjust_freq(freq_index, 1);
+		if (rc) {
+			printk(KERN_ERR
+				"acpuclock: Unable to increase ACPU "
+				"vdd.\n");
+			goto out;
+		}
+#endif
 		/* Increase VDD if needed. */
 		if (tgt_s->vdd > strt_s->vdd) {
 			rc = acpuclk_set_vdd_level(tgt_s->vdd);
@@ -443,9 +468,28 @@ int acpuclk_set_rate(unsigned long rate, enum setrate_reason reason)
 	/* Re-adjust lpj for the new clock speed. */
 	loops_per_jiffy = tgt_s->lpj;
 
-	/* Nothing else to do for power collapse or SWFI. */
-	if (reason != SETRATE_CPUFREQ)
-		return 0;
+	/* Nothing else to do for SWFI. */
+	if (reason == SETRATE_SWFI)
+		goto out;
+
+	if (strt_s->axiclk_khz != tgt_s->axiclk_khz) {
+		rc = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK,
+			tgt_s->axiclk_khz * 1000);
+		if (rc < 0)
+			pr_err("Setting AXI min rate failed!\n");
+	}
+
+	/* Nothing else to do for power collapse */
+	if (reason == SETRATE_PC)
+		goto out;
+
+#ifdef CONFIG_MSM_CPU_AVS
+	/* notify avs after changing frequency */
+	rc = avs_adjust_freq(freq_index, 0);
+	if (rc)
+		printk(KERN_ERR
+			"acpuclock: Unable to drop ACPU vdd.\n");
+#endif
 
 	/* Drop VDD level if we can. */
 	if (tgt_s->vdd < strt_s->vdd) {
@@ -457,7 +501,6 @@ int acpuclk_set_rate(unsigned long rate, enum setrate_reason reason)
 out:
 	if (reason == SETRATE_CPUFREQ)
 		mutex_unlock(&drv_state.lock);
-
 	return rc;
 }
 
@@ -465,6 +508,7 @@ static void __init acpuclk_init(void)
 {
 	struct clkctl_acpu_speed *speed;
 	uint32_t div, sel, regval;
+	int rc;
 
 	/* Determine the source of the Scorpion clock. */
 	regval = readl(SPSS_CLK_SEL_ADDR);
@@ -516,6 +560,9 @@ static void __init acpuclk_init(void)
 	}
 
 	drv_state.current_speed = speed;
+	rc = ebi1_clk_set_min_rate(CLKVOTE_ACPUCLK, speed->axiclk_khz * 1000);
+	if (rc < 0)
+		pr_err("Setting AXI min rate failed!\n");
 
 	printk(KERN_INFO "ACPU running at %d KHz\n", speed->a11clk_khz);
 }
@@ -548,12 +595,19 @@ unsigned long acpuclk_wait_for_irq(void)
 #define CT_CSR_PHYS		0xA8700000
 #define TCSR_SPARE2_ADDR	(ct_csr_base + 0x60)
 
+#define PLL0_M_VAL_ADDR		(MSM_CLK_CTL_BASE + 0x308)
+
 static void __init acpu_freq_tbl_fixup(void)
 {
 	void __iomem *ct_csr_base;
-	uint32_t tcsr_spare2;
-	unsigned int max_acpu_khz;
+	uint32_t tcsr_spare2, pll0_m_val;
+	unsigned int max_acpu_khz, pll0_fixup;
 	unsigned int i;
+
+	/* pll0_m_val will be 36 for CDMA-only and 4 otherwise,
+	 * indicating PLL0 is running at 235MHz, not 245MHz */
+	pll0_m_val = readl(PLL0_M_VAL_ADDR) & 0x7FFFF;
+	pll0_fixup = (pll0_m_val == 36);
 
 	ct_csr_base = ioremap(CT_CSR_PHYS, PAGE_SIZE);
 	BUG_ON(ct_csr_base == NULL);
@@ -596,6 +650,10 @@ skip_efuse_fixup:
 	iounmap(ct_csr_base);
 	BUG_ON(drv_state.max_vdd == 0);
 	for (i = 0; acpu_freq_tbl[i].a11clk_khz != 0; i++) {
+		if (pll0_fixup && acpu_freq_tbl[i].pll == ACPU_PLL_0) {
+			/* PLL0 is 235.93MHz for CDMA-only */
+			acpu_freq_tbl[i].a11clk_khz = 235930;
+		}
 		if (acpu_freq_tbl[i].vdd > drv_state.max_vdd) {
 			acpu_freq_tbl[i].a11clk_khz = 0;
 			break;
@@ -615,10 +673,26 @@ static void __init lpj_init(void)
 	}
 }
 
+#ifdef CONFIG_MSM_CPU_AVS
+static int __init acpu_avs_init(int (*set_vdd) (int), int khz)
+{
+	int i;
+	int freq_count = 0;
+	int freq_index = -1;
+
+	for (i = 0; acpu_freq_tbl[i].a11clk_khz; i++) {
+		freq_count++;
+		if (acpu_freq_tbl[i].a11clk_khz == khz)
+			freq_index = i;
+	}
+
+	return avs_init(set_vdd, freq_count, freq_index);
+}
+#endif
+
 void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 {
 	mutex_init(&drv_state.lock);
-
 	drv_state.acpu_switch_time_us = clkdata->acpu_switch_time_us;
 	drv_state.max_speed_delta_khz = clkdata->max_speed_delta_khz;
 	drv_state.vdd_switch_time_us = clkdata->vdd_switch_time_us;
@@ -634,5 +708,11 @@ void __init msm_acpu_clock_init(struct msm_acpu_clock_platform_data *clkdata)
 	cpufreq_table_init();
 	cpufreq_frequency_table_get_attr(freq_table, smp_processor_id());
 #endif
-
+#ifdef CONFIG_MSM_CPU_AVS
+	if (!acpu_avs_init(drv_state.acpu_set_vdd,
+		drv_state.current_speed->a11clk_khz)) {
+		/* avs init successful. avs will handle voltage changes */
+		drv_state.acpu_set_vdd = NULL;
+	}
+#endif
 }

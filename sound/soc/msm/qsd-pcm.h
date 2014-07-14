@@ -47,6 +47,7 @@ extern void register_cb(void *);
 struct audio_locks {
 	struct mutex lock;
 	struct mutex mixer_lock;
+	wait_queue_head_t eos_wait;
 };
 
 struct qsd_ctl {
@@ -55,8 +56,7 @@ struct qsd_ctl {
 	int32_t strm_volume; /* stream volume*/
 	uint16_t update;
 	int16_t pan;
-	uint16_t capture_device; /* Device parameter */
-	uint16_t playback_device; /* Device  parameter */
+	uint16_t device; /* Device  parameter */
 	uint16_t tx_mute;		 /* Mute  parameter */
 	uint16_t rx_mute;		 /* Mute  parameter */
 };
@@ -82,6 +82,7 @@ struct qsd_audio {
 	int enabled;
 	int running;
 	int stopped;		/* set when stopped, cleared on flush */
+	int eos_ack;
 
 	struct cad_open_struct_type cos;
 	uint32_t cad_w_handle;

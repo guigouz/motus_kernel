@@ -19,6 +19,10 @@ obj-$(CONFIG_KEYBOARD_TOSA)		+= tosakbd.o
 obj-$(CONFIG_KEYBOARD_HIL)		+= hil_kbd.o
 obj-$(CONFIG_KEYBOARD_HIL_OLD)		+= hilkbd.o
 obj-$(CONFIG_KEYBOARD_OMAP)		+= omap-keypad.o
+obj-$(CONFIG_OMAP_PS2)			+= innovator_ps2.o
+obj-$(CONFIG_KEYBOARD_TSC2301)		+= tsc2301_kp.o
+obj-$(CONFIG_KEYBOARD_LM8323)		+= lm8323.o
+obj-$(CONFIG_KEYBOARD_TWL4030)		+= twl4030_keypad.o
 obj-$(CONFIG_KEYBOARD_PXA27x)		+= pxa27x_keypad.o
 obj-$(CONFIG_KEYBOARD_PXA930_ROTARY)	+= pxa930_rotary.o
 obj-$(CONFIG_KEYBOARD_AAED2000)		+= aaed2000_kbd.o
@@ -29,4 +33,5 @@ obj-$(CONFIG_KEYBOARD_MAPLE)		+= maple_keyb.o
 obj-$(CONFIG_KEYBOARD_BFIN)		+= bf54x-keys.o
 obj-$(CONFIG_KEYBOARD_SH_KEYSC)		+= sh_keysc.o
 obj-$(CONFIG_KEYBOARD_I2C_MSM)		+= msm-i2ckbd.o
+obj-$(CONFIG_KEYBOARD_PMIC8058)		+= pmic8058-keypad.o
 

@@ -1,7 +1,6 @@
 #
-# NOTE! Don't add files that are generated in specific
-# subdirectories here. Add them in the ".gitignore" file
-# in that subdirectory instead.
+# NOTE! Don't add files that are generated in specific subdirectories here. Add them in the 
+# ".gitignore" file in that subdirectory instead.
 #
 # NOTE! Please use 'git-ls-files -i --exclude-standard'
 # command after changing this file, to see if there are
@@ -22,19 +21,32 @@
 *.lst
 *.symtypes
 *.order
+modules.builtin
 *.elf
 *.bin
 *.gz
+*.bz2
+*.lzma
+*.xz
+*.lzo
+*.patch
+*.gcno
 
 #
 # Top-level generic files
 #
-tags
-TAGS
+/tags
+/TAGS
+/linux
 vmlinux
-System.map
-Module.markers
-Module.symvers
+vmlinuz
+/System.map
+/Module.markers
+/Module.symvers
+
+#
+# git files that we don't want to ignore even if they are dot files
+#
 !.gitignore
 !.mailmap
 
@@ -62,5 +74,6 @@ cscope.*
 ncscope.*
 
 *.orig
+*.rej
 *~
 \#*#

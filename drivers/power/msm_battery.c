@@ -73,7 +73,7 @@
 #include <mach/msm_battery.h>
 
 #define BATTERY_RPC_PROG	0x30000089
-#define BATTERY_RPC_VERS	0x00010001
+#define BATTERY_RPC_VERS	0x00010002
 
 #define BATTERY_RPC_CB_PROG	0x31000089
 #define BATTERY_RPC_CB_VERS	0x00010001
@@ -92,6 +92,8 @@
 #define BATTERY_READ_PROC 				10
 #define BATTERY_MIMIC_LEGACY_VBATT_READ_PROC 		11
 #define BATTERY_CB_TYPE_PROC 1
+#define BATTERY_ENABLE_DISABLE_FILTERING_PROC       14
+#define BATTERY_QUERY_ADC_PARAMS   16
 
 #define BATTERY_CB_ID_ALL_ACTIV       1
 
@@ -206,6 +208,7 @@ struct msm_battery_info {
 	u32 charger_valid;
 	u32 batt_valid;
 	u32 batt_capacity;
+    u32 batt_temperature;
 
 	u32(*calculate_capacity) (u32 voltage);
 
@@ -218,6 +221,7 @@ struct msm_battery_info {
 	struct power_supply *msm_psy_batt;
 
 	struct msm_rpc_endpoint *batt_ep;
+	struct msm_rpc_endpoint *battevt_ep;
 	struct msm_rpc_endpoint *chg_ep;
 
 	struct workqueue_struct *msm_batt_wq;
@@ -309,6 +313,7 @@ static enum power_supply_property msm_batt_power_props[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_CAPACITY,
+    POWER_SUPPLY_PROP_TEMP,
 };
 
 static void msm_batt_update_psy_status(void);
@@ -348,6 +353,9 @@ static int msm_batt_power_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		val->intval = msm_batt_info.batt_capacity;
 		break;
+	case POWER_SUPPLY_PROP_TEMP:
+		val->intval = (msm_batt_info.batt_temperature * 10);
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -365,7 +373,7 @@ static struct power_supply msm_psy_batt = {
 
 static int msm_batt_get_batt_chg_status(u32 *batt_charging,
 					u32 *charger_valid,
-					u32 *chg_batt_event)
+					u32 *chg_batt_event, u32 *temperature)
 {
 	struct rpc_request_hdr req_batt_chg;
 
@@ -379,10 +387,25 @@ static int msm_batt_get_batt_chg_status(u32 *batt_charging,
 		u32 chg_batt_data;
 	} rep_chg;
 
+    struct rpc_req_adc_params {
+      struct rpc_request_hdr hdr;
+      u32 ptr_not_null;
+    } req_adc;
+
+    struct rpc_resp_adc_params {
+      struct rpc_reply_hdr hdr;
+      u32 temp_data;
+      u32 batt_adc_voltage;
+      u32 prev_batt_adc_voltage;
+      u32 batt_temperature;
+      u32 batt_id;
+    } resp_adc;
+
 	int rc;
 	*batt_charging = 0;
 	*chg_batt_event = CHG_UI_EVENT_INVALID;
 	*charger_valid = 0;
+    *temperature = 0; 
 
 	rc = msm_rpc_call_reply(msm_batt_info.batt_ep,
 				BATTERY_READ_PROC,
@@ -450,28 +473,49 @@ static int msm_batt_get_batt_chg_status(u32 *batt_charging,
 	}
 	*chg_batt_event = be32_to_cpu(rep_chg.chg_batt_data);
 
+
+    req_adc.ptr_not_null = be32_to_cpu(1);
+	rc = msm_rpc_call_reply(msm_batt_info.batt_ep,
+				BATTERY_QUERY_ADC_PARAMS,
+				&req_adc, sizeof(req_adc),
+				&resp_adc, sizeof(resp_adc),
+				msecs_to_jiffies(BATT_RPC_TIMEOUT));
+	if (rc < 0) {
+		printk(KERN_ERR
+		       "%s: msm_rpc_call_reply failed! proc=%d rc=%d\n",
+		       __func__, BATTERY_QUERY_ADC_PARAMS, rc);
+		return rc;
+	}
+    *temperature = be32_to_cpu(resp_adc.batt_temperature);
+
 	return 0;
 }
 
+/* Added temerature updates to the driver,
+   No official drop available from QCOM yet for this
+   Please use this version of function when merging */
 static void msm_batt_update_psy_status(void)
 {
 	u32 batt_charging = 0;
 	u32 chg_batt_event = CHG_UI_EVENT_INVALID;
 	u32 charger_valid = 0;
+    u32 temperature = 0;
 
 	msm_batt_get_batt_chg_status(&batt_charging, &charger_valid,
-				     &chg_batt_event);
+				     &chg_batt_event, &temperature);
 
 	printk(KERN_INFO "batt_charging = %u  batt_valid = %u "
 			" batt_volt = %u\n charger_valid = %u "
-			" chg_batt_event = %u\n",
+			" chg_batt_event = %u temperature = %u\n",
 			batt_charging, msm_batt_info.batt_valid,
 			msm_batt_info.voltage_now,
-			charger_valid, chg_batt_event);
+			charger_valid, chg_batt_event, temperature);
 
 	printk(KERN_INFO "Previous charger valid status = %u"
 			"  current charger valid status = %u\n",
 			msm_batt_info.charger_valid, charger_valid);
+
+    msm_batt_info.batt_temperature = temperature;
 
 	if (msm_batt_info.charger_valid != charger_valid) {
 
@@ -518,21 +562,85 @@ static void msm_batt_update_psy_status(void)
 	power_supply_changed(&msm_psy_batt);
 }
 
+static int msm_batt_enable_disable_filtering(u32 handle, bool state)
+{
+    int rc;
+    struct batt_filter_req {
+        struct rpc_request_hdr hdr;
+        u32 handle;
+        u32 state;
+        u32 filter_number;
+    } batt_filter_rpc_req;
+
+    struct batt_filter_reply {
+        struct rpc_reply_hdr hdr;
+        u32 batt_error;
+    } batt_filter_rpc_reply;
+
+    batt_filter_rpc_req.handle = cpu_to_be32(handle);
+    batt_filter_rpc_req.state =  cpu_to_be32(state ? 1 : 0);
+    batt_filter_rpc_req.filter_number = cpu_to_be32(2); /*this indexes to vbatt_filter_profile1 on A9*/
+
+    rc = msm_rpc_call_reply(msm_batt_info.battevt_ep,
+                BATTERY_ENABLE_DISABLE_FILTERING_PROC,
+                &batt_filter_rpc_req,
+                sizeof(batt_filter_rpc_req),
+                &batt_filter_rpc_reply,
+                sizeof(batt_filter_rpc_reply),
+                msecs_to_jiffies(BATT_RPC_TIMEOUT));
+
+    if(rc <0) {
+        printk(KERN_ERR
+            "%s: msm_rcp_call_reply failed! proc=%d rc=%d\n" ,
+            __func__, BATTERY_ENABLE_DISABLE_FILTERING_PROC, rc);
+        return rc;
+    }
+
+    if(batt_filter_rpc_reply.batt_error != 0) {
+        printk(KERN_ERR
+            "%s: vBatt enable_disable_filter failed "
+            "proce_num = %d"
+            "batt_clnt_handle = %d\n"
+            "state = %d",
+            __func__, BATTERY_ENABLE_DISABLE_FILTERING_PROC, handle, state);
+        return -EIO;
+    }
+
+    return 0;
+}
+
+
+
+
 static int msm_batt_register(u32 desired_batt_voltage,
 			     u32 voltage_direction, u32 batt_cb_id, u32 cb_data)
 {
 	struct batt_client_registration_req req;
 	struct batt_client_registration_rep rep;
 	int rc;
+    /* 
+       MOT changes for registration errors
+    */
+    u32 local_more_data = sizeof(u32);
+    u32 local_batt_error = BATTERY_LAST_ERROR;
+    /* 
+       end MOT changes for registration errors
+    */
 
 	req.desired_batt_voltage = cpu_to_be32(desired_batt_voltage);
 	req.voltage_direction = cpu_to_be32(voltage_direction);
 	req.batt_cb_id = cpu_to_be32(batt_cb_id);
 	req.cb_data = cpu_to_be32(cb_data);
-	req.more_data = cpu_to_be32(1);
-	req.batt_error = cpu_to_be32(0);
+    /*
+           MOT changes for registration errors
+     */
+    req.more_data = cpu_to_be32(local_more_data);
+    req.batt_error = cpu_to_be32(local_batt_error);
+    /* 
+        end MOT changes for registration errors
+    */
 
-	rc = msm_rpc_call_reply(msm_batt_info.batt_ep,
+	rc = msm_rpc_call_reply(msm_batt_info.battevt_ep,
 				BATTERY_REGISTER_PROC, &req,
 				sizeof(req), &rep, sizeof(rep),
 				msecs_to_jiffies(BATT_RPC_TIMEOUT));
@@ -564,7 +672,7 @@ static int msm_batt_deregister(u32 handle)
 	batt_deregister_rpc_req.handle = cpu_to_be32(handle);
 	batt_deregister_rpc_reply.batt_error = cpu_to_be32(BATTERY_LAST_ERROR);
 
-	rc = msm_rpc_call_reply(msm_batt_info.batt_ep,
+	rc = msm_rpc_call_reply(msm_batt_info.battevt_ep,
 				BATTERY_DEREGISTER_CLIENT_PROC,
 				&batt_deregister_rpc_req,
 				sizeof(batt_deregister_rpc_req),
@@ -594,7 +702,7 @@ static void msm_batt_suspend_cleanup(void)
 {
 	int rc;
 	void *rpc_packet;
-
+   
 	if (msm_batt_info.batt_handle != INVALID_BATT_HANDLE) {
 
 		rc = msm_batt_deregister(msm_batt_info.batt_handle);
@@ -623,6 +731,7 @@ static void msm_batt_suspend_cleanup(void)
 	} while (rc != -ETIMEDOUT);
 }
 
+
 static void msm_batt_wait_for_batt_chg_event(struct work_struct *work)
 {
 	void *rpc_packet;
@@ -649,7 +758,8 @@ static void msm_batt_wait_for_batt_chg_event(struct work_struct *work)
 
 		rpc_packet = NULL;
 
-		len = msm_rpc_read(msm_batt_info.batt_ep, &rpc_packet, -1, -1);
+		len = msm_rpc_read(msm_batt_info.battevt_ep, &rpc_packet, -1, -1);
+
 
 		if (len == -ERESTARTSYS) {
 			if (atomic_read(&msm_batt_info.stop_cb_thread)) {
@@ -751,7 +861,7 @@ static void msm_batt_wait_for_batt_chg_event(struct work_struct *work)
 		rpc_reply.data.acc_hdr.verf_flavor = 0;
 		rpc_reply.data.acc_hdr.verf_length = 0;
 
-		len = msm_rpc_write(msm_batt_info.batt_ep,
+		len = msm_rpc_write(msm_batt_info.battevt_ep,
 				    &rpc_reply, sizeof(rpc_reply));
 		if (len < 0)
 			printk(KERN_ERR "%s: could not send rpc reply for"
@@ -850,6 +960,17 @@ static int msm_batt_cleanup(void)
 		}
 	}
 
+	if (msm_batt_info.battevt_ep) {
+		rc_local = msm_rpc_close(msm_batt_info.battevt_ep);
+		if (rc_local < 0) {
+			printk(KERN_ERR
+			       "%s: msm_rpc_close failed for battevt_ep rc=%d\n",
+			       __func__, rc_local);
+			if (!rc)
+				rc = rc_local;
+		}
+	}
+
 	if (msm_batt_info.chg_ep) {
 		rc_local = msm_rpc_close(msm_batt_info.chg_ep);
 		if (rc_local < 0) {
@@ -882,11 +1003,6 @@ void msm_batt_early_suspend(struct early_suspend *h)
 	int rc;
 
 	printk(KERN_INFO "%s(): going to early suspend\n", __func__);
-
-	rc = msm_batt_stop_cb_thread();
-
-	printk(KERN_INFO "%s(): Done clean up for early suspend."
-	       " rc = %d\n", __func__, rc);
 }
 
 void msm_batt_late_resume(struct early_suspend *h)
@@ -894,16 +1010,6 @@ void msm_batt_late_resume(struct early_suspend *h)
 	int rc;
 
 	printk(KERN_INFO "%s(): going to resume\n", __func__);
-
-	rc = msm_batt_register(BATTERY_LOW, BATTERY_ALL_ACTIVITY,
-			       BATTERY_CB_ID_ALL_ACTIV, BATTERY_ALL_ACTIVITY);
-	if (rc < 0) {
-		printk(KERN_ERR
-		       "%s(): msm_batt_register failed rc=%d\n", __func__, rc);
-	}
-	msm_batt_info.batt_handle = rc;
-
-	msm_batt_start_cb_thread();
 }
 #endif
 
@@ -989,6 +1095,14 @@ static int __devinit msm_batt_probe(struct platform_device *pdev)
 	}
 	msm_batt_info.batt_handle = rc;
 
+    rc = msm_batt_enable_disable_filtering(msm_batt_info.batt_handle, true);
+
+    if (rc < 0) {
+        printk(KERN_ERR
+              "%s(): msm_batt_enable_disable_filtering failed rc=%d\n", __func__, rc);
+    }
+
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	msm_batt_info.early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN;
 	msm_batt_info.early_suspend.suspend = msm_batt_early_suspend;
@@ -1026,6 +1140,20 @@ static int __devinit msm_batt_init_rpc(void)
 		       "%s: rpc connect failed for BATTERY_RPC_PROG."
 		       " rc = %d\n ", __func__, rc);
 		msm_batt_info.batt_ep = NULL;
+		return rc;
+	}
+
+	msm_batt_info.battevt_ep =
+	    msm_rpc_connect_compatible(BATTERY_RPC_PROG, BATTERY_RPC_VERS, 0);
+
+	if (msm_batt_info.battevt_ep == NULL) {
+		return -ENODEV;
+	} else if (IS_ERR(msm_batt_info.battevt_ep)) {
+		int rc = PTR_ERR(msm_batt_info.battevt_ep);
+		printk(KERN_ERR
+		       "%s: rpc connect failed for BATTERY_RPC_PROG."
+		       " rc = %d\n ", __func__, rc);
+		msm_batt_info.battevt_ep = NULL;
 		return rc;
 	}
 

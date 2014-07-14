@@ -118,6 +118,12 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 }
 EXPORT_SYMBOL(clk_set_rate);
 
+long clk_round_rate(struct clk *clk, unsigned long rate)
+{
+	return clk->ops->round_rate(clk->id, rate);
+}
+EXPORT_SYMBOL(clk_round_rate);
+
 int clk_set_min_rate(struct clk *clk, unsigned long rate)
 {
 	return clk->ops->set_min_rate(clk->id, rate);
@@ -168,7 +174,8 @@ int ebi1_clk_set_min_rate(enum clkvote_client client, unsigned long rate)
 
 	spin_lock_irqsave(&ebi1_vote_lock, flags);
 
-	ebi1_min_rate[client] = rate;
+	ebi1_min_rate[client] = (rate == MSM_AXI_MAX_FREQ) ?
+				(clk_get_max_axi_khz() * 1000) : rate;
 
 	new_val = ebi1_min_rate[0];
 	for (i = 1; i < CLKVOTE_MAX; i++)
@@ -196,7 +203,11 @@ int ebi1_clk_set_min_rate(enum clkvote_client client, unsigned long rate)
 static int axi_freq_notifier_handler(struct notifier_block *block,
 				unsigned long min_freq, void *v)
 {
-	return ebi1_clk_set_min_rate(CLKVOTE_PMQOS, min_freq * 1000);
+	/* convert min_freq from KHz to Hz, unless it's a magic value */
+	if (min_freq != MSM_AXI_MAX_FREQ)
+		min_freq *= 1000;
+
+	return ebi1_clk_set_min_rate(CLKVOTE_PMQOS, min_freq);
 }
 
 /*

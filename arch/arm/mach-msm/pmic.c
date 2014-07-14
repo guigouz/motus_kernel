@@ -72,6 +72,14 @@
 #else
 #define PMIC(x...) do {} while (0)
 #endif
+#ifdef CONFIG_MACH_MOT
+/* rpc related */
+#define PMIC_RPC_TIMEOUT (5*HZ)
+
+#define SPEAKER_PDEV_NAME	"rs00010001:00000000"
+#define SPEAKER_RPC_PROG	0x30000061
+#define SPEAKER_RPC_VER		0x00010001
+#endif
 
 
 #define LIB_NULL_PROC 0
@@ -80,6 +88,9 @@
 #define VREG_SET_LEVEL_PROC 3
 #define VREG_PULL_DOWN_SWITCH_PROC 4
 #define SECURE_MPP_CONFIG_DIGITAL_OUTPUT_PROC 5
+
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+
 #define SECURE_MPP_CONFIG_I_SINK_PROC 6
 #define RTC_START_PROC 7
 #define RTC_STOP_PROC 8
@@ -137,14 +148,61 @@
 #define SPKR_ADD_RIGHT_LEFT_CHAN_PROC 60
 #define SPKR_SET_GAIN_PROC 61
 #define SPKR_EN_PROC 62
+#define HSED_SET_PERIOD_PROC 63
+#define HSED_SET_HYSTERESIS_PROC 64
+#define HSED_SET_CURRENT_THRESHOLD_PROC 65
+#define HSED_ENABLE_PROC 66
 
+#else /* !defined(CONFIG_KERNEL_MOTOROLA) */
+
+/*MOTOROLA FIX: The following values are the correct ones. Please refer to the following files:
+1) ../products/76XX/drivers/pmic/pmic3/rpc/lib/sw/pm_lib_rpc.h
+2) ../products/76XX/drivers/pmic/pmic3/rpc/lib/sw/pm_lib.xdr
+*/
+
+#define RTC_START_PROC 6
+#define RTC_STOP_PROC 7
+#define RTC_GET_TIME_PROC 8
+#define RTC_ENABLE_ALARM_PROC 9
+#define RTC_DISABLE_ALARM_PROC 10
+#define RTC_GET_ALARM_TIME_PROC 11
+#define RTC_GET_ALARM_STATUS_PROC 12
+#define RTC_SET_TIME_ADJUST_PROC 13
+#define RTC_GET_TIME_ADJUST_PROC 14
+#define SET_LED_INTENSITY_PROC 15
+#define FLASH_LED_SET_CURRENT_PROC 16
+#define FLASH_LED_SET_MODE_PROC 17
+#define FLASH_LED_SET_POLARITY_PROC 18
+#define SPEAKER_CMD_PROC 19
+#define SET_SPEAKER_GAIN_PROC 20
+#define VIB_MOT_SET_VOLT_PROC 21
+#define VIB_MOT_SET_MODE_PROC 22
+#define VIB_MOT_SET_POLARITY_PROC 23
+#define VID_EN_PROC 24
+#define VID_IS_EN_PROC 25
+#define VID_LOAD_DETECT_EN_PROC 26
+#define MIC_EN_PROC 27
+#define MIC_IS_EN_PROC 28
+#define MIC_SET_VOLT_PROC 29
+#define MIC_GET_VOLT_PROC 30
+#define SPKR_EN_RIGHT_CHAN_PROC 31
+#define SPKR_IS_RIGHT_CHAN_EN_PROC 32
+#define SPKR_EN_LEFT_CHAN_PROC 33
+#define SPKR_IS_LEFT_CHAN_EN_PROC 34
+#define SET_SPKR_CONFIGURATION_PROC 35
+#define GET_SPKR_CONFIGURATION_PROC 36
+#define SPKR_GET_GAIN_PROC 37
+#define SPKR_IS_EN_PROC 38
+
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 /* rpc related */
 #define PMIC_RPC_TIMEOUT (5*HZ)
 
 #define PMIC_PDEV_NAME	"rs00010001:00000000"
 #define PMIC_RPC_PROG	0x30000061
-#define PMIC_RPC_VER	0x00010001
+#define PMIC_RPC_VER_1_1	0x00010001
+#define PMIC_RPC_VER_2_1	0x00020001
 
 /* error bit flags defined by modem side */
 #define PM_ERR_FLAG__PAR1_OUT_OF_RANGE		(0x0001)
@@ -169,6 +227,26 @@ struct pmic_buf {
 };
 
 static DEFINE_MUTEX(pmic_mtx);
+#ifdef CONFIG_MACH_MOT
+struct std_rpc_req {
+	struct rpc_request_hdr req;
+	uint32_t value;
+};
+struct std_rpc_reply {
+	struct rpc_reply_hdr hdr;
+	uint32_t result;
+};
+struct get_value_rep {
+	struct std_rpc_reply reply_hdr;
+	uint32_t MoreData;
+	uint32_t value;
+};
+struct std_rpc_req2 {
+	struct rpc_request_hdr hdr;
+	uint32_t value1;
+	uint32_t value2;
+};
+#endif
 
 struct pmic_ctrl {
 	int inited;
@@ -221,7 +299,27 @@ static int pmic_buf_init(void)
 
 	return 0;
 }
+#ifdef CONFIG_MACH_MOT
+static struct msm_rpc_endpoint *endpoint;
 
+static int check_and_connect(void)
+{
+	if (endpoint != NULL)
+		return 0;
+
+	endpoint = msm_rpc_connect(SPEAKER_RPC_PROG, SPEAKER_RPC_VER, 0);
+	if (endpoint == NULL) {
+		return -ENODEV;
+	} else if (IS_ERR(endpoint)) {
+		int rc = PTR_ERR(endpoint);
+		printk(KERN_ERR "%s: init rpc failed! rc = %d\n",
+		       __func__, rc);
+		endpoint = NULL;
+		return rc;
+	}
+	return 0;
+}
+#endif
 static inline void pmic_buf_reserve(struct pmic_buf *bp, int len)
 {
 	bp->data += len;
@@ -249,6 +347,50 @@ static int modem_to_linux_err(uint err)
 
 	return -EPERM;
 }
+#ifdef CONFIG_MACH_MOT
+static int do_remote_value(const uint32_t set_value,
+			   uint32_t * const get_value,
+			   const uint32_t proc)
+{
+	struct std_rpc_req req;
+	struct std_rpc_reply std_rep;
+	struct get_value_rep rep;
+	void *rep_ptr;
+	int rep_size, rc = check_and_connect();
+
+	if (rc) /* connect problem */
+		return rc;
+
+	if (get_value != NULL) { /* get value */
+		req.value = cpu_to_be32(1); /* output_pointer_not_null */
+		rep_size = sizeof(rep);
+		rep_ptr = &rep;
+	} else { /* set value */
+		req.value = cpu_to_be32(set_value);
+		rep_size = sizeof(std_rep);
+		rep_ptr = &std_rep;
+	}
+	rc = msm_rpc_call_reply(endpoint, proc,
+				&req, sizeof(req),
+				rep_ptr, rep_size,
+				PMIC_RPC_TIMEOUT);
+	if (rc < 0)
+		return rc;
+
+	if (get_value != NULL) { /* get value */
+		if (!rep.reply_hdr.result) {
+			if (!rep.MoreData)
+				return -ENOMSG;
+
+			*get_value = be32_to_cpu(rep.value);
+		}
+		rc = modem_to_linux_err(rep.reply_hdr.result);
+	} else {
+		rc = modem_to_linux_err(std_rep.result);
+	}
+	return rc;
+}
+#endif
 
 static int pmic_put_tx_data(struct pmic_buf *tp, uint datav)
 {
@@ -322,16 +464,18 @@ static int pmic_rpc_req_reply(struct pmic_buf *tbuf, struct pmic_buf *rbuf,
 	int	ans, len;
 
 
-	if (pm->endpoint == NULL) {
-		pm->endpoint = msm_rpc_connect(PMIC_RPC_PROG,
-					PMIC_RPC_VER, 0);
-		if (pm->endpoint == NULL) {
-			return -ENODEV;
-		} else if (IS_ERR(pm->endpoint)) {
+	if ((pm->endpoint == NULL) || IS_ERR(pm->endpoint)) {
+		pm->endpoint = msm_rpc_connect_compatible(PMIC_RPC_PROG,
+					PMIC_RPC_VER_2_1, 0);
+		if (IS_ERR(pm->endpoint)) {
+			pm->endpoint = msm_rpc_connect_compatible(PMIC_RPC_PROG,
+						PMIC_RPC_VER_1_1, 0);
+		}
+
+		if (IS_ERR(pm->endpoint)) {
 			ans  = PTR_ERR(pm->endpoint);
 			printk(KERN_ERR "%s: init rpc failed! ans = %d\n",
 						__func__, ans);
-			pm->endpoint = NULL;
 			return ans;
 		}
 	}
@@ -425,7 +569,36 @@ static int pmic_rpc_set_only(uint data0, uint data1, uint data2, uint data3,
 
 	return modem_to_linux_err(stat);
 }
+#ifdef CONFIG_MACH_MOT
+static int do_std_rpc_req2(struct get_value_rep *rep, uint32_t proc,
+				uint32_t value1, uint32_t value2)
+{
+	struct std_rpc_req2 req;
+	int rc;
 
+	rc = check_and_connect();
+	if (rc) {
+		printk(KERN_ERR "%s: can't make rpc connection!\n", __func__);
+		return rc;
+	}
+
+	req.value1 = cpu_to_be32(value1);
+	req.value2 = cpu_to_be32(value2);
+
+	rc = msm_rpc_call_reply(endpoint, proc,
+				    &req, sizeof(req),
+				    rep, sizeof(*rep),
+				    PMIC_RPC_TIMEOUT);
+	if (rc < 0) {
+		printk(KERN_ERR
+			"%s: msm_rpc_call_reply failed! proc=%d rc=%d\n",
+			__func__, proc, rc);
+		return rc;
+	}
+
+	return modem_to_linux_err(rep->reply_hdr.result);
+}
+#endif
 /**
  * pmic_rpc_set_struct() - set the whole struct
  * @xflag:	indicates an extra argument
@@ -649,6 +822,8 @@ int pmic_secure_mpp_control_digital_output(enum mpp_which which,
 }
 EXPORT_SYMBOL(pmic_secure_mpp_control_digital_output);
 
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+/*MOTOROLA: NOT supported by the current modem*/
 int pmic_secure_mpp_config_i_sink(enum mpp_which which,
 				enum mpp_i_sink_level level,
 				enum mpp_i_sink_switch onoff)
@@ -666,6 +841,7 @@ int pmic_secure_mpp_config_digital_input(enum mpp_which which,
 				SECURE_MPP_CONFIG_DIGITAL_INPUT_PROC);
 }
 EXPORT_SYMBOL(pmic_secure_mpp_config_digital_input);
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 int pmic_rtc_start(struct rtc_time *time)
 {
@@ -700,6 +876,28 @@ int pmic_rtc_disable_alarm(enum rtc_alarm alarm)
 	return pmic_rpc_set_only(alarm, 0, 0, 0, 1, RTC_DISABLE_ALARM_PROC);
 }
 EXPORT_SYMBOL(pmic_rtc_disable_alarm);
+
+#ifdef CONFIG_MACH_MOT
+/* Cannot use 'current' as the parameter name because 'current' is defined as
+ * a macro to get a pointer to the current task.
+ */
+int flash_led_set_current(const uint16_t milliamps)
+{
+	return do_remote_value(milliamps, NULL, FLASH_LED_SET_CURRENT_PROC);
+}
+EXPORT_SYMBOL(flash_led_set_current);
+int set_led_intensity(const enum ledtype type, int level)
+{
+	struct get_value_rep rep;
+
+	if (type >= LED_TYPE_OUT_OF_RANGE)
+		return -EINVAL;
+
+	return do_std_rpc_req2(&rep, SET_LED_INTENSITY_PROC,
+				(uint32_t)type, level);
+}
+EXPORT_SYMBOL(set_led_intensity);
+#endif
 
 int pmic_rtc_get_alarm_time(enum rtc_alarm	alarm,
 	struct rtc_time *time)
@@ -785,6 +983,8 @@ int pmic_set_speaker_gain(enum spkr_gain gain)
 }
 EXPORT_SYMBOL(pmic_set_speaker_gain);
 
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+/*MOTOROLA: NOT supported by the current modem*/
 int pmic_set_speaker_delay(enum spkr_dly delay)
 {
 	return pmic_rpc_set_only(delay, 0, 0, 0, 1, SET_SPEAKER_DELAY_PROC);
@@ -874,6 +1074,7 @@ int pmic_spkr_en(enum spkr_left_right left_right, uint enable)
 	return pmic_rpc_set_only(left_right, enable, 0, 0, 2, SPKR_EN_PROC);
 }
 EXPORT_SYMBOL(pmic_spkr_en);
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 int pmic_spkr_is_en(enum spkr_left_right left_right, uint *enabled)
 {
@@ -882,11 +1083,14 @@ int pmic_spkr_is_en(enum spkr_left_right left_right, uint *enabled)
 }
 EXPORT_SYMBOL(pmic_spkr_is_en);
 
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+/*MOTOROLA: NOT supported by the current modem*/
 int pmic_spkr_set_gain(enum spkr_left_right left_right, enum spkr_gain gain)
 {
 	return pmic_rpc_set_only(left_right, gain, 0, 0, 2, SPKR_SET_GAIN_PROC);
 }
 EXPORT_SYMBOL(pmic_spkr_set_gain);
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 int pmic_spkr_get_gain(enum spkr_left_right left_right, enum spkr_gain *gain)
 {
@@ -894,6 +1098,9 @@ int pmic_spkr_get_gain(enum spkr_left_right left_right, enum spkr_gain *gain)
 				SPKR_GET_GAIN_PROC);
 }
 EXPORT_SYMBOL(pmic_spkr_get_gain);
+
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+/*MOTOROLA: NOT supported by the current modem*/
 
 int pmic_spkr_set_delay(enum spkr_left_right left_right, enum spkr_dly delay)
 {
@@ -922,6 +1129,8 @@ int pmic_spkr_is_mute_en(enum spkr_left_right left_right, uint *enabled)
 				SPKR_IS_MUTE_EN_PROC);
 }
 EXPORT_SYMBOL(pmic_spkr_is_mute_en);
+
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */
 
 /*
  * 	mic
@@ -1013,6 +1222,9 @@ int pmic_flash_led_set_polarity(enum flash_led_pol pol)
 }
 EXPORT_SYMBOL(pmic_flash_led_set_polarity);
 
+#if !defined(CONFIG_KERNEL_MOTOROLA)
+/*MOTOROLA: NOT supported by the current modem*/
+
 int pmic_spkr_add_right_left_chan(uint enable)
 {
 	return pmic_rpc_set_only(enable, 0, 0, 0, 1,
@@ -1039,3 +1251,51 @@ int pmic_spkr_is_stereo_en(uint *enabled)
 				SPKR_IS_STEREO_EN_PROC);
 }
 EXPORT_SYMBOL(pmic_spkr_is_stereo_en);
+
+int pmic_hsed_set_period(
+	enum hsed_controller controller,
+	enum hsed_period_pre_div period_pre_div,
+	enum hsed_period_time period_time
+)
+{
+	return pmic_rpc_set_only(controller, period_pre_div, period_time, 0,
+				 3,
+				 HSED_SET_PERIOD_PROC);
+}
+EXPORT_SYMBOL(pmic_hsed_set_period);
+
+int pmic_hsed_set_hysteresis(
+	enum hsed_controller controller,
+	enum hsed_hyst_pre_div hyst_pre_div,
+	enum hsed_hyst_time hyst_time
+)
+{
+	return pmic_rpc_set_only(controller, hyst_pre_div, hyst_time, 0,
+				 3,
+				 HSED_SET_HYSTERESIS_PROC);
+}
+EXPORT_SYMBOL(pmic_hsed_set_hysteresis);
+
+int pmic_hsed_set_current_threshold(
+	enum hsed_controller controller,
+	enum hsed_switch switch_hsed,
+	uint32_t current_threshold
+)
+{
+	return pmic_rpc_set_only(controller, switch_hsed, current_threshold, 0,
+				 3,
+				 HSED_SET_CURRENT_THRESHOLD_PROC);
+}
+EXPORT_SYMBOL(pmic_hsed_set_current_threshold);
+
+int pmic_hsed_enable(
+	enum hsed_controller controller,
+	enum hsed_enable enable_hsed
+)
+{
+	return pmic_rpc_set_only(controller, enable_hsed, 0, 0,
+				 2,
+				 HSED_ENABLE_PROC);
+}
+EXPORT_SYMBOL(pmic_hsed_enable);
+#endif /* !defined(CONFIG_KERNEL_MOTOROLA) */

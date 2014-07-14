@@ -23,6 +23,8 @@ config ARCH_QSD8X50
 	bool "QSD8X50"
 	select ARCH_MSM_SCORPION
 	select CPU_V7
+	select EMULATE_DOMAIN_MANAGER_V7
+	select VERIFY_PERMISSION_FAULT
 
 endchoice
 
@@ -34,10 +36,43 @@ config  ARCH_MSM_SCORPION
 
 menu "MSM Board Selection"
 
+config EXPOSE_NMEA
+	depends on USB_FUNCTION_SERIAL
+	default n if KERNEL_MOTOROLA
+	bool"Expose NMEA interface over USB"
+	help
+		Expose NMEA interface over USB serial link
+
+config CUST_SOCINFO
+	default n
+	bool"Expose custom SOC info fields via the sysfs"
+	help
+		Expose custom SOC info fields via the sysfs
+
+config MACH_MOT
+	depends on ARCH_MSM
+	depends on MSM_STACKED_MEMORY
+	default y
+	bool "Motorola Morrison"
+	help
+	  Support for Motorola Morrison MSM7201 platform
+
+config MACH_CALGARY
+	depends on KERNEL_MOTOROLA
+	depends on ARCH_MSM
+	default n
+	bool "Calgary (MSM7627)"
+	
+config MACH_PITTSBURGH
+	depends on KERNEL_MOTOROLA
+	depends on ARCH_MSM
+	default n
+	bool "Pittsburgh (MSM7627)"
+	
 config MACH_HALIBUT
 	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "Halibut Board (QCT SURF7201A)"
 	help
 	  Support for the Qualcomm SURF7201A eval board.
@@ -45,7 +80,7 @@ config MACH_HALIBUT
 config MACH_MSM7201A_SURF
 	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "MSM7201A SURF"
 	help
 	  Support for the Qualcomm MSM7201A SURF eval board.
@@ -53,7 +88,7 @@ config MACH_MSM7201A_SURF
 config MACH_MSM7201A_FFA
 	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "MSM7201A FFA"
 	help
 	  Support for the Qualcomm MSM7201A FFA eval board.
@@ -61,13 +96,23 @@ config MACH_MSM7201A_FFA
 config MACH_TROUT
 	depends on ARCH_MSM7X01A
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "Trout"
+	default n if MACH_CALGARY
+	bool "Trout (HTC Dream, T-Mobile G1, Google ADP1)"
+	help
+	 Select this to support HTC Dream, T-Mobile G1, Google ADP1.
+
+config MACH_SAPPHIRE
+	depends on ARCH_MSM7X01A
+	depends on MSM_STACKED_MEMORY
+	default y
+	bool "Sapphire"
 
 config MACH_MSM7X27_SURF
 	depends on ARCH_MSM7X27
 	depends on !MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "MSM7x27 SURF"
 	help
 	  Support for the Qualcomm MSM7x27 SURF eval board.
@@ -75,7 +120,7 @@ config MACH_MSM7X27_SURF
 config MACH_MSM7X27_FFA
 	depends on ARCH_MSM7X27
 	depends on !MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "MSM7x27 FFA"
 	help
 	  Support for the Qualcomm MSM7x27 FFA eval board.
@@ -83,7 +128,7 @@ config MACH_MSM7X27_FFA
 config MACH_MSM7X30_SURF
        depends on ARCH_MSM7X30
        depends on !MSM_STACKED_MEMORY
-       default y
+       default n if KERNEL_MOTOROLA
        bool "MSM7x30 SURF"
        help
          Support for the Qualcomm MSM7x30 SURF eval board.
@@ -91,7 +136,7 @@ config MACH_MSM7X30_SURF
 config MACH_MSM7X30_FFA
        depends on ARCH_MSM7X30
        depends on !MSM_STACKED_MEMORY
-       default y
+       default n if KERNEL_MOTOROLA
        bool "MSM7x30 FFA"
        help
          Support for the Qualcomm MSM7x30 FFA eval board.
@@ -104,7 +149,7 @@ config MACH_SAPPHIRE
 config MACH_QSD8X50_SURF
 	depends on ARCH_QSD8X50
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "QSD8x50 SURF"
 	help
 	  Support for the Qualcomm QSD8x50 SURF eval board.
@@ -112,7 +157,7 @@ config MACH_QSD8X50_SURF
 config MACH_QSD8X50_FFA
 	depends on ARCH_QSD8X50
 	depends on MSM_STACKED_MEMORY
-	default y
+	default n if KERNEL_MOTOROLA
 	bool "QSD8x50 FFA"
 	help
 	  Support for the Qualcomm QSD8x50 FFA eval board.
@@ -127,6 +172,12 @@ config MACH_QSD8X50_COMET
 
 endmenu
 
+config MSM_ARM11_OC
+	bool "ARM11 Overclock"
+	default n
+	help
+	  Enable Overclocking capability for ARM11 CPUs.
+
 config MSM_STACKED_MEMORY
 	bool "Stacked Memory"
 	default y
@@ -134,27 +185,6 @@ config MSM_STACKED_MEMORY
 	  This option is used to indicate the presence of on-die stacked
 	  memory.  When present this memory bank is used for a high speed
 	  shared memory interface.  When not present regular RAM is used.
-
-config MSM_AMSS_VERSION
-	int
-	default 6210 if MSM_AMSS_VERSION_6210
-	default 6220 if MSM_AMSS_VERSION_6220
-	default 6225 if MSM_AMSS_VERSION_6225
-
-choice
-	prompt "AMSS modem firmware version"
-
-	default MSM_AMSS_VERSION_6225
-
-	config MSM_AMSS_VERSION_6210
-		bool "6.2.10"
-
-	config MSM_AMSS_VERSION_6220
-		bool "6.2.20"
-
-	config MSM_AMSS_VERSION_6225
-		bool "6.2.20 + New ADSP"
-endchoice
 
 config MSM_DEBUG_UART
 	int
@@ -179,6 +209,14 @@ choice
 	config MSM_DEBUG_UART3
 		bool "UART3"
 endchoice
+
+config CACHE_FLUSH_RANGE_LIMIT
+	hex "Cache flush range limit"
+	default 0x40000
+	help
+	  When flushing a cache range larger then this (hex) limit, flush the
+	  entire cache instead. Flushing a large range can be slower than
+	  flushing, then refilling, the entire cache.
 
 choice
 	prompt "Default Timer"
@@ -394,6 +432,14 @@ choice
 	  bool "Package 4"
 endchoice
 
+config MSM_SMD_DEBUG
+	depends on MSM_SMD
+	default y
+	bool "MSM SMD debug support"
+	help
+	  Support for debugging the SMD for communication
+	  between the ARM9 and ARM11
+
 config MSM_N_WAY_SMD
 	depends on (MSM_SMD && (ARCH_MSM_SCORPION || ARCH_MSM7X27))
 	default y
@@ -416,6 +462,52 @@ config MSM_RESET_MODEM
 	default m
 	help
 	  Allows the user to reset the modem through a device node.
+
+config MSM_SMD_LOGGING
+	depends on MSM_SMD
+	default y
+	bool "MSM Shared Memory Logger"
+	help
+	  This option exposes the shared memory logger at /dev/smem_log
+	  and a debugfs node named smem_log.
+
+	  If in doubt, say yes.
+
+config MSM_SMD_NMEA
+	bool "NMEA GPS Driver"
+	depends on MSM_SMD
+	default y
+	help
+	  Enable this to support the NMEA GPS device.
+
+	  If in doubt, say yes.
+
+config MSM_SMD_TTY
+	bool "SMD TTY Driver"
+	depends on MSM_SMD
+	default y
+	help
+	  Provides TTY interfaces to interact with the modem.
+
+	  If in doubt, say yes.
+
+config MSM_SMD_QMI
+	bool "SMD QMI Driver"
+	depends on MSM_SMD
+	default y
+	help
+	  Manages network data connections.
+
+	  If in doubt, say yes.
+
+config MSM_SMD_CTL
+	bool "SMD Control Driver"
+	depends on MSM_SMD
+	default y
+	help
+	  Provides a binary SMD non-muxed control port interface.
+
+	  If in doubt, say yes.
 
 config MSM_ONCRPCROUTER
 	depends on MSM_SMD
@@ -519,6 +611,7 @@ endif # CPU_FREQ_MSM
 
 config MSM_HW3D
 	tristate "MSM Hardware 3D Register Driver"
+	depends on ANDROID_PMEM
 	default y
 	help
 	  Provides access to registers needed by the userspace OpenGL|ES
@@ -526,9 +619,26 @@ config MSM_HW3D
 
 config MSM_ADSP
 	tristate "MSM ADSP driver"
+	depends on ANDROID_PMEM
 	default y
 	help
 	  Provides access to registers needed by the userspace aDSP library.
+
+config MSM_ADSP_REPORT_EVENTS
+	bool "Report modem events from the DSP"
+	default y
+	depends on MSM_ADSP
+	help
+	  Normally, only messages from the aDSP are reported to userspace.
+	  With this option, we report events from the aDSP as well.
+
+config MSM7KV2_AUDIO
+	bool "MSM7K v2 audio"
+	depends on (ARCH_MSM7X30 && MSM_ADSP)
+	default y
+	help
+	  Enables QDSP5V2-based audio drivers for audio playbacks and
+	  voice call.
 
 config MSM_VREG_SWITCH_INVERTED
 	bool "Reverse vreg switch polarity"
@@ -556,7 +666,7 @@ config WIFI_MEM_PREALLOC
 
 config QSD_AUDIO
 	bool "QSD audio"
-	depends on (ARCH_MSM_SCORPION && MSM_DALRPC)
+	depends on ARCH_MSM_SCORPION && MSM_DALRPC && ANDROID_PMEM
 	default y
 	help
 	  Provides PCM, MP3, and AAC audio playback.
@@ -606,5 +716,35 @@ config MSM_SLEEP_TIME_OVERRIDE
 	  in units of seconds, it overwrites the normal sleep time of
 	  suspend. The feature is required for automated power management
 	  testing.
+
+config PUPD
+        depends on MSM_SMD
+        default y
+	tristate "Power up reason"
+        help
+          This is required to write powerup reason to /proc/powerup_info.
+
+config MOT_PANIC
+	default y if MACH_MOT
+	bool "Motorola Morrison/Motus/Zeppelin"
+	help
+	  For logging BP panic data.
+
+choice
+	prompt "Power management timeout action"
+	default MSM_PM_TIMEOUT_HALT
+	help
+	  Selects the Application Processor's action when Power Management
+	  times out waiting for Modem's handshake.
+
+	config MSM_PM_TIMEOUT_HALT
+		bool "Halt the Application Processor"
+
+	config MSM_PM_TIMEOUT_RESET_MODEM
+		bool "Reset the Modem Processor"
+
+	config MSM_PM_TIMEOUT_RESET_CHIP
+		bool "Reset the entire chip"
+endchoice
 
 endif

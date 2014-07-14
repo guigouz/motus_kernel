@@ -76,6 +76,10 @@
 #include "mdp.h"
 #include "msm_fb.h"
 
+#if defined(CONFIG_KERNEL_MOTOROLA)
+static uint8 dma_s_use_cpu = 1;
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+
 static void mdp_dma_s_update_lcd(struct msm_fb_data_type *mfd)
 {
 	MDPIBUF *iBuf = &mfd->ibuf;
@@ -116,14 +120,15 @@ static void mdp_dma_s_update_lcd(struct msm_fb_data_type *mfd)
 	dma_s_cfg_reg |= DMA_DITHER_EN;
 
 	src = (uint8 *) iBuf->buf;
-	src += (iBuf->dma_x + iBuf->dma_y * iBuf->ibuf_width) * outBpp;	//starting input address
+	/* starting input address */
+	src += (iBuf->dma_x + iBuf->dma_y * iBuf->ibuf_width) * outBpp;
 
-	//MDP cmd block enable
+	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
-
-	MDP_OUTP(MDP_BASE + 0xa0004, (iBuf->dma_h << 16 | iBuf->dma_w));	//PIXELSIZE
-	MDP_OUTP(MDP_BASE + 0xa0008, src);	//ibuf address
-	MDP_OUTP(MDP_BASE + 0xa000c, iBuf->ibuf_width * outBpp);	//ystride
+	/* PIXELSIZE */
+	MDP_OUTP(MDP_BASE + 0xa0004, (iBuf->dma_h << 16 | iBuf->dma_w));
+	MDP_OUTP(MDP_BASE + 0xa0008, src);	/* ibuf address */
+	MDP_OUTP(MDP_BASE + 0xa000c, iBuf->ibuf_width * outBpp);/* ystride */
 
 	if (mfd->panel_info.bpp == 18) {
 		dma_s_cfg_reg |= DMA_DSTC0G_6BITS |	/* 666 18BPP */
@@ -140,14 +145,18 @@ static void mdp_dma_s_update_lcd(struct msm_fb_data_type *mfd)
 				(MDDI_VDO_PACKET_DESC << 16) |
 				mfd->panel_info.mddi.vdopkt);
 	} else {
-		// setting LCDC write window
+		/* setting LCDC write window */
 		pdata->set_rect(iBuf->dma_x, iBuf->dma_y, iBuf->dma_w,
+#if defined(CONFIG_KERNEL_MOTOROLA)
+				iBuf->dma_h, (dma_s_use_cpu ? mfd->fbi->screen_base : NULL));
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
 				iBuf->dma_h);
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 	}
 
 	MDP_OUTP(MDP_BASE + 0xa0000, dma_s_cfg_reg);
 
-	// MDP cmd block disable
+	/* MDP cmd block disable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 	mdp_pipe_kickoff(MDP_DMA_S_TERM, mfd);
 }
@@ -156,18 +165,19 @@ void mdp_dma_s_update(struct msm_fb_data_type *mfd)
 {
 	down(&mfd->dma->mutex);
 	if ((mfd) && (!mfd->dma->busy) && (mfd->panel_power_on)) {
+		down(&mfd->sem);
+		mdp_enable_irq(MDP_DMA_S_TERM);
 		mfd->dma->busy = TRUE;
 		INIT_COMPLETION(mfd->dma->comp);
-
-		down(&mfd->sem);
 		mfd->ibuf_flushed = TRUE;
 		mdp_dma_s_update_lcd(mfd);
 		up(&mfd->sem);
 
-		// wait until DMA finishes the current job
+		/* wait until DMA finishes the current job */
 		wait_for_completion_killable(&mfd->dma->comp);
+		mdp_disable_irq(MDP_DMA_S_TERM);
 
-		// signal if pan function is waiting for the update completion
+	/* signal if pan function is waiting for the update completion */
 		if (mfd->pan_waiting) {
 			mfd->pan_waiting = FALSE;
 			complete(&mfd->pan_comp);

@@ -57,47 +57,56 @@
 
 #include "mdp.h"
 
-//mdp primary csc limit vector
+/* mdp primary csc limit vector */
 uint32 mdp_plv[] = { 0x10, 0xeb, 0x10, 0xf0 };
 
-// Color Coefficient matrix for YUV -> RGB
-MDP_CCS_TYPE mdp_ccs_yuv2rgb = {
-	0x254,			//0
-	0x000,			//1
-	0x331,			//2
-	0x254,			//3
-	0xff38,			//4
-	0xfe61,			//5
-	0x254,			//6
-	0x409,			//7
-	0x000,			//8
-
+/* Color Coefficient matrix for YUV -> RGB */
+struct mdp_ccs mdp_ccs_yuv2rgb = {
+	MDP_CCS_YUV2RGB,
+	{
+		0x254,
+		0x000,
+		0x331,
+		0x254,
+		0xff38,
+		0xfe61,
+		0x254,
+		0x409,
+		0x000,
+	},
+	{
 #ifdef CONFIG_FB_MSM_MDP31
-	0x1f0,			//9
-	0x180,			//10
-	0x180			//11
+		0x1f0,
+		0x180,
+		0x180
 #else
-	0x10,			//9
-	0x80,			//10
-	0x80			//11
+		0x10,
+		0x80,
+		0x80
 #endif
+	}
 };
 
-// Color Coefficient matrix for RGB -> YUV
-MDP_CCS_TYPE mdp_ccs_rgb2yuv = {
-	0x83,
-	0x102,
-	0x32,
-	0xffb5,
-	0xff6c,
-	0xe1,
-	0xe1,
-	0xff45,
-	0xffdc,
+/* Color Coefficient matrix for RGB -> YUV */
+struct mdp_ccs mdp_ccs_rgb2yuv = {
+	MDP_CCS_RGB2YUV,
+	{
+		0x83,
+		0x102,
+		0x32,
+		0xffb5,
+		0xff6c,
+		0xe1,
+		0xe1,
+		0xff45,
+		0xffdc,
+	},
 #ifdef CONFIG_FB_MSM_MDP31
-	0x10,
-	0x80,
-	0x80
+	{
+		0x10,
+		0x80,
+		0x80
+	}
 #endif
 };
 
@@ -621,10 +630,12 @@ static void mdp_load_lut_param(void)
 
 void mdp_hw_init(void)
 {
-	// MDP cmd block enable
+	int i;
+
+	/* MDP cmd block enable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_ON, FALSE);
 
-	// debug interface write access
+	/* debug interface write access */
 	outpdw(MDP_BASE + 0x60, 1);
 
 	outp32(MDP_INTR_ENABLE, MDP_ANY_INTR_MASK);
@@ -634,13 +645,17 @@ void mdp_hw_init(void)
 	outpdw(MDP_BASE + 0x60, 0x1);
 	mdp_load_lut_param();
 
-	///////////////////////////////////
-	// clear up unused fg/main registers
-	///////////////////////////////////
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0120, 0x0);	//comp.plane 2&3 ystride
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x012c, 0x0);	//unpacked pattern
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0130, 0x0);	//unpacked pattern
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0134, 0x0);	//unpacked pattern
+	/*
+	 * clear up unused fg/main registers
+	 */
+	/* comp.plane 2&3 ystride */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0120, 0x0);
+	/* unpacked pattern */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x012c, 0x0);
+	/* unpacked pattern */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0130, 0x0);
+	/* unpacked pattern */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0134, 0x0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0158, 0x0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x15c, 0x0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0160, 0x0);
@@ -648,10 +663,12 @@ void mdp_hw_init(void)
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0174, 0x0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x017c, 0x0);
 
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0114, 0x0);	//comp.plane 2
-	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0118, 0x0);	//comp.plane 3
+	/* comp.plane 2 */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0114, 0x0);
+	/* comp.plane 3 */
+	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x0118, 0x0);
 
-	// clear up unused bg registers
+	/* clear up unused bg registers */
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x01c8, 0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x01d0, 0);
 	MDP_OUTP(MDP_CMD_DEBUG_ACCESS_BASE + 0x01dc, 0);
@@ -666,11 +683,11 @@ void mdp_hw_init(void)
 	MDP_OUTP(MDP_BASE + 0x9401c, 2);
 #endif
 
-	//
-	// limit vector
-	// pre gets applied before color matrix conversion
-	// post is after ccs
-	//
+	/*
+	 * limit vector
+	 * pre gets applied before color matrix conversion
+	 * post is after ccs
+	 */
 	writel(mdp_plv[0], MDP_CSC_PRE_LV1n(0));
 	writel(mdp_plv[1], MDP_CSC_PRE_LV1n(1));
 	writel(mdp_plv[2], MDP_CSC_PRE_LV1n(2));
@@ -702,42 +719,24 @@ void mdp_hw_init(void)
 	writel(mdp_plv[3], MDP_CSC_POST_LV2n(5));
 #endif
 
-	// primary forward matrix
-	//
-	writel(mdp_ccs_rgb2yuv.ccs1, MDP_CSC_PFMVn(0));
-	writel(mdp_ccs_rgb2yuv.ccs2, MDP_CSC_PFMVn(1));
-	writel(mdp_ccs_rgb2yuv.ccs3, MDP_CSC_PFMVn(2));
-	writel(mdp_ccs_rgb2yuv.ccs4, MDP_CSC_PFMVn(3));
-	writel(mdp_ccs_rgb2yuv.ccs5, MDP_CSC_PFMVn(4));
-	writel(mdp_ccs_rgb2yuv.ccs6, MDP_CSC_PFMVn(5));
-	writel(mdp_ccs_rgb2yuv.ccs7, MDP_CSC_PFMVn(6));
-	writel(mdp_ccs_rgb2yuv.ccs8, MDP_CSC_PFMVn(7));
-	writel(mdp_ccs_rgb2yuv.ccs9, MDP_CSC_PFMVn(8));
+	/* primary forward matrix */
+	for (i = 0; i < MDP_CCS_SIZE; i++)
+		writel(mdp_ccs_rgb2yuv.ccs[i], MDP_CSC_PFMVn(i));
 
 #ifdef CONFIG_FB_MSM_MDP31
-	writel(mdp_ccs_rgb2yuv.ccs10, MDP_CSC_POST_BV2n(0));
-	writel(mdp_ccs_rgb2yuv.ccs11, MDP_CSC_POST_BV2n(1));
-	writel(mdp_ccs_rgb2yuv.ccs12, MDP_CSC_POST_BV2n(2));
+	for (i = 0; i < MDP_BV_SIZE; i++)
+		writel(mdp_ccs_rgb2yuv.bv[i], MDP_CSC_POST_BV2n(i));
 
 	writel(0, MDP_CSC_PRE_BV2n(0));
 	writel(0, MDP_CSC_PRE_BV2n(1));
 	writel(0, MDP_CSC_PRE_BV2n(2));
 #endif
-	// primary reverse matrix
-	//
-	writel(mdp_ccs_yuv2rgb.ccs1, MDP_CSC_PRMVn(0));
-	writel(mdp_ccs_yuv2rgb.ccs2, MDP_CSC_PRMVn(1));
-	writel(mdp_ccs_yuv2rgb.ccs3, MDP_CSC_PRMVn(2));
-	writel(mdp_ccs_yuv2rgb.ccs4, MDP_CSC_PRMVn(3));
-	writel(mdp_ccs_yuv2rgb.ccs5, MDP_CSC_PRMVn(4));
-	writel(mdp_ccs_yuv2rgb.ccs6, MDP_CSC_PRMVn(5));
-	writel(mdp_ccs_yuv2rgb.ccs7, MDP_CSC_PRMVn(6));
-	writel(mdp_ccs_yuv2rgb.ccs8, MDP_CSC_PRMVn(7));
-	writel(mdp_ccs_yuv2rgb.ccs9, MDP_CSC_PRMVn(8));
+	/* primary reverse matrix */
+	for (i = 0; i < MDP_CCS_SIZE; i++)
+		writel(mdp_ccs_yuv2rgb.ccs[i], MDP_CSC_PRMVn(i));
 
-	writel(mdp_ccs_yuv2rgb.ccs10, MDP_CSC_PRE_BV1n(0));
-	writel(mdp_ccs_yuv2rgb.ccs11, MDP_CSC_PRE_BV1n(1));
-	writel(mdp_ccs_yuv2rgb.ccs12, MDP_CSC_PRE_BV1n(2));
+	for (i = 0; i < MDP_BV_SIZE; i++)
+		writel(mdp_ccs_yuv2rgb.bv[i], MDP_CSC_PRE_BV1n(i));
 
 #ifdef CONFIG_FB_MSM_MDP31
 	writel(0, MDP_CSC_POST_BV1n(0));
@@ -756,6 +755,6 @@ void mdp_hw_init(void)
 		 ((16 << 6) << 16) | (16) << 6);
 #endif
 
-	// MDP cmd block disable
+	/* MDP cmd block disable */
 	mdp_pipe_ctrl(MDP_CMD_BLOCK, MDP_BLOCK_POWER_OFF, FALSE);
 }

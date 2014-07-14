@@ -14,6 +14,9 @@
 #ifndef __ARCH_ARM_MACH_MSM_OTG_H
 #define __ARCH_ARM_MACH_MSM_OTG_H
 
+#include <linux/workqueue.h>
+#include <linux/wakelock.h>
+
 /*
  * The otg driver needs to interact with both device side and host side
  * usb controllers.  it decides which controller is active at a given
@@ -34,6 +37,7 @@ struct msm_otg_transceiver {
 	void __iomem		*regs;		/* device memory/io */
 	struct work_struct	work;
 	spinlock_t		lock;
+	struct wake_lock	wlock;
 
 	/* bind/unbind the host controller */
 	int	(*set_host)(struct msm_otg_transceiver *otg,
@@ -47,7 +51,8 @@ struct msm_otg_transceiver {
 };
 
 struct msm_otg_ops {
-	void		(*status_change)(int);
+	void		(*request)(void *, int);
+	void		*handle;
 };
 
 /* for usb host and peripheral controller drivers */

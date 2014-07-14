@@ -67,12 +67,17 @@ struct adsp_module_info {
 };
 
 #define ADSP_EVENT_MAX_SIZE 496
-
+#define EVENT_LEN       12
+#ifdef CONFIG_MACH_MOT
+#define	EVENT_MSG_ID	(~0)
+#else
+#define EVENT_MSG_ID ((uint16_t)~0)
+#endif
 struct adsp_event {
 	struct list_head list;
 	uint32_t size; /* always in bytes */
-	unsigned msg_id;
-	uint16_t type; /* 0 for msgs (from aDSP), 1 for events (from ARM9) */
+	uint16_t msg_id;
+	uint16_t type; /* 0 for msgs (from aDSP), -1 for events (from ARM9) */
 	int is16; /* always 0 (msg is 32-bit) when the event type is 1(ARM9) */
 	union {
 		uint16_t msg16[ADSP_EVENT_MAX_SIZE / 2];
@@ -120,9 +125,10 @@ struct adsp_info {
 #define RPC_ADSP_RTOS_MTOA_NULL_PROC 0
 #define RPC_ADSP_RTOS_APP_TO_MODEM_PROC 2
 #define RPC_ADSP_RTOS_MODEM_TO_APP_PROC 2
+#ifndef CONFIG_MACH_MOT
 #define RPC_ADSP_RTOS_MTOA_EVENT_INFO_PROC 3
 #define RPC_ADSP_RTOS_MTOA_INIT_INFO_PROC 4
-
+#endif
 enum rpc_adsp_rtos_proc_type {
 	RPC_ADSP_RTOS_PROC_NONE = 0,
 	RPC_ADSP_RTOS_PROC_MODEM = 1,
@@ -170,9 +176,6 @@ enum qdsp_image_type {
 	QDSP_IMAGE_32BIT_DUMMY = 0x10000
 };
 
-#define	EVENT_LEN	12
-#define	EVENT_MSG_ID	(~0)
-
 struct adsp_rtos_mp_mtoa_header_type {
 	enum rpc_adsp_rtos_mod_status_type  event;
 	enum rpc_adsp_rtos_proc_type        proc_id;
@@ -186,8 +189,13 @@ struct adsp_rtos_mp_mtoa_type {
 };
 
 /* ADSP RTOS MP Communications - Modem to APP's Init Info  */
+#ifdef CONFIG_MACH_MOT
+#define IMG_MAX         6
+#define ENTRIES_MAX     48
+#else
 #define IMG_MAX         2
 #define ENTRIES_MAX     36
+#endif
 #define MODULES_MAX     64
 
 struct queue_to_offset_type {
@@ -209,7 +217,11 @@ struct adsp_rtos_mp_mtoa_init_info_type {
 	uint32_t	task_to_module_tbl[IMG_MAX][ENTRIES_MAX];
 
 	uint32_t	module_table_size;
+#ifdef CONFIG_MACH_MOT
+	uint32_t	module_entries[ENTRIES_MAX];
+#else
 	uint32_t	module_entries[MODULES_MAX];
+#endif
 	uint32_t	mod_to_q_entries;
 	struct mod_to_queue_offsets	mod_to_q_tbl[ENTRIES_MAX];
 	/*
@@ -220,7 +232,9 @@ struct adsp_rtos_mp_mtoa_init_info_type {
 
 struct adsp_rtos_mp_mtoa_s_type {
 	struct adsp_rtos_mp_mtoa_header_type mp_mtoa_header;
-
+#ifdef CONFIG_MACH_MOT
+	uint32_t desc_field;
+#endif
 	union {
 		struct adsp_rtos_mp_mtoa_init_info_type mp_mtoa_init_packet;
 		struct adsp_rtos_mp_mtoa_type mp_mtoa_packet;
@@ -270,6 +284,7 @@ struct msm_adsp_module {
 extern void msm_adsp_publish_cdevs(struct msm_adsp_module *, unsigned);
 extern int adsp_init_info(struct adsp_info *info);
 
+#ifdef CONFIG_MACH_MOT
 /* Command Queue Indexes */
 #define QDSP_lpmCommandQueue              0
 #define QDSP_mpuAfeQueue                  1
@@ -299,12 +314,9 @@ extern int adsp_init_info(struct adsp_info *info);
 #define QDSP_vfeCommandQueue              25
 #define QDSP_vfeCommandScaleQueue         26
 #define QDSP_vfeCommandTableQueue         27
-#define QDSP_vfeFtmCmdQueue               28
-#define QDSP_vfeFtmCmdScaleQueue          29
-#define QDSP_vfeFtmCmdTableQueue          30
-#define QDSP_uPJpegFtmCfgCmdQueue         31
-#define QDSP_uPJpegFtmActionCmdQueue      32
-#define QDSP_MAX_NUM_QUEUES               33
+#define QDSP_MAX_NUM_QUEUES               28
+
+#endif
 
 /* Value to indicate that a queue is not defined for a particular image */
 #define QDSP_RTOS_NO_QUEUE  0xfffffffe

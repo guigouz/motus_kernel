@@ -24,7 +24,6 @@
 #include <linux/ioport.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/vmalloc.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/timer.h>
@@ -60,6 +59,7 @@
  * providing early devices for those host controllers to talk to!
  */
 
+#define DRIVER_VERSION "10 Dec 2004"
 #define DRIVER_AUTHOR "David Brownell"
 #define DRIVER_DESC "USB 2.0 'Enhanced' Host Controller (EHCI) Driver"
 
@@ -467,7 +467,6 @@ static int ehci_init(struct usb_hcd *hcd)
 	 * periodic_size can shrink by USBCMD update if hcc_params allows.
 	 */
 	ehci->periodic_size = DEFAULT_I_TDPS;
-	INIT_LIST_HEAD(&ehci->cached_itd_list);
 	if ((retval = ehci_mem_init(ehci, GFP_KERNEL)) < 0)
 		return retval;
 
@@ -480,7 +479,6 @@ static int ehci_init(struct usb_hcd *hcd)
 
 	ehci->reclaim = NULL;
 	ehci->next_uframe = -1;
-	ehci->clock_frame = -1;
 
 	/*
 	 * dedicate a qh for the async ring head, since we couldn't unlink
@@ -528,6 +526,96 @@ static int ehci_init(struct usb_hcd *hcd)
 		}
 	}
 	ehci->command = temp;
+
+	return 0;
+}
+
+/* start HC running; it's halted, ehci_init() has been run (once) */
+static int ehci_run (struct usb_hcd *hcd)
+{
+	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
+	int			retval;
+	u32			temp;
+	u32			hcc_params;
+
+	hcd->uses_new_polling = 1;
+	hcd->poll_rh = 0;
+
+	/* EHCI spec section 4.1 */
+	if ((retval = ehci_reset(ehci)) != 0) {
+		ehci_mem_cleanup(ehci);
+		return retval;
+	}
+	ehci_writel(ehci, ehci->periodic_dma, &ehci->regs->frame_list);
+	ehci_writel(ehci, (u32)ehci->async->qh_dma, &ehci->regs->async_next);
+
+	/*
+	 * hcc_params controls whether ehci->regs->segment must (!!!)
+	 * be used; it constrains QH/ITD/SITD and QTD locations.
+	 * pci_pool consistent memory always uses segment zero.
+	 * streaming mappings for I/O buffers, like pci_map_single(),
+	 * can return segments above 4GB, if the device allows.
+	 *
+	 * NOTE:  the dma mask is visible through dma_supported(), so
+	 * drivers can pass this info along ... like NETIF_F_HIGHDMA,
+	 * Scsi_Host.highmem_io, and so forth.  It's readonly to all
+	 * host side drivers though.
+	 */
+	hcc_params = ehci_readl(ehci, &ehci->caps->hcc_params);
+	if (HCC_64BIT_ADDR(hcc_params)) {
+		ehci_writel(ehci, 0, &ehci->regs->segment);
+#if 0
+// this is deeply broken on almost all architectures
+		if (!dma_set_mask(hcd->self.controller, DMA_64BIT_MASK))
+			ehci_info(ehci, "enabled 64bit DMA\n");
+#endif
+	}
+
+
+	// Philips, Intel, and maybe others need CMD_RUN before the
+	// root hub will detect new devices (why?); NEC doesn't
+	ehci->command &= ~(CMD_LRESET|CMD_IAAD|CMD_PSE|CMD_ASE|CMD_RESET);
+	ehci->command |= CMD_RUN;
+	ehci_writel(ehci, ehci->command, &ehci->regs->command);
+	dbg_cmd (ehci, "init", ehci->command);
+
+	/*
+	 * Start, enabling full USB 2.0 functionality ... usb 1.1 devices
+	 * are explicitly handed to companion controller(s), so no TT is
+	 * involved with the root hub.  (Except where one is integrated,
+	 * and there's no companion controller unless maybe for USB OTG.)
+	 *
+	 * Turning on the CF flag will transfer ownership of all ports
+	 * from the companions to the EHCI controller.  If any of the
+	 * companions are in the middle of a port reset at the time, it
+	 * could cause trouble.  Write-locking ehci_cf_port_reset_rwsem
+	 * guarantees that no resets are in progress.  After we set CF,
+	 * a short delay lets the hardware catch up; new resets shouldn't
+	 * be started before the port switching actions could complete.
+	 */
+	down_write(&ehci_cf_port_reset_rwsem);
+	hcd->state = HC_STATE_RUNNING;
+	ehci_writel(ehci, FLAG_CF, &ehci->regs->configured_flag);
+	ehci_readl(ehci, &ehci->regs->command);	/* unblock posted writes */
+	msleep(5);
+	up_write(&ehci_cf_port_reset_rwsem);
+
+	temp = HC_VERSION(ehci_readl(ehci, &ehci->caps->hc_capbase));
+	ehci_info (ehci,
+		"USB %x.%x started, EHCI %x.%02x, driver %s%s\n",
+		((ehci->sbrn & 0xf0)>>4), (ehci->sbrn & 0x0f),
+		temp >> 8, temp & 0xff, DRIVER_VERSION,
+		ignore_oc ? ", overcurrent ignored" : "");
+
+	ehci_writel(ehci, INTR_MASK,
+		    &ehci->regs->intr_enable); /* Turn On Interrupts */
+
+	/* GRR this is run-once init(), being done every time the HC starts.
+	 * So long as they're part of class devices, we can't do it init()
+	 * since the class device isn't created that early.
+	 */
+	create_debug_files(ehci);
+	create_companion_file(ehci);
 
 	return 0;
 }
@@ -600,7 +688,7 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 		pcd_status = status;
 
 		/* resume root hub? */
-		if (!(cmd & CMD_RUN))
+		if (!(ehci_readl(ehci, &ehci->regs->command) & CMD_RUN))
 			usb_hcd_resume_root_hub(hcd);
 
 		while (i--) {
@@ -609,11 +697,8 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 
 			if (pstatus & PORT_OWNER)
 				continue;
-			if (!(test_bit(i, &ehci->suspended_ports) &&
-					((pstatus & PORT_RESUME) ||
-						!(pstatus & PORT_SUSPEND)) &&
-					(pstatus & PORT_PE) &&
-					ehci->reset_done[i] == 0))
+			if (!(pstatus & PORT_RESUME)
+					|| ehci->reset_done [i] != 0)
 				continue;
 
 			/* start 20 msec resume signaling from this port,
@@ -623,14 +708,18 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 			ehci->reset_done [i] = jiffies + msecs_to_jiffies (20);
 			ehci_dbg (ehci, "port %d remote wakeup\n", i + 1);
 			mod_timer(&hcd->rh_timer, ehci->reset_done[i]);
+#ifdef CONFIG_HAS_WAKELOCK
+			wake_lock_timeout(&ehci->wake_lock_ehci_rwu, HZ/2);
+#endif
 		}
 	}
 
 	/* PCI errors [4.15.2.4] */
 	if (unlikely ((status & STS_FATAL) != 0)) {
 		ehci_err(ehci, "fatal error\n");
-		dbg_cmd(ehci, "fatal", cmd);
-		dbg_status(ehci, "fatal", status);
+		dbg_cmd (ehci, "fatal", ehci_readl(ehci,
+						   &ehci->regs->command));
+		dbg_status (ehci, "fatal", status);
 		ehci_halt(ehci);
 dead:
 		ehci_reset(ehci);
@@ -889,7 +978,9 @@ static int ehci_get_frame (struct usb_hcd *hcd)
 
 /*-------------------------------------------------------------------------*/
 
-MODULE_DESCRIPTION(DRIVER_DESC);
+#define DRIVER_INFO DRIVER_VERSION " " DRIVER_DESC
+
+MODULE_DESCRIPTION (DRIVER_INFO);
 MODULE_AUTHOR (DRIVER_AUTHOR);
 MODULE_LICENSE ("GPL");
 
@@ -908,9 +999,19 @@ MODULE_LICENSE ("GPL");
 #define	PLATFORM_DRIVER		ehci_hcd_au1xxx_driver
 #endif
 
+#ifdef CONFIG_ARCH_OMAP34XX
+#include "ehci-omap.c"
+#define	PLATFORM_DRIVER		ehci_hcd_omap_driver
+#endif
+
 #ifdef CONFIG_PPC_PS3
 #include "ehci-ps3.c"
 #define	PS3_SYSTEM_BUS_DRIVER	ps3_ehci_driver
+#endif
+
+#if defined(CONFIG_440EPX) && !defined(CONFIG_PPC_MERGE)
+#include "ehci-ppc-soc.c"
+#define	PLATFORM_DRIVER		ehci_ppc_soc_driver
 #endif
 
 #ifdef CONFIG_USB_EHCI_HCD_PPC_OF
@@ -942,10 +1043,6 @@ static int __init ehci_hcd_init(void)
 {
 	int retval = 0;
 
-	if (usb_disabled())
-		return -ENODEV;
-
-	printk(KERN_INFO "%s: " DRIVER_DESC "\n", hcd_name);
 	set_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 	if (test_bit(USB_UHCI_LOADED, &usb_hcds_loaded) ||
 			test_bit(USB_OHCI_LOADED, &usb_hcds_loaded))

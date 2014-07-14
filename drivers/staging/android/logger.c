@@ -24,14 +24,16 @@
 #include <linux/uaccess.h>
 #include <linux/poll.h>
 #include <linux/time.h>
-#include <linux/kobject.h>
-#include <linux/spinlock.h>
-
-#include <asm/ioctls.h>
-#include <asm/atomic.h>
-
+#ifdef CONFIG_LTT_LITE
+#include <linux/lttlite-events.h>
+#endif
 #include "logger.h"
 
+#include <asm/ioctls.h>
+#define KERNEL_LOG
+#ifdef KERNEL_LOG
+#include <linux/console.h>
+#endif
 /*
  * struct logger_log - represents a specific log, such as 'main' or 'radio'
  *
@@ -69,52 +71,16 @@ struct logger_reader {
 	size_t			r_off;	/* current read head offset */
 };
 
-/*
- * struct logger_tag - a tag element based on a character string that allows
- * fine grained control of logging.
- */
-
-struct logger_tag {
-	struct logger_log	*log;	/* associated log */
-	struct list_head	list;	/* entry in logger_log's list */
-	atomic_t		priority;
-	atomic_t		enabled;
-	struct kobject		kobj;
-	/* next element must be last in struct because it is dynamic length */
-	char			name[0]; /* must be last in struct */
+#ifdef KERNEL_LOG
+static void logger_kernel_write(struct console *co, const char *s, unsigned count);
+static struct console loggercons = {
+    name:	"logger",
+    write:	logger_kernel_write,
+    flags:	CON_ENABLED,
+    index:	-1,
 };
-#define to_tag(t) container_of(t, struct logger_tag, kobj)
-
-static struct kset *logger_kset;
-
-unsigned char logger_default_priority = LOG_PRIORITY_VERBOSE;
-EXPORT_SYMBOL(logger_default_priority);
-
-int logger_default_enabled = 1;
-EXPORT_SYMBOL(logger_default_enabled);
-
-MODULE_PARM_DESC(default_priority,
-	"Set initial default logging message priority for all entities");
-
-MODULE_PARM_DESC(default_enabled,
-	"Set initial default enabled state for all entities");
-
-module_param_named(default_priority,
-		logger_default_priority,
-		byte,
-		S_IRUGO | S_IWUSR);
-module_param_named(default_enabled,
-		logger_default_enabled,
-		bool,
-		S_IRUGO | S_IWUSR);
-
-#define DEV_NAME "logger"
-
-#define LOGGER_ATTR(_name, _mode, _show, _store) {            \
-	.attr = {.name = __stringify(_name), .mode = _mode }, \
-	.show = _show,                                        \
-	.store = _store,                                      \
-}
+#endif
+int Filter_Mot_Log_Enable = 1;
 
 /* logger_offset - returns index 'n' into the log via (optimized) modulus */
 #define logger_offset(n)	((n) & (log->size - 1))
@@ -528,6 +494,7 @@ static void do_write_log(struct logger_log *log, const void *buf, size_t count)
 		memcpy(log->buffer, buf + len, count - len);
 
 	log->w_off = logger_offset(log->w_off + count);
+	
 }
 
 static int write_log_entry_events(struct logger_log * const log,
@@ -581,8 +548,23 @@ static int write_log_entry_mainradio(struct logger_log * const log,
 		const int msg_bytes)
 {
 	struct timespec now;
-	struct logger_entry header;
-	unsigned long flags;
+	ssize_t ret = 0;
+
+#ifdef CONFIG_LTT_LITE
+#ifdef CONFIG_LTT_LITE_ANDROID_LOG
+	/*
+	 * If LTT-lite logging for Android messages is enabled, the LTT Lite
+	 * driver will aggregate the Android log message with LTT-lite kernel
+	 * trace data.
+	 * The 5th character of the log name is an indicator of a specific
+	 * Android log, stream, each of which has a different payload format
+	 * and must be differentiated.
+	 */
+	if (ltt_lite_log_android(iov, nr_segs, log->misc.name[4]))
+		return 0;
+#endif
+#endif
+	now = current_kernel_time();
 
 	/*
 	 * pid and tid may or may not be meaningful or relevant depending
@@ -615,9 +597,22 @@ static int write_log_entry_mainradio(struct logger_log * const log,
 
 	do_write_log(log, tag, tag_bytes);
 
-	do_write_log(log, msg, msg_bytes);
-
-	spin_unlock_irqrestore(&log->bufflock, flags);
+		iov++;
+		ret += nr;
+	}
+	if (Filter_Mot_Log_Enable) {
+		size_t len = 0;
+		len = sizeof(struct logger_entry) + 1;
+		if ((*(log->buffer+logger_offset(orig+len)) == 'M')
+		&& (*(log->buffer+logger_offset(orig+len+1)) == 'O')
+		&& (*(log->buffer+logger_offset(orig+len+2)) == 'T')
+		&& (*(log->buffer+logger_offset(orig+len+3)) == '_')) {
+			log->w_off = orig;
+			mutex_unlock(&log->mutex);
+			return ret;
+		}
+	}
+	mutex_unlock(&log->mutex);
 
 	/* wake up any blocked readers */
 	wake_up_interruptible(&log->wq);
@@ -823,8 +818,8 @@ static unsigned int logger_poll(struct file * const file,
 	spin_lock_irqsave(&log->bufflock, flags);
 	if (log->w_off != reader->r_off)
 		ret |= POLLIN | POLLRDNORM;
-	spin_unlock_irqrestore(&log->bufflock, flags);
-
+	mutex_unlock(&log->mutex);
+	
 	return ret;
 }
 
@@ -881,6 +876,15 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		flush_log(log);
 		ret = 0;
 		break;
+	case LOGGER_FILTER_MOT_LOG_ENABLE:
+		Filter_Mot_Log_Enable = 1;
+		ret = 0;
+		break;
+	case LOGGER_FILTER_MOT_LOG_DISABLE:
+		Filter_Mot_Log_Enable = 0;
+		ret = 0;
+		break;
+
 	}
 
 	spin_unlock_irqrestore(&log->bufflock, flags);
@@ -1064,9 +1068,117 @@ static struct logger_log VAR = { \
 	.tags = LIST_HEAD_INIT(VAR .tags), \
 };
 
-DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 64*1024)
+/* Motorola - BEGIN - wqnt78 - 11/20/2009 - IKMAP-2360 */
+/* Increase logcat buffer size */
+DEFINE_LOGGER_DEVICE(log_main, LOGGER_LOG_MAIN, 256*1024)
+/* Motorola - END - wqnt78 - 11/20/2009 - IKMAP-2360 */
 DEFINE_LOGGER_DEVICE(log_events, LOGGER_LOG_EVENTS, 256*1024)
 DEFINE_LOGGER_DEVICE(log_radio, LOGGER_LOG_RADIO, 64*1024)
+DEFINE_LOGGER_DEVICE(log_system, LOGGER_LOG_SYSTEM, 64*1024)
+
+#ifdef KERNEL_LOG
+static struct file_operations kernel_logger_fops = {
+        .owner = THIS_MODULE,
+        .read = logger_read,
+//      	.aio_write = logger_kernel_write,
+        .poll = logger_poll,
+        .unlocked_ioctl = logger_ioctl,
+        .compat_ioctl = logger_ioctl,
+        .open = logger_open,
+        .release = logger_release,
+};
+
+
+static unsigned char _buf_log_kernel[64*1024];
+
+static struct logger_log log_kernel = {
+        .buffer = _buf_log_kernel,
+        .misc ={
+                .minor =MISC_DYNAMIC_MINOR,
+                .name = "log_kernel",
+                .fops = & kernel_logger_fops,
+                .parent = NULL,
+        },
+        .wq = __WAIT_QUEUE_HEAD_INITIALIZER(log_kernel.wq),
+        .readers = LIST_HEAD_INIT(log_kernel.readers),
+        .mutex = __MUTEX_INITIALIZER(log_kernel.mutex),
+        .w_off = 0,
+        .head = 0,
+        .size = 64*1024,
+};
+
+
+static void logger_kernel_write(struct console *co, const char *s, unsigned count)
+{
+        struct logger_entry header;
+        struct timespec now;
+        struct logger_log *log= &log_kernel;
+        unsigned int msg_len;
+        int prio=3;
+        struct iovec vec[3];
+        struct iovec *iov;
+        int vec_count=3;
+        ssize_t ret = 0;
+        const char tag[7] ="kernel\0";
+	iov=&vec[0];
+	/* since s is a pointer to LOG_BUF and we know LOG_BUF is continuous, s[-3]='<', s[-2] is the log level and s[-1]='>'.If not, we set loglevel as default value 0*/
+	/*switch (s[-2]) {
+		case '0': prio=3;break;
+		case '1': prio=3;break;
+		case '2': prio=3;break;
+		case '3': prio=6;break;
+		case '4': prio=5;break;
+		case '5': prio=4;break;
+		case '6': prio=4;break;
+		case '7': prio=3;break;
+		default:  prio=3;	
+	}*/
+        vec[0].iov_base = (unsigned char *) &prio;
+        vec[0].iov_len  = 1;
+        vec[1].iov_base = (void *)tag;
+        vec[1].iov_len = strlen(tag) + 1;
+        vec[2].iov_base = (void *)s;
+        vec[2].iov_len  = count;
+        msg_len= vec[0].iov_len+vec[1].iov_len+vec[2].iov_len;
+        now = current_kernel_time();
+
+        header.pid = 0;
+        header.tid = 0;
+        header.sec = now.tv_sec;
+        header.nsec= now.tv_nsec;
+        header.len = min_t(size_t, msg_len, LOGGER_ENTRY_MAX_PAYLOAD);
+
+        //mutex_lock(&log->mutex);
+
+        do_write_log(log, &header, sizeof(struct logger_entry));
+
+        fix_up_readers(log, sizeof(struct logger_entry) + header.len);
+
+        while (vec_count-- > 0) {
+                size_t len;
+
+                /* figure out how much of this vector we can keep */
+                len = min_t(size_t, iov->iov_len, header.len - ret);
+
+                /* write out this segment's payload */
+                do_write_log(log, iov->iov_base, len);
+
+                iov++;
+        }
+
+        //mutex_unlock(&log->mutex);
+
+        /* wake up any blocked readers */
+        wake_up_interruptible(&log->wq);
+
+        return ;
+
+}
+
+
+
+
+#endif
 
 static struct logger_log *get_log_from_minor(const int minor)
 {
@@ -1076,6 +1188,12 @@ static struct logger_log *get_log_from_minor(const int minor)
 		return &log_events;
 	if (log_radio.misc.minor == minor)
 		return &log_radio;
+	if (log_system.misc.minor == minor)
+		return &log_system;
+#ifdef KERNEL_LOG
+	if (log_kernel.misc.minor == minor)
+		return &log_kernel;
+#endif
 	return NULL;
 }
 
@@ -1222,18 +1340,19 @@ static int __init logger_init(void)
 
 	ret = init_log(&log_radio);
 	if (unlikely(ret))
-		goto out_destroy_events;
-
-/* leave room for more init functionality */
-	goto out;
-
-out_destroy_events:
-	destroy_log(&log_events);
-out_destroy_main:
-	destroy_log(&log_main);
-out_unregister_kset:
-	kset_unregister(logger_kset);
+		goto out;
+	ret = init_log(&log_system);
+	if (unlikely(ret))
+		goto out;
+#ifdef KERNEL_LOG
+	ret = init_log(&log_kernel);
+        if (unlikely(ret))
+                goto out;
+	register_console(&loggercons);
+#endif
 out:
 	return ret;
 }
 device_initcall(logger_init);
+
+

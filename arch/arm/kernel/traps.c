@@ -12,6 +12,12 @@
  *  'traps.c' handles hardware exceptions after we have saved some state in
  *  'linux/arch/arm/lib/traps.S'.  Mostly a debugging aid, but will probably
  *  kill the offending process.
+ *  Revision History:
+ *
+ *  Date        Author          Comment
+ *  ---------   --------------  ------------------------------------
+ *  11/05/2007  Motorola        add trap log for LTT-LITE
+ *
  */
 #include <linux/module.h>
 #include <linux/signal.h>
@@ -22,7 +28,6 @@
 #include <linux/hardirq.h>
 #include <linux/init.h>
 #include <linux/uaccess.h>
-
 #include <asm/atomic.h>
 #include <asm/cacheflush.h>
 #include <asm/system.h>
@@ -211,7 +216,7 @@ static void __die(const char *str, int err, struct thread_info *thread, struct p
 	struct task_struct *tsk = thread->task;
 	static int die_counter;
 
-	printk("Internal error: %s: %x [#%d]" S_PREEMPT S_SMP "\n",
+	printk("Dying from internal error: %s: %x [#%d]" S_PREEMPT S_SMP "\n",
 	       str, err, ++die_counter);
 	print_modules();
 	__show_regs(regs);
@@ -441,6 +446,14 @@ do_cache_op(unsigned long start, unsigned long end, int flags)
 	}
 #endif
 
+#ifdef CONFIG_ARCH_MSM_ARM11
+	if (flags == 1) {
+		clean_and_invalidate_user_range(start & PAGE_MASK,
+						PAGE_ALIGN(end));
+		return;
+	}
+#endif
+
 	vma = find_vma(current->active_mm, start);
 	if (vma && vma->vm_start < end) {
 		if (start < vma->vm_start)
@@ -514,7 +527,10 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 		thread->tp_value = regs->ARM_r0;
 #if defined(CONFIG_HAS_TLS_REG)
 		asm ("mcr p15, 0, %0, c13, c0, 3" : : "r" (regs->ARM_r0) );
-#elif !defined(CONFIG_TLS_REG_EMUL)
+#endif
+
+#if (!defined(CONFIG_HAS_TLS_REG) && !defined(CONFIG_TLS_REG_EMUL)) || \
+      defined(CONFIG_ARCH_MSM_SCORPION)
 		/*
 		 * User space must never try to access this directly.
 		 * Expect your app to break eventually if you do so.

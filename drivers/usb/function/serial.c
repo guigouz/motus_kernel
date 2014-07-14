@@ -66,8 +66,19 @@
 #define GS_LONG_NAME			"Serial Function"
 #define GS_SHORT_NAME			"serial"
 
+#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#define SERIAL_INTERFACE_NAME           "Motorola Communication Interface"
+#else /* defined(CONFIG_KERNEL_MOTOROLA) */
+#define SERIAL_INTERFACE_NAME           "Motorola AT Comm Interface"
+#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+
+#ifdef CONFIG_EXPOSE_NMEA
 static int instances = 2;
 #define MAX_INSTANCES 2
+#else
+static int instances = 1;
+#define MAX_INSTANCES 1
+#endif
 
 #define GS_MAJOR			127
 #define GS_MINOR_START			0
@@ -156,6 +167,7 @@ struct gs_port {
 	struct gs_dev *port_dev;	/* pointer to device struct */
 	struct tty_struct *port_tty;	/* pointer to tty struct */
 	spinlock_t port_lock;
+	struct mutex	mutex_lock;	/* protect open/close */
 	int port_num;
 	int port_open_count;
 	int port_in_use;	/* open/close in progress */
@@ -193,6 +205,7 @@ struct gs_dev {
 	/* address of in endpoint */
 	struct usb_endpoint *dev_in_ep;
 	struct usb_request *notify_req;
+	unsigned long notify_queued;
 	/* address of out endpoint */
 	struct usb_endpoint *dev_out_ep;
 	/* list of write requests */
@@ -443,7 +456,11 @@ static void gs_init_header_desc(struct gs_dev *dev)
  *  Register as a USB gadget driver and a tty driver.
  */
 
+#ifdef CONFIG_EXPOSE_NMEA
 char *a[] = {"modem", "nmea"};
+#else
+char *a[] = {"modem"};
+#endif
 
 static int __init gs_module_init(void)
 {
@@ -1104,6 +1121,7 @@ static int gs_send(struct gs_dev *dev)
 	struct gs_port *port = dev->dev_port[0];
 	struct list_head *pool = &port->write_pool;
 	int status = 0;
+	static long prev_len;
 	bool do_tty_wake = false;
 	struct usb_endpoint *ep = dev->dev_in_ep;
 
@@ -1113,6 +1131,21 @@ static int gs_send(struct gs_dev *dev)
 		req = list_entry(pool->next, struct usb_request, list);
 		len = gs_send_packet(dev, req->buf, usb_ept_get_max_packet(ep));
 		if (len == 0) {
+			/* Queue zero length packet */
+			if (prev_len == usb_ept_get_max_packet(ep)) {
+				req->length = 0;
+				list_del(&req->list);
+
+				spin_unlock(&port->port_lock);
+				status = usb_ept_queue_xfer(ep, req);
+				spin_lock(&port->port_lock);
+				if (status) {
+					printk(KERN_ERR "%s: %s err %d\n",
+					__func__, "queue", status);
+					list_add(&req->list, pool);
+				}
+				prev_len = 0;
+			}
 			wake_up_interruptible(&port->port_write_wait);
 			break;
 		}
@@ -1137,6 +1170,7 @@ static int gs_send(struct gs_dev *dev)
 			list_add(&req->list, pool);
 			break;
 		}
+		prev_len = req->length;
 
 	}
 
@@ -1331,6 +1365,10 @@ static void gs_write_complete(struct usb_endpoint *ep, struct usb_request *req)
 	case 0:
 		/* normal completion */
 
+		if ((req->length == 0) &&
+			(gs_buf_data_avail(port->port_write_buf) == 0)) {
+			break;
+		}
 		if (dev->dev_config)
 			gs_send(dev);
 
@@ -1348,7 +1386,7 @@ static void gs_write_complete(struct usb_endpoint *ep, struct usb_request *req)
 static void send_notify_data(struct usb_endpoint *ep, struct usb_request *req)
 {
 	struct gs_dev *dev = (struct gs_dev *)req->device;
-	struct usb_cdc_notification *notify = req->buf;
+	struct usb_cdc_notification *notify;
 	struct gs_port *port;
 	unsigned int msr, ret;
 	__le16 *data;
@@ -1365,6 +1403,10 @@ static void send_notify_data(struct usb_endpoint *ep, struct usb_request *req)
 		return;
 	}
 
+	if (test_bit(0, &dev->notify_queued))
+		usb_ept_cancel_xfer(dev->dev_notify_ep,
+		dev->notify_req);
+	notify = req->buf;
 	msr = port->msr;
 	notify->bmRequestType  = 0xA1;
 	notify->bNotificationType  = USB_CDC_NOTIFY_SERIAL_STATE;
@@ -1376,8 +1418,10 @@ static void send_notify_data(struct usb_endpoint *ep, struct usb_request *req)
 			| ((msr & MSR_DSR) ? (1<<1) : (0<<1))
 			| ((msr & MSR_RI) ? (1<<3) : (0<<3)));
 
+	set_bit(0, &dev->notify_queued);
 	ret = usb_ept_queue_xfer(ep, req);
 	if (ret) {
+		clear_bit(0, &dev->notify_queued);
 		printk(KERN_ERR
 		"send_notify_data: cannot queue status request,ret = %d\n",
 			       ret);
@@ -1403,6 +1447,7 @@ static void gs_status_complete(struct usb_endpoint *ep,
 		return;
 	}
 
+	clear_bit(0, &dev->notify_queued);
 	switch (req->status) {
 	case 0:
 
@@ -1459,7 +1504,12 @@ static void gs_bind(void *_ctxt)
 
 	ret = usb_msm_get_next_ifc_number(func);
 	dev->gs_ifc_desc.bInterfaceNumber = ret;
+#if defined(CONFIG_MACH_CALGARY) || defined(CONFIG_MACH_MOT)
+	ret = usb_msm_get_next_strdesc_id(SERIAL_INTERFACE_NAME);
+	dev->gs_ifc_desc.iInterface = ret;
+#else
 	dev->gs_ifc_desc.iInterface = 0;
+#endif
 
 	/*Configuring IN Endpoint*/
 	ep = dev->dev_in_ep = usb_alloc_endpoint(USB_DIR_IN);
@@ -1547,6 +1597,39 @@ static void /* __init_or_exit */ gs_unbind(void *_ctxt)
 	pr_debug("%s: %s %s\n", __func__, GS_LONG_NAME, GS_VERSION_STR);
 }
 
+static void gser_complete_set_line_coding(struct usb_endpoint *ep,
+		struct usb_request *req)
+{
+	struct gs_dev *dev = (struct gs_dev *)req->device;
+	struct gs_port *port;
+	struct usb_cdc_line_coding *value;
+	struct usb_request *in_req;
+
+	port = dev->dev_port[0];
+	if (!(dev && dev->dev_port[0])) {
+		printk(KERN_ERR "%s(): dev or dev_port is null\n", __func__);
+		usb_ept_set_halt(dev->func->ep0_in);
+		return;
+	}
+	if (req->actual != sizeof(port->port_line_coding)) {
+		printk(KERN_ERR "%s(): received wrong data\n", __func__);
+		usb_ept_set_halt(dev->func->ep0_in);
+		return;
+	}
+
+	port = dev->dev_port[0];
+
+	/* Use Host assigned port_line setting */
+	value = req->buf;
+	port->port_line_coding = *value;
+
+	/* Send ACK on EP0 IN */
+	in_req = dev->func->ep0_in_req;
+	in_req->length = 0;
+	in_req->complete = 0;
+	usb_ept_queue_xfer(dev->func->ep0_in, in_req);
+}
+
 static int gs_setup(struct usb_ctrlrequest *ctrl,
 		void *buf, int len, void *_ctxt)
 {
@@ -1568,17 +1651,21 @@ static int gs_setup(struct usb_ctrlrequest *ctrl,
 		return 0;
 	}
 	switch (ctrl->bRequest) {
-#if 0
+
 	case USB_CDC_REQ_SET_LINE_CODING:
-		ret = min(wLength,
-		(u16)sizeof(struct usb_cdc_line_coding));
 		if (port) {
-			spin_lock(&port->port_lock);
-			memcpy(&port->port_line_coding, buf , ret);
-			spin_unlock(&port->port_lock);
-		}
-	break;
-#endif
+			struct usb_request *req = dev->func->ep0_out_req;
+			ret = min(wLength,
+				(u16) sizeof(struct usb_cdc_line_coding));
+			if (ret != sizeof(struct usb_cdc_line_coding))
+				ret = -EOPNOTSUPP;
+			else {
+				req->device = dev;
+				req->complete = gser_complete_set_line_coding;
+				}
+		} else
+			ret = -ENODEV;
+		break;
 
 	case USB_CDC_REQ_GET_LINE_CODING:
 		port = dev->dev_port[0];/* ACM only has one port */
@@ -1936,6 +2023,7 @@ static int gs_alloc_ports(struct gs_dev *dev, gfp_t kmalloc_flags)
 		port->port_line_coding.bParityType = GS_DEFAULT_PARITY;
 		port->port_line_coding.bDataBits = GS_DEFAULT_DATA_BITS;
 		spin_lock_init(&port->port_lock);
+		mutex_init(&port->mutex_lock);
 		init_waitqueue_head(&port->port_write_wait);
 
 		dev->dev_port[i] = port;
@@ -2172,6 +2260,7 @@ static int gs_tiocmget(struct tty_struct *tty, struct file *file)
 	if (port == NULL)
 		return -EIO;
 
+	mutex_lock(&port->mutex_lock);
 	mcr = port->mcr;
 	msr = port->msr;
 
@@ -2183,6 +2272,7 @@ static int gs_tiocmget(struct tty_struct *tty, struct file *file)
 		| ((msr & MSR_DSR) ? TIOCM_DSR : 0)
 		| ((msr & MSR_CTS) ? TIOCM_CTS : 0);
 
+	mutex_unlock(&port->mutex_lock);
 	return result;
 }
 
@@ -2231,6 +2321,7 @@ static int gs_tiocmset(struct tty_struct *tty, struct file *file,
 	if (clear & TIOCM_CD)
 		msr &= ~MSR_CD;
 
+	mutex_lock(&port->mutex_lock);
 	port->mcr = mcr;
 	port->msr = msr;
 
@@ -2238,6 +2329,7 @@ static int gs_tiocmset(struct tty_struct *tty, struct file *file,
 		send_notify_data(dev->dev_notify_ep, dev->notify_req);
 		port->prev_msr = port->msr;
 	}
+	mutex_unlock(&port->mutex_lock);
 
 	return 0;
 }

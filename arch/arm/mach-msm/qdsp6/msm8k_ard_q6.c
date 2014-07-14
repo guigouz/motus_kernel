@@ -65,6 +65,11 @@
 #include <mach/qdsp6/msm8k_cad_q6dec_drvi.h>
 #include <mach/qdsp6/msm8k_cad_q6enc_drvi.h>
 #include <mach/qdsp6/msm8k_q6_api_flip_utils.h>
+#include <mach/qdsp6/msm8k_adsp_audio_error.h>
+#include <mach/qdsp6/msm8k_adsp_audio_device.h>
+#include <mach/qdsp6/msm8k_adsp_audio_ioctl.h>
+#include <mach/qdsp6/msm8k_adsp_audio_stream_ioctl.h>
+#include <mach/qdsp6/msm8k_adsp_audio_command.h>
 
 #if 0
 #define D(fmt, args...) printk(KERN_INFO "msm8k_cad: " fmt, ##args)
@@ -74,13 +79,13 @@
 
 s32 qdsp6_open(s32 session_id)
 {
-	s32                 rc, dal_rc;
+	s32					rc, dal_rc;
 	struct cadi_open_struct_type		*ref_cadr = NULL;
 	struct cad_stream_device_struct_type	*ref_cadr_device = NULL;
 	struct cad_stream_info_struct_type	*ref_cadr_stream = NULL;
 
-	struct adsp_audio_open_device		*cadr = NULL;
-	struct adsp_audio_event		*evt_buf = NULL;
+	struct adsp_audio_open_command		*cadr = NULL;
+	union adsp_audio_event			*evt_buf = NULL;
 
 	rc = dal_rc = CAD_RES_SUCCESS;
 
@@ -96,7 +101,7 @@ s32 qdsp6_open(s32 session_id)
 	}
 
 	/* Allocate memory for the event payload */
-	evt_buf = kmalloc(sizeof(struct adsp_audio_event),
+	evt_buf = kmalloc(sizeof(*evt_buf),
 		GFP_KERNEL);
 
 	if (evt_buf == NULL) {
@@ -105,7 +110,7 @@ s32 qdsp6_open(s32 session_id)
 		goto done;
 	}
 
-	cadr = kmalloc(sizeof(struct adsp_audio_open_device),
+	cadr = kmalloc(sizeof(*cadr),
 		GFP_KERNEL);
 
 	if (cadr == NULL) {
@@ -114,19 +119,19 @@ s32 qdsp6_open(s32 session_id)
 		goto done;
 	}
 
-	memset(cadr, 0, sizeof(struct adsp_audio_open_device));
-	cadr->op_code = q6_open_op_mapping(ref_cadr->cad_open.op_code);
+	memset(cadr, 0, sizeof(*cadr));
+	cadr->cmd.op_code = q6_open_op_mapping(ref_cadr->cad_open.op_code);
+	cadr->cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
 	if (ref_cadr->cad_open.op_code != CAD_OPEN_OP_DEVICE_CTRL) {
-		cadr->stream_device.stream_context =
+		cadr->open_data.stream_context =
 			q6_stream_context_mapping(
 			ref_cadr->cad_stream.app_type,
-			&(cadr->stream_device.mode));
+			&(cadr->open_data.mode));
 
-		cadr->stream_device.buf_max_size =
+		cadr->open_data.buf_max_size =
 			ref_cadr->cad_stream.ses_buf_max_size;
-		cadr->stream_device.priority = ref_cadr->cad_stream.priority;
 
-		if (ref_cadr->cad_device.device_len >=
+		if (ref_cadr->cad_device.device_len >
 			ADSP_AUDIO_MAX_DEVICES) {
 
 			pr_err("CAD:ARD device number is too large\n");
@@ -134,21 +139,16 @@ s32 qdsp6_open(s32 session_id)
 			goto done;
 		}
 
-		cadr->stream_device.num_devices =
-			ref_cadr->cad_device.device_len;
-
 		if (ref_cadr->cad_device.device == NULL) {
 			pr_err("CAD:ARD no device for control session\n");
 			rc = CAD_RES_FAILURE;
 			goto done;
 		}
 
-		cadr->stream_device.device[0] = q6_device_id_mapping
+		cadr->open_data.device = q6_device_id_mapping
 			(ref_cadr->cad_device.device[0]);
 
-		D("ARD device id= %d, device len = %d\n",
-				cadr->stream_device.device[0],
-				cadr->stream_device.num_devices);
+		D("ARD device id = %d \n", cadr->open_data.device);
 
 		rc = convert_format_block(session_id, cadr, ref_cadr);
 		if (rc != CAD_RES_SUCCESS) {
@@ -161,7 +161,9 @@ s32 qdsp6_open(s32 session_id)
 	if (ardsession[session_id]->qdsp6_opened == ARD_FALSE) {
 		/* Only ARD will open a session with Q6 */
 		D("ARD Sending RPC Open, session %d\n", session_id);
-		dal_rc = cad_rpc_open(session_id, 1, cadr, evt_buf);
+		dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id, (void *)cadr,
+			sizeof(*cadr), evt_buf);
 
 		if (dal_rc != CAD_RES_SUCCESS) {
 			rc = CAD_RES_FAILURE;
@@ -169,11 +171,11 @@ s32 qdsp6_open(s32 session_id)
 			goto done;
 		}
 
-		if ((evt_buf->handle == session_id) &&
-			(evt_buf->status != ADSP_AUDIO_SUCCESS)) {
+		if ((evt_buf->no_payload.source.minor == (u32)session_id) &&
+			(evt_buf->no_payload.status != ADSP_AUDIO_SUCCESS)) {
 
 			pr_err("ARD Open RPC failed for ses: %d, status %d\n",
-				session_id, evt_buf->status);
+				session_id, evt_buf->no_payload.status);
 			rc = CAD_RES_FAILURE;
 			goto done;
 		}
@@ -181,14 +183,14 @@ s32 qdsp6_open(s32 session_id)
 		ardsession[session_id]->qdsp6_opened = ARD_TRUE;
 	}
 
+done:
 	if (ardsession[session_id]->local_format_block)
 		ardsession[session_id]->local_format_block = NULL;
 
 	kfree(evt_buf);
 	kfree(cadr);
 
-done:
-	  return rc;
+	return rc;
 }
 
 
@@ -197,10 +199,13 @@ s32 qdsp6_start(s32 session_id)
 	s32					rc, dal_rc;
 	struct cadi_open_struct_type		*cadr = NULL;
 	struct cad_stream_info_struct_type	*cadr_stream = NULL;
-	struct adsp_audio_event		*evt_buf = NULL;
+	union adsp_audio_event			*evt_buf = NULL;
+	struct adsp_audio_no_payload_command	q6_cmd;
 
 	rc = dal_rc = CAD_RES_SUCCESS;
 
+
+	memset(&q6_cmd, 0, sizeof(q6_cmd));
 
 	cadr = ardsession[session_id]->sess_open_info;
 	cadr_stream = &(cadr->cad_stream);
@@ -212,7 +217,7 @@ s32 qdsp6_start(s32 session_id)
 	}
 
 	/* Allocate memory for the event payload */
-	evt_buf = kmalloc(sizeof(struct adsp_audio_event),
+	evt_buf = kmalloc(sizeof(*evt_buf),
 		GFP_KERNEL);
 
 	if (evt_buf == NULL) {
@@ -224,15 +229,25 @@ s32 qdsp6_start(s32 session_id)
 	D("ARD Sending RPC CADI_IOCTL_CMD_DSP_START, session %d\n",
 		session_id);
 
-	if (cadr->cad_open.op_code != CAD_OPEN_OP_DEVICE_CTRL)
+	if (cadr->cad_open.op_code != CAD_OPEN_OP_DEVICE_CTRL) {
+		q6_cmd.cmd.op_code = ADSP_AUDIO_IOCTL_CMD_SESSION_START;
+		q6_cmd.cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
+
 		/* Send START IOCTL CMD - This command has no payload */
-		dal_rc = cad_rpc_ioctl(session_id, 1,
-			ADSP_AUDIO_IOCTL_CMD_STREAM_START,
-			NULL, 0, evt_buf);
-	else
-		dal_rc = cad_rpc_ioctl(session_id, 1,
-			ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_COMMIT,
-			NULL, 0, evt_buf);
+		dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id,
+			(void *)&q6_cmd,
+			sizeof(q6_cmd), evt_buf);
+	} else {
+		q6_cmd.cmd.op_code = ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_COMMIT;
+		q6_cmd.cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
+
+		/* Send DEVICE_SWITCH_COMMIT - This command has no payload */
+		dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id,
+			(void *)&q6_cmd,
+			sizeof(q6_cmd), evt_buf);
+	}
 
 
 	if (dal_rc != CAD_RES_SUCCESS) {
@@ -242,17 +257,18 @@ s32 qdsp6_start(s32 session_id)
 		goto done;
 	}
 
-	if ((evt_buf->handle == session_id) &&
-		(evt_buf->status != ADSP_AUDIO_SUCCESS)) {
+	if ((evt_buf->no_payload.source.minor == (u32)session_id) &&
+		(evt_buf->no_payload.status != ADSP_AUDIO_SUCCESS)) {
 		pr_err("ARD CADI_IOCTL_CMD_DSP_START failed ses: %d, "
 			"status %d\n", session_id,
-			evt_buf->status);
+			evt_buf->no_payload.status);
 		rc = CAD_RES_FAILURE;
 		goto done;
 	}
-	kfree(evt_buf);
 
 done:
+	kfree(evt_buf);
+
 	return rc;
 }
 
@@ -262,10 +278,12 @@ s32 qdsp6_close(s32 session_id)
 	s32					rc, dal_rc;
 	struct cadi_open_struct_type		*cadr = NULL;
 	struct cad_stream_info_struct_type      *cadr_stream = NULL;
-	struct adsp_audio_event		*evt_buf = NULL;
+	union adsp_audio_event			*evt_buf = NULL;
+	struct adsp_audio_no_payload_command	q6_cmd;
 
 	rc = dal_rc = CAD_RES_SUCCESS;
 
+	memset(&q6_cmd, 0, sizeof(q6_cmd));
 
 	cadr = ardsession[session_id]->sess_open_info;
 	cadr_stream = &(cadr->cad_stream);
@@ -277,7 +295,7 @@ s32 qdsp6_close(s32 session_id)
 	}
 
 	/* Allocate memory for the event payload */
-	evt_buf = kmalloc(sizeof(struct adsp_audio_event),
+	evt_buf = kmalloc(sizeof(*evt_buf),
 		GFP_KERNEL);
 
 	if (evt_buf == NULL) {
@@ -287,8 +305,15 @@ s32 qdsp6_close(s32 session_id)
 	}
 
 	if (ardsession[session_id]->qdsp6_opened == ARD_TRUE) {
-		pr_err("ARD Sending RPC Close, session %d\n", session_id);
-		dal_rc = cad_rpc_close(session_id, 1, evt_buf);
+		D("ARD Sending RPC Close, session %d\n", session_id);
+		q6_cmd.cmd.op_code = ADSP_AUDIO_IOCTL_CMD_CLOSE;
+		q6_cmd.cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
+
+		/* Send IOCTL_CMD_CLOSE - This command has no payload */
+		dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id,
+			(void *)&q6_cmd,
+			sizeof(q6_cmd), evt_buf);
 
 		if (dal_rc != CAD_RES_SUCCESS) {
 			pr_err("ARD RPC Close failed %d\n", session_id);
@@ -299,19 +324,20 @@ s32 qdsp6_close(s32 session_id)
 		ardsession[session_id]->qdsp6_opened = ARD_FALSE;
 		ardsession[session_id]->qdsp6_started = ARD_FALSE;
 
-		if ((evt_buf->handle == session_id) &&
-			(evt_buf->status != ADSP_AUDIO_SUCCESS)) {
+		if ((evt_buf->no_payload.source.minor == (u32)session_id) &&
+			(evt_buf->no_payload.status != ADSP_AUDIO_SUCCESS)) {
 
 			pr_err("ARD Close RPC failed for session %d,"
 				" status %d\n", session_id,
-				evt_buf->status);
+				evt_buf->no_payload.status);
 			rc = CAD_RES_FAILURE;
 			goto done;
 		}
 	}
-	kfree(evt_buf);
 done:
-	  return rc;
+	kfree(evt_buf);
+
+	return rc;
 }
 
 
@@ -319,11 +345,11 @@ done:
 s32 qdsp6_devchg_notify(s32 session_id, u32 dev_id)
 {
 	s32					rc, dal_rc;
-	struct adsp_audio_device_change		dev_chg;
+	struct adsp_audio_device_switch_command	dev_chg;
 	struct ard_state_struct_type		*local_ard_state = NULL;
 	struct cadi_open_struct_type		*cadr = NULL;
 	struct cad_stream_info_struct_type	*cadr_stream = NULL;
-	struct adsp_audio_event		*evt_buf = NULL;
+	union adsp_audio_event			*evt_buf = NULL;
 
 	rc = dal_rc = CAD_RES_SUCCESS;
 
@@ -344,7 +370,7 @@ s32 qdsp6_devchg_notify(s32 session_id, u32 dev_id)
 	}
 
 	/* Allocate memory for the event payload */
-	evt_buf = kmalloc(sizeof(struct adsp_audio_event),
+	evt_buf = kmalloc(sizeof(*evt_buf),
 		GFP_KERNEL);
 
 	if (evt_buf == NULL) {
@@ -352,6 +378,9 @@ s32 qdsp6_devchg_notify(s32 session_id, u32 dev_id)
 		pr_err("ARD Malloc failed\n");
 		goto done;
 	}
+
+	dev_chg.cmd.op_code = ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_PREPARE;
+	dev_chg.cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
 
 	/*0 - Default - Default Device*/
 	dev_chg.device_class = 0;
@@ -376,14 +405,13 @@ s32 qdsp6_devchg_notify(s32 session_id, u32 dev_id)
 		break;
 	}
 
-	D("ARD Sending RPC CADI_IOCTL_CMD_DSP_PREP_DEV_CHG, session %d\n",
+	D("ARD Sending RPC CMD_DEVICE_SWITCH_PREPARE, session %d\n",
 		session_id);
 
-	dal_rc = cad_rpc_ioctl(session_id, 1,
-		ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_PREPARE,
-		(void *)&dev_chg,
-		sizeof(struct adsp_audio_device_change),
-		evt_buf);
+	dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id,
+			(void *)&dev_chg,
+			sizeof(dev_chg), evt_buf);
 
 	if (dal_rc != CAD_RES_SUCCESS) {
 		rc = CAD_RES_FAILURE;
@@ -392,15 +420,16 @@ s32 qdsp6_devchg_notify(s32 session_id, u32 dev_id)
 		goto done;
 	}
 
-	if ((evt_buf->handle == session_id) &&
-		(evt_buf->status != ADSP_AUDIO_SUCCESS)) {
+	if ((evt_buf->no_payload.source.minor == (u32)session_id) &&
+		(evt_buf->no_payload.status != ADSP_AUDIO_SUCCESS)) {
 		rc = CAD_RES_FAILURE;
 		pr_err("ARD DSP_PREP_DEV_CHG failed, ses %d, status %d\n",
-			session_id, evt_buf->status);
+			session_id, evt_buf->no_payload.status);
 		goto done;
 	}
-	kfree(evt_buf);
 done:
+	kfree(evt_buf);
+
 	return rc;
 }
 
@@ -411,9 +440,13 @@ s32 qdsp6_standby(s32 session_id)
 	s32					rc, dal_rc;
 	struct cadi_open_struct_type		*cadr = NULL;
 	struct cad_stream_info_struct_type	*cadr_stream = NULL;
-	struct adsp_audio_event		*evt_buf = NULL;
+	union adsp_audio_event			*evt_buf = NULL;
+	struct adsp_audio_no_payload_command	q6_cmd;
 
 	rc = dal_rc = CAD_RES_SUCCESS;
+
+
+	memset(&q6_cmd, 0, sizeof(q6_cmd));
 
 	cadr = ardsession[session_id]->sess_open_info;
 	cadr_stream = &(cadr->cad_stream);
@@ -429,7 +462,7 @@ s32 qdsp6_standby(s32 session_id)
 	}
 
 	/* Allocate memory for the event payload */
-	evt_buf = kmalloc(sizeof(struct adsp_audio_event),
+	evt_buf = kmalloc(sizeof(*evt_buf),
 		GFP_KERNEL);
 
 	if (evt_buf == NULL) {
@@ -442,10 +475,14 @@ s32 qdsp6_standby(s32 session_id)
 		D("ARD Sending RPC CADI_IOCTL_CMD_DSP_STANDBY,"
 			" session %d\n", session_id);
 
+		q6_cmd.cmd.op_code = ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_STANDBY;
+		q6_cmd.cmd.response_type = ADSP_AUDIO_RESPONSE_COMMAND;
+
 		/* Send START IOCTL CMD - This command has no payload */
-		dal_rc = cad_rpc_ioctl(session_id, 1,
-			ADSP_AUDIO_IOCTL_CMD_DEVICE_SWITCH_STANDBY,
-			NULL, 0, evt_buf);
+		dal_rc = cad_rpc_control(session_id,
+			ardsession[session_id]->group_id,
+			(void *)&q6_cmd,
+			sizeof(q6_cmd), evt_buf);
 
 		if (dal_rc != CAD_RES_SUCCESS) {
 			rc = CAD_RES_FAILURE;
@@ -454,16 +491,16 @@ s32 qdsp6_standby(s32 session_id)
 			goto done;
 		}
 
-		if ((evt_buf->handle == session_id) &&
-			(evt_buf->status != ADSP_AUDIO_SUCCESS)) {
+		if ((evt_buf->no_payload.source.minor == session_id) &&
+			(evt_buf->no_payload.status != ADSP_AUDIO_SUCCESS)) {
 			rc = CAD_RES_FAILURE;
 			pr_err("ARD DSP_STANDBY failed, ses %d, status %d\n",
-				session_id, evt_buf->status);
+				session_id, evt_buf->no_payload.status);
 			goto done;
 		}
 	}
+done:
 	kfree(evt_buf);
 
-done:
 	return rc;
 }

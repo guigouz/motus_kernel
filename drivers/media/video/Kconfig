@@ -49,6 +49,16 @@ config VIDEO_TUNER
 	tristate
 	depends on MEDIA_TUNER
 
+source "drivers/media/video/omap-vout/Kconfig"
+
+# NXP HDMI TDA19989 configuration
+config HDMI_TDA19989
+	tristate "NXP HDMI 1.3 Transmitter driver"
+	depends on I2C
+	help
+	  to support HDMI1.3 transmitter
+	  with 3*8bit video inputs and CEC.
+
 #
 # Multimedia Video device configuration
 #
@@ -106,6 +116,8 @@ config VIDEO_IR_I2C
 	  option.
 
 	  In doubt, say Y.
+
+source "drivers/media/video/hp3a/Kconfig"
 
 #
 # Encoder / Decoder module configuration
@@ -304,6 +316,56 @@ config VIDEO_TCM825X
 	---help---
 	  This is a driver for the Toshiba TCM825x VGA camera sensor.
 	  It is used for example in Nokia N800.
+
+config VIDEO_MT9P012
+	tristate "Micron MT9P012 raw sensor driver (5MP)"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 sensor-level driver for the Micron
+	  MT9P012 camera.  It is currently working with the TI OMAP3
+	  camera controller.
+
+config VIDEO_MIPI_INTERFACE
+	tristate "MIPI INTERFACE functionality"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is for MIPI INTERFACE functiionality
+
+config VIDEO_MIPI_DLI_TEST
+	tristate "MIPI DLI TEST functionality"
+	depends on VIDEO_MIPI_INTERFACE && VIDEO_V4L2
+	---help---
+	  This is for MIPI INTERFACE functiionality
+
+config VIDEO_OV8810
+	tristate "OV8810 raw sensor driver (8MP)"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 sensor-level driver for the Omni-Vision
+	  OV8810 camera.  It is currently working with the TI OMAP3
+	  camera controller.
+
+config VIDEO_OMAP3_HPLENS
+	tristate "HP generic lens driver"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 generic lens driver.
+
+config VIDEO_IMX046
+	tristate "Sony IMX046 sensor driver (8MP)"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 sensor-level driver for the Sony
+	  IMX046 camera.  It is currently working with the TI OMAP3
+          camera controller.
+
+config VIDEO_LV8093
+	tristate "Piezo Actuator Lens driver for LV8093"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 lens driver for the Sanyo LV8093.
+	  It is currently working with the TI OMAP3 camera controller
+	  and Sony IMX046 sensor.
 
 config VIDEO_SAA7110
 	tristate "Philips SAA7110 video decoder"
@@ -711,6 +773,15 @@ config VIDEO_CAFE_CCIC
 	  CMOS camera controller.  This is the controller found on first-
 	  generation OLPC systems.
 
+config VIDEO_OMAP3
+        tristate "OMAP 3 Camera support"
+	select VIDEOBUF_GEN
+	select VIDEOBUF_DMA_SG
+	select OMAP_IOMMU
+	depends on VIDEO_V4L2 && ARCH_OMAP34XX
+	---help---
+	  Driver for an OMAP 3 camera controller.
+
 config SOC_CAMERA
 	tristate "SoC camera support"
 	depends on VIDEO_V4L2 && HAS_DMA
@@ -790,30 +861,25 @@ config VIDEO_PXA27x
 # MSM camera configuration
 #
 
-comment "MSM Camera And Video"
+comment "Qualcomm MSM Camera And Video"
 
 menuconfig MSM_CAMERA
-	bool "MSM camera and video capture support"
-	depends on VIDEO_V4L2
-	---help---
+	bool "Qualcomm MSM camera and video capture support"
+	depends on ARCH_MSM && VIDEO_V4L2 && I2C && ANDROID_PMEM
+	default y
+	help
 	  Say Y here to enable selecting the video adapters for
 	  Qualcomm msm camera and video encoding
 
-choice
-	prompt "AF module"
+config MSM_CAMERA_DEBUG
+	bool "Qualcomm MSM camera debugging with printk"
 	depends on MSM_CAMERA
-	default MSM_CAMERA_AF_FOXCONN
-
-config MSM_CAMERA_AF_FOXCONN
-	bool "FOXCONN Module"
+	default n
 	help
-	  This driver supports FOXCONN AF module for 5M Bayer sensor
+	  Enable printk() debug for msm camera
 
-config MSM_CAMERA_AF_BAM
-	bool "BAM Module"
-	help
-	  This driver supports BAM AF module for 5M Bayer sensor
-endchoice
+
+source "drivers/media/video/msm/Kconfig"
 
 config VIDEO_SH_MOBILE_CEU
 	tristate "SuperH Mobile CEU Interface driver"
@@ -821,6 +887,24 @@ config VIDEO_SH_MOBILE_CEU
 	select VIDEOBUF_DMA_CONTIG
 	---help---
 	  This is a v4l2 driver for the SuperH Mobile CEU Interface
+
+config VIDEO_OLDOMAP3
+        tristate "OMAP 3 Camera support"
+	select VIDEOBUF_GEN
+	select VIDEOBUF_DMA_SG
+	depends on VIDEO_V4L2 && ARCH_OMAP34XX
+	---help---
+	  Driver for an OMAP 3 camera controller.
+
+source "drivers/media/video/oldisp/Kconfig"
+
+config VIDEO_OLDOMAP3_BUFFALLOC
+	bool "OMAP3430 ISP Workaround: Allocate memory at driver init"
+	depends on VIDEO_OLDOMAP3 && ARCH_OMAP3430
+	default y
+	---help---
+	  This option is for allocating the workaround buffer at
+	  camera init time.
 
 config VIDEO_OMAP2
 	tristate "OMAP2 Camera Capture Interface driver"
@@ -958,4 +1042,11 @@ config USB_S2255
 
 endif # V4L_USB_DRIVERS
 
+
 endif # VIDEO_CAPTURE_DRIVERS
+config VIDEO_CAM_ISE
+	bool "Motorola Camera ISE Interface"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  This is a Video4Linux2 isp and vl42 configuration handler for
+	  the motorole ISE driver, which resides in the user space.

@@ -56,6 +56,7 @@ config USB_ARCH_HAS_EHCI
 	default y if PPC_83xx
 	default y if SOC_AU1200
 	default y if ARCH_IXP4XX
+	default y if ARCH_OMAP34XX
 	default y if ARCH_MSM
 	default PCI
 
@@ -152,6 +153,8 @@ source "drivers/usb/atm/Kconfig"
 source "drivers/usb/gadget/Kconfig"
 
 source "drivers/usb/otg/Kconfig"
+
+source "drivers/usb/ipchost/Kconfig"
 
 source "drivers/usb/function/Kconfig"
 
