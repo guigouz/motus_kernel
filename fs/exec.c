@@ -45,6 +45,7 @@
 #include <linux/proc_fs.h>
 #include <linux/mount.h>
 #include <linux/security.h>
+#include <linux/ima.h>
 #include <linux/syscalls.h>
 #include <linux/tsacct_kern.h>
 #include <linux/cn_proc.h>
@@ -128,6 +129,9 @@ SYSCALL_DEFINE1(uselib, const char __user *, library)
 
 	error = inode_permission(nd.path.dentry->d_inode,
 				 MAY_READ | MAY_EXEC | MAY_OPEN);
+	if (error)
+		goto exit;
+	error = ima_path_check(&nd.path, MAY_READ | MAY_EXEC | MAY_OPEN);
 	if (error)
 		goto exit;
 
@@ -677,6 +681,9 @@ struct file *open_exec(const char *name)
 	err = inode_permission(nd.path.dentry->d_inode, MAY_EXEC | MAY_OPEN);
 	if (err)
 		goto out_path_put;
+	err = ima_path_check(&nd.path, MAY_EXEC | MAY_OPEN);
+	if (err)
+		goto out_path_put;
 
 	file = nameidata_to_filp(&nd, O_RDONLY|O_LARGEFILE);
 	if (IS_ERR(file))
@@ -1190,6 +1197,9 @@ int search_binary_handler(struct linux_binprm *bprm,struct pt_regs *regs)
 	retval = security_bprm_check(bprm);
 	if (retval)
 		return retval;
+	retval = ima_bprm_check(bprm);
+	if (retval)
+		return retval;
 
 	/* kernel module loader fixup */
 	/* so we don't try to load run modprobe in kernel space. */
@@ -1291,6 +1301,7 @@ int do_execve(char * filename,
 	retval = mutex_lock_interruptible(&current->cred_exec_mutex);
 	if (retval < 0)
 		goto out_free;
+	current->in_execve = 1;
 
 	retval = -ENOMEM;
 	bprm->cred = prepare_exec_creds();
@@ -1347,11 +1358,6 @@ int do_execve(char * filename,
 	if (retval < 0)
 		goto out;
 
-#ifdef CONFIG_LTT_LITE
-	/* Trace only if exec has been successful */
-	ltt_lite_ev_process(LTT_LITE_EV_PROCESS_EXEC, current);
-#endif
-
 	/* execve succeeded */
 	current->fs->in_exec = 0;
 	mutex_unlock(&current->cred_exec_mutex);
@@ -1376,6 +1382,7 @@ out_unmark:
 		current->fs->in_exec = 0;
 
 out_unlock:
+	current->in_execve = 0;
 	mutex_unlock(&current->cred_exec_mutex);
 
 out_free:

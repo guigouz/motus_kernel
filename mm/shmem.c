@@ -28,6 +28,7 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/swap.h>
+#include <linux/ima.h>
 
 static struct vfsmount *shm_mnt;
 
@@ -2672,8 +2673,12 @@ int shmem_zero_setup(struct vm_area_struct *vma)
 	file = shmem_file_setup("dev/zero", size, vma->vm_flags);
 	if (IS_ERR(file))
 		return PTR_ERR(file);
-	shmem_set_file(vma, file);
 
+	ima_shm_check(file);
+	if (vma->vm_file)
+		fput(vma->vm_file);
+	vma->vm_file = file;
+	vma->vm_ops = &shmem_vm_ops;
 	return 0;
 }
 
