@@ -171,9 +171,10 @@ static int bt_status_read_proc(char *buffer, char **start, off_t offset, int siz
 }
 
 //////////////////////////////////////////////////////////////////////
+static char line[1024];
+
 static int bt_irq_read_proc(char *buffer, char **start, off_t offset, int size, int *eof, void *data)
 {
-  char line[1024];
   char buf[32];
   unsigned int irq[65];
   extern int interrupt_ack_stats[];

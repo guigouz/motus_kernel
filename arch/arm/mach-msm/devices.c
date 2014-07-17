@@ -409,9 +409,6 @@ static struct resource resources_gadget_peripheral[] = {
 
 struct platform_device msm_device_hsusb_peripheral = {
 	.name		= "msm_hsusb",
-#else
-	.name		= "msm_hsusb_peripheral",
-#endif
 	.id		= -1,
 	.num_resources	= ARRAY_SIZE(resources_hsusb_peripheral),
 	.resource	= resources_hsusb_peripheral,

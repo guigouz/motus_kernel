@@ -348,11 +348,11 @@ static struct dm_crypt_request *dmreq_of_req(struct crypt_config *cc,
 	return (struct dm_crypt_request *)((char *)req + cc->dmreq_start);
 }
 
-static struct ablkcipher_request *req_of_dmreq(struct crypt_config *cc,
+/*static struct ablkcipher_request *req_of_dmreq(struct crypt_config *cc,
 					       struct dm_crypt_request *dmreq)
 {
 	return (struct ablkcipher_request *)((char *)dmreq - cc->dmreq_start);
-}
+}*/
 
 static int crypt_convert_block(struct crypt_config *cc,
 			       struct convert_context *ctx,
@@ -694,8 +694,9 @@ static void kcryptd_io(struct work_struct *work)
 
 static void kcryptd_queue_io(struct dm_crypt_io *io)
 {
+#ifndef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 	struct crypt_config *cc = io->target->private;
-
+#endif
 	INIT_WORK(&io->work, kcryptd_io);
 #ifdef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 	queue_work(_io_queue, &io->work);
@@ -852,14 +853,17 @@ static void kcryptd_async_done(struct crypto_async_request *async_req,
 	struct dm_crypt_request *dmreq = async_req->data;
 	struct convert_context *ctx = dmreq->ctx;
 	struct dm_crypt_io *io = container_of(ctx, struct dm_crypt_io, ctx);
+#ifndef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 	struct crypt_config *cc = io->target->private;
-
+#endif
 	if (error == -EINPROGRESS) {
 		complete(&ctx->restart);
 		return;
 	}
 
+#ifndef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 	mempool_free(req_of_dmreq(cc, dmreq), cc->req_pool);
+#endif
 
 	if (!atomic_dec_and_test(&ctx->pending))
 		return;
@@ -882,7 +886,9 @@ static void kcryptd_crypt(struct work_struct *work)
 
 static void kcryptd_queue_crypt(struct dm_crypt_io *io)
 {
+#ifndef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 	struct crypt_config *cc = io->target->private;
+#endif
 
 	INIT_WORK(&io->work, kcryptd_crypt);
 #ifdef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
@@ -1151,7 +1157,9 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	ti->private = cc;
 	return 0;
 
+#ifndef CONFIG_DM_CRYPT_GLOBAL_WORKQUEUES
 bad_io_queue:
+#endif
 	kfree(cc->iv_mode);
 bad_ivmode_string:
 	dm_put_device(ti, cc->dev);

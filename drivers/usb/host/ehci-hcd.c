@@ -530,6 +530,7 @@ static int ehci_init(struct usb_hcd *hcd)
 	return 0;
 }
 
+#if 0
 /* start HC running; it's halted, ehci_init() has been run (once) */
 static int ehci_run (struct usb_hcd *hcd)
 {
@@ -619,7 +620,7 @@ static int ehci_run (struct usb_hcd *hcd)
 
 	return 0;
 }
-
+#endif /* 0 */
 /*-------------------------------------------------------------------------*/
 
 static irqreturn_t ehci_irq (struct usb_hcd *hcd)

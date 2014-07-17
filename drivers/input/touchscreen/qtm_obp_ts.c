@@ -82,7 +82,7 @@ static void qtm_obp_load_obp_objects(void);
 static int qtm_obp_send_message_processor_pointer(void);
 static void qtm_obp_printk (char *, ...);
 static void qtm_obp_doReset(void);
-static void qtm_obp_hardReset(void);
+/*static void qtm_obp_hardReset(void);*/
 static int qtm_obp_get_touch_sens_data (char * arg);
 static int save_low_power_regs(void);
 
@@ -397,13 +397,13 @@ static int qtm_obp_calibrate(struct i2c_client *client)
 	return ret;
 }
 
-static int qtm_obp_init_panel(struct qtm_obp_ts_data *ts)
+/*static int qtm_obp_init_panel(struct qtm_obp_ts_data *ts)
 {
 	int ret=0;
         KEY08_PRINTK("%s: Entering.....\n", __FUNCTION__);
         KEY08_PRINTK("%s: Exiting.....\n", __FUNCTION__);
 	return ret;
-}
+}*/
 
 // This function is used to reset the IC
 // This needs to change to write to command processor reset register since the reset line is shared with minipad ???
@@ -436,12 +436,12 @@ static int qtm_obp_save_config(void)
     return ret;
 }
 
-static void qtm_obp_hardReset(void)
+/*static void qtm_obp_hardReset(void)
 {
    	gpio_set_value(84,0);
 	clk_busy_wait(3000);
 	gpio_set_value(84,1);
-}
+}*/
 
 // This is the work function for the driver
 static void qtm_obp_ts_work_func(struct work_struct *work)
@@ -1572,7 +1572,7 @@ static int qtm_obp_ioctl(struct inode *node, struct file *filp, unsigned int cmd
 	A_TOUCH_POINT_PTR	dataPoint;
 	char * 	dataPtr;
 	unsigned long	bCount;
-	int	regValue;
+	int	regValue = 0;
 	int	rc = -1;
 	int	ret = 0;
 	char	data[10];

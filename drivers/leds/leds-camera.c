@@ -447,10 +447,11 @@ static int cam_led_do_burst_level(unsigned value)
         } 
         // translate low current (0-150) into intensity level (0-15)
         level = low_curr / 10;
-    }
-    printk("%s : total_curr: %d, high_curr: %d, low_curr: %d, torch level: %d\n",
+
+	printk("%s : total_curr: %d, high_curr: %d, low_curr: %d, torch level: %d\n",
 			__FUNCTION__, total_curr, high_curr, low_curr, level);
- 
+    }
+
     // Update the flash LED burst current level in the PMIC
     ret |= flash_led_set_current(high_curr);
     if (ret) {

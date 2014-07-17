@@ -28,6 +28,6 @@ int quickwakeup_execute(void);
 void quickwakeup_unregister(struct quickwakeup_ops *ops);
 
 #else
-static int quickwakeup_register(struct quickwakeup_ops *ops) { return 0; };
-void quickwakeup_unregister(struct quickwakeup_ops *ops) {};
+inline int quickwakeup_register(struct quickwakeup_ops *ops) { return 0; };
+inline void quickwakeup_unregister(struct quickwakeup_ops *ops) {};
 #endif

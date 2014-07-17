@@ -169,7 +169,7 @@ msmsdcc_dma_complete_func(struct msm_dmov_cmd *cmd,
 	struct msmsdcc_dma_data	*dma_data =
 		container_of(cmd, struct msmsdcc_dma_data, hdr);
 	struct msmsdcc_host	*host = dma_data->host;
-	unsigned long		flags;
+	/*unsigned long		flags;*/
 	struct mmc_request	*mrq;
 
 /* MOT_BUGFIX: Is this spinlock needed here?

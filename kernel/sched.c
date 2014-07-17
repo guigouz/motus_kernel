@@ -2762,8 +2762,6 @@ unsigned long nr_iowait_cpu(int cpu)
 }
 
 /* Variables and functions for calc_load */
-static atomic_long_t calc_load_tasks;
-static unsigned long calc_load_update;
 unsigned long avenrun[3];
 EXPORT_SYMBOL(avenrun);
 
@@ -2782,14 +2780,6 @@ void get_avenrun(unsigned long *loads, unsigned long offset, int shift)
 	loads[2] = (avenrun[2] + offset) << shift;
 }
 
-static unsigned long
-calc_load(unsigned long load, unsigned long exp, unsigned long active)
-{
-	load *= exp;
-	load += active * (FIXED_1 - exp);
-	return load >> FSHIFT;
-}
-
 /*
  * calc_load - update the avenrun load estimates 10 ticks after the
  * CPUs have updated calc_load_tasks.
@@ -2805,8 +2795,6 @@ void calc_global_load(void)
 
 	if (unlikely((long)uninterruptible < 0))
 		uninterruptible = 0;
-
-	return running + uninterruptible;
 }
 
 /*
@@ -4821,7 +4809,12 @@ EXPORT_SYMBOL(__wake_up);
 /*
  * Same as __wake_up but called with the spinlock in wait_queue_head_t held.
  */
-void __wake_up_locked(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
+void __wake_up_locked(wait_queue_head_t *q, unsigned int mode)
+{
+	__wake_up_common(q, mode, 1, 0, NULL);
+}
+
+void __wake_up_locked_nr(wait_queue_head_t *q, unsigned int mode, int nr_exclusive)
 {
 	__wake_up_common(q, mode, nr_exclusive, 0, NULL);
 }

@@ -1847,7 +1847,7 @@ static void __init mot_fixup(struct machine_desc *desc, struct tag *tags,
     printk("%s: msm_fb_resources[0]=%x..%x\n", __func__, msm_fb_resources[0].start, msm_fb_resources[0].end + 1);
     printk("%s: android_pmem_pdata.start=%lx\n", __func__, android_pmem_pdata.start);
     printk("%s: android_pmem_adsp_pdata.start=%lx\n", __func__, android_pmem_adsp_pdata.start);
-    printk("%s: resources_hw3d[2].start=%lx\n", __func__, resources_hw3d[2].start);
+    printk("%s: resources_hw3d[2].start=%lx\n", __func__, (unsigned long)resources_hw3d[2].start);
 }
 
 static void __init mot_map_io(void)

@@ -343,7 +343,7 @@ lookup_protocol:
 	}
 
 	err = -EPERM;
-	if (answer->capability > 0 && !current_has_cap(answer->capability))
+	if (answer->capability > 0 && !capable(answer->capability))
 		goto out_rcu_unlock;
 
 	err = -EAFNOSUPPORT;

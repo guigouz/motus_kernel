@@ -446,14 +446,6 @@ do_cache_op(unsigned long start, unsigned long end, int flags)
 	}
 #endif
 
-#ifdef CONFIG_ARCH_MSM_ARM11
-	if (flags == 1) {
-		clean_and_invalidate_user_range(start & PAGE_MASK,
-						PAGE_ALIGN(end));
-		return;
-	}
-#endif
-
 	vma = find_vma(current->active_mm, start);
 	if (vma && vma->vm_start < end) {
 		if (start < vma->vm_start)

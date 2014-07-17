@@ -114,7 +114,7 @@ void __memory_pressure_notify(struct zone *zone, int pressure)
 		if (unlikely(nr_poll_wakeup > nr_poll_wait_tasks))
 			nr_poll_wakeup = nr_poll_wait_tasks;
 
-		wake_up_locked_nr(&mem_wait, nr_poll_wakeup);
+		wake_up_nr(&mem_wait, nr_poll_wakeup);
 	}
 out:
 	spin_unlock_irqrestore(&mem_wait.lock, flags);

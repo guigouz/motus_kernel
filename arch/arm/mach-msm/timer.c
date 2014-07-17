@@ -677,50 +677,6 @@ unsigned long long sched_clock(void)
 	#define DG_TIMER_RATING 300
 #endif
 
-unsigned long long sched_clock(void)
-{
-	static cycle_t saved_ticks;
-	static int saved_ticks_valid;
-	static unsigned long long base;
-	static unsigned long long last_result;
-
-	unsigned long irq_flags;
-	static cycle_t last_ticks;
-	cycle_t ticks;
-	static unsigned long long result;
-	struct clocksource *cs;
-	struct msm_clock *clock = msm_active_clock;
-
-	local_irq_save(irq_flags);
-	if (clock) {
-		cs = &clock->clocksource;
-
-		last_ticks = saved_ticks;
-		saved_ticks = ticks = cs->read();
-		if (!saved_ticks_valid) {
-			saved_ticks_valid = 1;
-			last_ticks = ticks;
-			base -= cyc2ns(cs, ticks);
-		}
-		if (ticks < last_ticks) {
-			base += cyc2ns(cs, cs->mask);
-			base += cyc2ns(cs, 1);
-		}
-		last_result = result = cyc2ns(cs, ticks) + base;
-	} else {
-		base = result = last_result;
-		saved_ticks_valid = 0;
-	}
-	local_irq_restore(irq_flags);
-	return result; 
-}
-
-#ifdef CONFIG_MSM7X00A_USE_GP_TIMER
-	#define DG_TIMER_RATING 100
-#else
-	#define DG_TIMER_RATING 300
-#endif
-
 static struct msm_clock msm_clocks[] = {
 	[MSM_CLOCK_GPT] = {
 		.clockevent = {
@@ -797,6 +753,7 @@ static void __init msm_timer_init(void)
 		struct clock_event_device *ce = &clock->clockevent;
 		struct clocksource *cs = &clock->clocksource;
 		writel(0, clock->regbase + TIMER_ENABLE);
+		writel(0, clock->regbase + TIMER_CLEAR);
 		writel(~0, clock->regbase + TIMER_MATCH_VAL);
 
 		ce->mult = div_sc(clock->freq, NSEC_PER_SEC, ce->shift);

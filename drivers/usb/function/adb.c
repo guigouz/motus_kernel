@@ -173,7 +173,7 @@ static void adb_complete_in(struct usb_endpoint *ept, struct usb_request *req)
 
 	if (req->status != 0)
 		ctxt->error = 1;
-#if TEMP_7XXX_ANDROID
+#ifdef TEMP_7XXX_ANDROID
 	if ((req->length >= ept->max_pkt) &&
 		((req->length % ept->max_pkt) == 0)) {
 		req->length = 0;
@@ -182,7 +182,7 @@ static void adb_complete_in(struct usb_endpoint *ept, struct usb_request *req)
 		usb_ept_queue_xfer(ctxt->in, req);
 		return;
 	}
-#endif //TEMP_7XXX_ANDROID	
+#endif //TEMP_7XXX_ANDROID
 	req_put(ctxt, &ctxt->tx_idle, req);
 
 	wake_up(&ctxt->write_wq);

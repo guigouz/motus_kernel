@@ -249,14 +249,6 @@ struct mt9p012_ctrl {
 	enum mt9p012_resolution_t pict_res;
 	enum mt9p012_resolution_t curr_res;
 	enum mt9p012_test_mode_t  set_test;
-
-static int mt9p012_i2c_rxdata(unsigned short saddr, int slength,
-			      unsigned char *rxdata, int rxlength)
-{
-    struct i2c_msg msgs[] = {
-	{   .addr   = saddr,
-		.flags = 0,
-=======
 #else
 	enum mt9p012_resolution prev_res;
 	enum mt9p012_resolution pict_res;
@@ -2058,13 +2050,14 @@ static int mt9p012_sensor_power_off(struct msm_camera_sensor_info *data)
 #ifdef CONFIG_MACH_MOT
     if (machine_is_motus()) {
         struct vreg *vreg;
+        int32_t rc;
+
         vreg = vreg_get(0,"gp1");
         if (!vreg) {
             CDBG("%s: vreg_get failed\n", __func__);
             return -EIO;
         }
 
-        int32_t rc;
         if ((rc = vreg_disable(vreg))) {
             CDBG("%s: failed to disable GP1\n", __func__);
             return rc;

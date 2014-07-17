@@ -84,8 +84,6 @@ static struct map_desc msm_io_desc[] __initdata = {
 
 void __init msm_map_common_io(void)
 {
-	int i;
-
 	/* Make sure the peripheral register window is closed, since
 	 * we will use PTE flags (TEX[1]=1,B=0,C=1) to determine which
 	 * pages are peripheral interface or not.
@@ -182,48 +180,6 @@ void __init msm_map_comet_io(void)
 	msm_map_io(comet_io_desc, ARRAY_SIZE(comet_io_desc));
 }
 #endif /* CONFIG_MACH_QSD8X50_COMET */
-
-void __init msm_map_qsd8x50_io(void)
-{
-	int i;
-
-	BUG_ON(!ARRAY_SIZE(qsd8x50_io_desc));
-	for (i = 0; i < ARRAY_SIZE(qsd8x50_io_desc); i++)
-		if (qsd8x50_io_desc[i].virtual ==
-				(unsigned long)MSM_SHARED_RAM_BASE)
-			qsd8x50_io_desc[i].pfn =
-				__phys_to_pfn(msm_shared_ram_phys);
-
-	iotable_init(qsd8x50_io_desc, ARRAY_SIZE(qsd8x50_io_desc));
-}
-
-void __init msm_map_msm7x30_io(void)
-{
-	int i;
-
-	BUG_ON(!ARRAY_SIZE(msm7x30_io_desc));
-	for (i = 0; i < ARRAY_SIZE(msm7x30_io_desc); i++)
-		if (msm7x30_io_desc[i].virtual ==
-				(unsigned long)MSM_SHARED_RAM_BASE)
-			msm7x30_io_desc[i].pfn =
-				__phys_to_pfn(msm_shared_ram_phys);
-
-	iotable_init(msm7x30_io_desc, ARRAY_SIZE(msm7x30_io_desc));
-}
-
-void __init msm_map_comet_io(void)
-{
-	int i;
-
-	BUG_ON(!ARRAY_SIZE(comet_io_desc));
-	for (i = 0; i < ARRAY_SIZE(comet_io_desc); i++)
-		if (comet_io_desc[i].virtual ==
-				(unsigned long)MSM_SHARED_RAM_BASE)
-			comet_io_desc[i].pfn =
-				__phys_to_pfn(msm_shared_ram_phys);
-
-	iotable_init(comet_io_desc, ARRAY_SIZE(comet_io_desc));
-}
 
 void __iomem *
 __msm_ioremap(unsigned long phys_addr, size_t size, unsigned int mtype)
