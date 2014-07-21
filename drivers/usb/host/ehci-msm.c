@@ -691,7 +691,7 @@ static int __init ehci_msm_probe(struct platform_device *pdev)
 	char *usb_pclks[] = { "usb_hs_pclk", "usb_hs2_pclk" };
 
 
-	hcd = usb_create_hcd(&msm_hc_driver, &pdev->dev, pdev->dev.bus_id);
+	hcd = usb_create_hcd(&msm_hc_driver, &pdev->dev, dev_name(&pdev->dev));
 	if (!hcd)
 		return  -ENOMEM;
 
@@ -745,8 +745,8 @@ static int __init ehci_msm_probe(struct platform_device *pdev)
 	mhcd->pdata = pdata;
 	INIT_WORK(&mhcd->lpm_exit_work, usb_lpm_exit_w);
 
-	wake_lock_init(&mhcd->wlock, WAKE_LOCK_SUSPEND, pdev->dev.bus_id);
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, pdev->dev.bus_id,
+	wake_lock_init(&mhcd->wlock, WAKE_LOCK_SUSPEND, dev_name(&pdev->dev));
+	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, (char*)dev_name(&pdev->dev),
 					PM_QOS_DEFAULT_VALUE);
 
 	/* Register with otg driver. If registration fails, start usb host */
@@ -785,7 +785,7 @@ static int __exit ehci_msm_remove(struct platform_device *pdev)
 	clk_put(mhcd->pclk);
 
 	wake_lock_destroy(&mhcd->wlock);
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, pdev->dev.bus_id);
+	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, (char*)dev_name(&pdev->dev));
 
 	return retval;
 }
