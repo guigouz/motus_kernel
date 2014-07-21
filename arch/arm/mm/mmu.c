@@ -18,10 +18,12 @@
 #include <asm/cputype.h>
 #include <asm/mach-types.h>
 #include <asm/sections.h>
+#include <asm/cachetype.h>
 #include <asm/setup.h>
 #include <asm/sizes.h>
 #include <asm/tlb.h>
 #include <asm/pgtable.h>
+#include <asm/highmem.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -209,7 +211,7 @@ static struct mem_type mem_types[] = {
 		.prot_l1	= PMD_TYPE_TABLE,
 		.prot_sect	= PROT_SECT_DEVICE | PMD_SECT_WB,
 		.domain		= DOMAIN_IO,
-	},	
+	},
 	[MT_DEVICE_WC] = {	/* ioremap_wc */
 		.prot_pte	= PROT_PTE_DEVICE | L_PTE_MT_DEV_WC,
 		.prot_l1	= PMD_TYPE_TABLE,
@@ -728,6 +730,10 @@ static void __init sanity_check_meminfo(void)
 			if (meminfo.nr_banks >= NR_BANKS) {
 				printk(KERN_CRIT "NR_BANKS too low, "
 						 "ignoring high memory\n");
+			} else if (cache_is_vipt_aliasing()) {
+				printk(KERN_CRIT "HIGHMEM is not yet supported "
+						 "with VIPT aliasing cache, "
+						 "ignoring high memory\n");
 			} else {
 				memmove(bank + 1, bank,
 					(meminfo.nr_banks - i) * sizeof(*bank));
@@ -989,6 +995,17 @@ static void __init devicemaps_init(struct machine_desc *mdesc)
 	flush_cache_all();
 }
 
+static void __init kmap_init(void)
+{
+#ifdef CONFIG_HIGHMEM
+	pmd_t *pmd = pmd_off_k(PKMAP_BASE);
+	pte_t *pte = alloc_bootmem_low_pages(2 * PTRS_PER_PTE * sizeof(pte_t));
+	BUG_ON(!pmd_none(*pmd) || !pte);
+	__pmd_populate(pmd, __pa(pte) | _PAGE_KERNEL_TABLE);
+	pkmap_page_table = pte + PTRS_PER_PTE;
+#endif
+}
+
 /*
  * paging_init() sets up the page tables, initialises the zone memory
  * maps, and sets up the zero page, bad page and bad page tables.
@@ -1002,6 +1019,7 @@ void __init paging_init(struct machine_desc *mdesc)
 	prepare_page_table();
 	bootmem_init();
 	devicemaps_init(mdesc);
+	kmap_init();
 
 	top_pmd = pmd_off_k(0xffff0000);
 

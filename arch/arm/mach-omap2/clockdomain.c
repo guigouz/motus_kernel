@@ -22,6 +22,7 @@
 #include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/limits.h>
+#include <linux/err.h>
 
 #include <linux/io.h>
 
@@ -73,14 +74,11 @@ static void _autodep_lookup(struct clkdm_pwrdm_autodep *autodep)
 
 	pwrdm = pwrdm_lookup(autodep->pwrdm.name);
 	if (!pwrdm) {
-		pr_debug("clockdomain: _autodep_lookup: powerdomain %s "
-			 "does not exist\n", autodep->pwrdm.name);
-		WARN_ON(1);
-		return;
+		pr_err("clockdomain: autodeps: powerdomain %s does not exist\n",
+			 autodep->pwrdm.name);
+		pwrdm = ERR_PTR(-ENOENT);
 	}
 	autodep->pwrdm.ptr = pwrdm;
-
-	return;
 }
 
 /*
@@ -96,6 +94,9 @@ static void _clkdm_add_autodeps(struct clockdomain *clkdm)
 	struct clkdm_pwrdm_autodep *autodep;
 
 	for (autodep = autodeps; autodep->pwrdm.ptr; autodep++) {
+		if (IS_ERR(autodep->pwrdm.ptr))
+			continue;
+
 		if (!omap_chip_is(autodep->omap_chip))
 			continue;
 
@@ -121,6 +122,9 @@ static void _clkdm_del_autodeps(struct clockdomain *clkdm)
 	struct clkdm_pwrdm_autodep *autodep;
 
 	for (autodep = autodeps; autodep->pwrdm.ptr; autodep++) {
+		if (IS_ERR(autodep->pwrdm.ptr))
+			continue;
+
 		if (!omap_chip_is(autodep->omap_chip))
 			continue;
 
@@ -204,8 +208,8 @@ int clkdm_register(struct clockdomain *clkdm)
 
 	pwrdm = pwrdm_lookup(clkdm->pwrdm.name);
 	if (!pwrdm) {
-		pr_debug("clockdomain: clkdm_register %s: powerdomain %s "
-			 "does not exist\n", clkdm->name, clkdm->pwrdm.name);
+		pr_err("clockdomain: %s: powerdomain %s does not exist\n",
+			clkdm->name, clkdm->pwrdm.name);
 		return -EINVAL;
 	}
 	clkdm->pwrdm.ptr = pwrdm;
@@ -215,7 +219,7 @@ int clkdm_register(struct clockdomain *clkdm)
 	if (_clkdm_lookup(clkdm->name)) {
 		ret = -EEXIST;
 		goto cr_unlock;
-	};
+	}
 
 	list_add(&clkdm->node, &clkdm_list);
 
@@ -295,8 +299,7 @@ struct clockdomain *clkdm_lookup(const char *name)
  * anything else to indicate failure; or -EINVAL if the function pointer
  * is null.
  */
-int clkdm_for_each(int (*fn)(struct clockdomain *clkdm, void *user),
-			void *user)
+int clkdm_for_each(int (*fn)(struct clockdomain *clkdm))
 {
 	struct clockdomain *clkdm;
 	int ret = 0;
@@ -306,7 +309,7 @@ int clkdm_for_each(int (*fn)(struct clockdomain *clkdm, void *user),
 
 	mutex_lock(&clkdm_mutex);
 	list_for_each_entry(clkdm, &clkdm_list, node) {
-		ret = (*fn)(clkdm, user);
+		ret = (*fn)(clkdm);
 		if (ret)
 			break;
 	}
@@ -481,8 +484,6 @@ void omap2_clkdm_allow_idle(struct clockdomain *clkdm)
 			    v << __ffs(clkdm->clktrctrl_mask),
 			    clkdm->pwrdm.ptr->prcm_offs,
 			    CM_CLKSTCTRL);
-
-	pwrdm_clkdm_state_switch(clkdm);
 }
 
 /**
@@ -571,7 +572,6 @@ int omap2_clkdm_clk_enable(struct clockdomain *clkdm, struct clk *clk)
 		omap2_clkdm_wakeup(clkdm);
 
 	pwrdm_wait_transition(clkdm->pwrdm.ptr);
-	pwrdm_clkdm_state_switch(clkdm);
 
 	return 0;
 }
@@ -623,8 +623,6 @@ int omap2_clkdm_clk_disable(struct clockdomain *clkdm, struct clk *clk)
 		_clkdm_del_autodeps(clkdm);
 	else
 		omap2_clkdm_sleep(clkdm);
-
-	pwrdm_clkdm_state_switch(clkdm);
 
 	return 0;
 }

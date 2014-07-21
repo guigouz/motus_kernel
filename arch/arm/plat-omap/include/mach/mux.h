@@ -61,6 +61,16 @@
 					.pull_bit = bit, \
 					.pull_val = status,
 
+#define MUX_REG_850(reg, mode_offset, mode) .mux_reg_name = "OMAP850_IO_CONF_"#reg, \
+					.mux_reg = OMAP850_IO_CONF_##reg, \
+					.mask_offset = mode_offset, \
+					.mask = mode,
+
+#define PULL_REG_850(reg, bit, status)	.pull_name = "OMAP850_IO_CONF_"#reg, \
+					.pull_reg = OMAP850_IO_CONF_##reg, \
+					.pull_bit = bit, \
+					.pull_val = status,
+
 #else
 
 #define MUX_REG(reg, mode_offset, mode) .mux_reg = FUNC_MUX_CTRL_##reg, \
@@ -83,6 +93,15 @@
 					.pull_bit = bit, \
 					.pull_val = status,
 
+#define MUX_REG_850(reg, mode_offset, mode) \
+					.mux_reg = OMAP850_IO_CONF_##reg, \
+					.mask_offset = mode_offset, \
+					.mask = mode,
+
+#define PULL_REG_850(reg, bit, status)	.pull_reg = OMAP850_IO_CONF_##reg, \
+					.pull_bit = bit, \
+					.pull_val = status,
+
 #endif /* CONFIG_OMAP_MUX_DEBUG */
 
 #define MUX_CFG(desc, mux_reg, mode_offset, mode,	\
@@ -98,7 +117,7 @@
 
 
 /*
- * OMAP730 has a slightly different config for the pin mux.
+ * OMAP730/850 has a slightly different config for the pin mux.
  * - config regs are the OMAP730_IO_CONF_x regs (see omap730.h) regs and
  *   not the FUNC_MUX_CTRL_x regs from hardware.h
  * - for pull-up/down, only has one enable bit which is is in the same register
@@ -113,6 +132,17 @@
 	PULL_REG_730(mux_reg, pull_bit, pull_status)	\
 	PU_PD_REG(NA, 0)		\
 },
+
+#define MUX_CFG_850(desc, mux_reg, mode_offset, mode,	\
+		   pull_bit, pull_status, debug_status)\
+{							\
+	.name =	 desc,					\
+	.debug = debug_status,				\
+	MUX_REG_850(mux_reg, mode_offset, mode)		\
+	PULL_REG_850(mux_reg, pull_bit, pull_status)	\
+	PU_PD_REG(NA, 0)		\
+},
+
 
 #define MUX_CFG_24XX(desc, reg_offset, mode,			\
 				pull_en, pull_mode, dbg)	\
@@ -133,7 +163,7 @@
 /* 34xx specific mux bit defines */
 #define OMAP3_INPUT_EN		(1 << 8)
 #define OMAP3_OFF_EN		(1 << 9)
-#define OMAP3_OFFIN_EN		(1 << 10)
+#define OMAP3_OFFOUT_EN		(1 << 10)
 #define OMAP3_OFFOUT_VAL	(1 << 11)
 #define OMAP3_OFF_PULL_EN	(1 << 12)
 #define OMAP3_OFF_PULL_UP	(1 << 13)
@@ -158,13 +188,12 @@
 
 /* 34xx off mode states */
 #define OMAP34XX_PIN_OFF_NONE           0
-#define OMAP34XX_PIN_OFF_OUTPUT_HIGH	(OMAP3_OFF_EN | OMAP3_OFFOUT_VAL)
-#define OMAP34XX_PIN_OFF_OUTPUT_LOW	(OMAP3_OFF_EN)
-#define OMAP34XX_PIN_OFF_INPUT_PULLUP	(OMAP3_OFF_EN | OMAP3_OFFIN_EN \
-						| OMAP3_OFF_PULL_EN \
+#define OMAP34XX_PIN_OFF_OUTPUT_HIGH	(OMAP3_OFF_EN | OMAP3_OFFOUT_EN \
+						| OMAP3_OFFOUT_VAL)
+#define OMAP34XX_PIN_OFF_OUTPUT_LOW	(OMAP3_OFF_EN | OMAP3_OFFOUT_EN)
+#define OMAP34XX_PIN_OFF_INPUT_PULLUP	(OMAP3_OFF_EN | OMAP3_OFF_PULL_EN \
 						| OMAP3_OFF_PULL_UP)
-#define OMAP34XX_PIN_OFF_INPUT_PULLDOWN	(OMAP3_OFF_EN | OMAP3_OFFIN_EN \
-						| OMAP3_OFF_PULL_EN)
+#define OMAP34XX_PIN_OFF_INPUT_PULLDOWN	(OMAP3_OFF_EN | OMAP3_OFF_PULL_EN)
 #define OMAP34XX_PIN_OFF_WAKEUPENABLE	OMAP3_WAKEUP_EN
 
 #define MUX_CFG_34XX(desc, reg_offset, mux_value) {		\
@@ -221,6 +250,26 @@ enum omap730_index {
 	W16_730_USB_PU_EN,
 	W17_730_USB_VBUSI,
 };
+
+enum omap850_index {
+	/* OMAP 850 keyboard */
+	E2_850_KBR0,
+	J7_850_KBR1,
+	E1_850_KBR2,
+	F3_850_KBR3,
+	D2_850_KBR4,
+	C2_850_KBC0,
+	D3_850_KBC1,
+	E4_850_KBC2,
+	F4_850_KBC3,
+	E3_850_KBC4,
+
+	/* USB */
+	AA17_850_USB_DM,
+	W16_850_USB_PU_EN,
+	W17_850_USB_VBUSI,
+};
+
 
 enum omap1xxx_index {
 	/* UART1 (BT_UART_GATING)*/
@@ -790,170 +839,20 @@ enum omap34xx_index {
 	 *  - "_OUT" suffix (GPIO3_OUT) for output-only pins (unlike 24xx)
 	 */
 	AF26_34XX_GPIO0,
-	AF21_34XX_GPIO8,
 	AF22_34XX_GPIO9,
-	AG25_34XX_GPIO10,
-	AF9_34XX_GPIO22_DOWN,
-	AE7_34XX_GPIO24_DOWN, /* KXTF9 mocked Sholes */
-	AB10_34XX_GPIO28_OUT,
 	AH8_34XX_GPIO29,
-	N4_34XX_GPIO34,
-	M4_34XX_GPIO35,
-	L4_34XX_GPIO36,
-	K4_34XX_GPIO37,
-	T3_34XX_GPIO38,
-	R3_34XX_GPIO39,
-	N3_34XX_GPIO40,
-	M3_34XX_GPIO41,
-	K3_34XX_GPIO43_OUT,
-	V8_34XX_GPIO53_OUT,
 	U8_34XX_GPIO54_OUT,
 	U8_34XX_GPIO54_DOWN,
-	T8_34XX_GPIO55,
-	T8_34XX_GPIO55_OUT,
-	R8_34XX_GPIO56_OUT,
-	P8_34XX_GPIO57_OUT,
-	N8_34XX_GPIO58_OUT,
-	T4_34XX_GPIO59_DOWN,
 	L8_34XX_GPIO63,
-	L8_34XX_GPIO63_OUT,
-	J8_3430_GPIO65,
 	G25_34XX_GPIO86_OUT,
-	AC27_34XX_GPIO92,
-	A24_34XX_GPIO94,
-	C25_34XX_GPIO96,
-	AG17_34XX_GPIO99,
-	AH17_34XX_GPIO100,
-	B24_34XX_GPIO101,
-	B24_34XX_GPIO101_OUT,
-	B26_34XX_GPIO111,
 	AG4_34XX_GPIO134_OUT,
 	AE4_34XX_GPIO136_OUT,
-	AH3_34XX_GPIO137_OUT,
-	AF3_34XX_GPIO138_OUT,
-	AE3_34XX_GPIO139_DOWN,
 	AF6_34XX_GPIO140_UP,
-	AE6_34XX_GPIO141_DOWN,
+	AE6_34XX_GPIO141,
 	AF5_34XX_GPIO142,
 	AE5_34XX_GPIO143,
-	AA21_34XX_GPIO157_OUT,
-	W21_34XX_GPIO162,
-	H18_34XX_GPIO163,
 	H19_34XX_GPIO164_OUT,
-	B23_34XX_GPIO167,
 	J25_34XX_GPIO170,
-	AC3_34XX_GPIO175,
-	AB1_34XX_GPIO176_OUT,
-	AB2_34XX_GPIO177,
-	W7_34XX_GPIO178_DOWN,
-	T3_34XX_GPIO_179,
-	Y3_34XX_GPIO180,
-	Y4_34XX_GPIO181,
-	AE22_34XX_GPIO186,
-	AE22_34XX_GPIO186_OUT,
-
-	/* MMC1 */
-	N28_3430_MMC1_CLK,
-	M27_3430_MMC1_CMD,
-	N27_3430_MMC1_DAT0,
-	N26_3430_MMC1_DAT1,
-	N25_3430_MMC1_DAT2,
-	P28_3430_MMC1_DAT3,
-	P27_3430_MMC1_DAT4,
-	P26_3430_MMC1_DAT5,
-	R27_3430_MMC1_DAT6,
-	R25_3430_MMC1_DAT7,
-
-	/* MMC2 */
-	AE2_3430_MMC2_CLK,
-	AG5_3430_MMC2_CMD,
-	AH5_3430_MMC2_DAT0,
-	AH4_3430_MMC2_DAT1,
-	AG4_3430_MMC2_DAT2,
-	AF4_3430_MMC2_DAT3,
-
-	/* MMC3 */
-	AF10_3430_MMC3_CLK,
-	AC3_3430_MMC3_CMD,
-	AE11_3430_MMC3_DAT0,
-	AH9_3430_MMC3_DAT1,
-	AF13_3430_MMC3_DAT2,
-	AE13_3430_MMC3_DAT3,
-
-	/* UART1 */
-	AA8_3430_UART1_TX,
-	Y8_3430_UART1_RX,
-	AA9_3430_UART1_RTS,
-	W8_3430_UART1_CTS,
-
-	/* McSPI */
-	AB1_34XX_McSPI1_CS2,
-
-	/* DSI */
-	AG22_34XX_DSI_DX0,
-	AH22_34XX_DSI_DY0,
-	AG23_34XX_DSI_DX1,
-	AH23_34XX_DSI_DY1,
-	AG24_34XX_DSI_DX2,
-	AH24_34XX_DSI_DY2,
-
-	H16_34XX_SDRC_CKE0,
-	H17_34XX_SDRC_CKE1,
-
-	/* UART2 */
-	AA25_34XX_UART2_TX,
-	AD25_34XX_UART2_RX,
-	AB25_34XX_UART2_RTS,
-	AB26_34XX_UART2_CTS,
-
-	/* McBSP */
-	P21_OMAP34XX_MCBSP2_FSX,
-	N21_OMAP34XX_MCBSP2_CLKX,
-	R21_OMAP34XX_MCBSP2_DR,
-	M21_OMAP34XX_MCBSP2_DX,
-	K26_OMAP34XX_MCBSP3_FSX,
-	W21_OMAP34XX_MCBSP3_CLKX,
-	U21_OMAP34XX_MCBSP3_DR,
-	V21_OMAP34XX_MCBSP3_DX,
-
-	/* HDQ */
-	J25_34XX_HDQ_SIO,
-
-	/* Camera */
-	A24_34XX_CAM_HS,
-	A23_34XX_CAM_VS,
-	C25_34XX_CAM_XCLKA,
-	C27_34XX_CAM_PCLK,
-	C23_34XX_CAM_FLD,
-	AG17_34XX_CAM_D0_S,
-	AH17_34XX_CAM_D1_S,
-	B24_34XX_CAM_D2,
-	C24_34XX_CAM_D3,
-	D24_34XX_CAM_D4,
-	A25_34XX_CAM_D5,
-	K28_34XX_CAM_D6,
-	L28_34XX_CAM_D7,
-	K27_34XX_CAM_D8,
-	L27_34XX_CAM_D9,
-	B25_34XX_CAM_D10,
-	C26_34XX_CAM_D11,
-	B26_34XX_CAM_XCLKB,
-	B23_34XX_CAM_WEN,
-	D25_34XX_CAM_STROBE,
-	K8_34XX_GPMC_WAIT2,
-	H2_34XX_GPMC_A3,
-	AG22_34XX_DSS_DATA0,
-	AH22_34XX_DSS_DATA1,
-	AG23_34XX_DSS_DATA2,
-	AH23_34XX_DSS_DATA3,
-	AG24_34XX_DSS_DATA4,
-	AH24_34XX_DSS_DATA5,
-	AG17_34XX_CAM_D0_ST,
-	AH17_34XX_CAM_D1_ST,
-	AD17_34XX_CSI2_DX0,
-	AE18_34XX_CSI2_DY0,
-	AD16_34XX_CSI2_DX1,
-	AE17_34XX_CSI2_DY1,
 };
 
 struct omap_mux_cfg {

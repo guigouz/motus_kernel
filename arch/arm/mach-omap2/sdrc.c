@@ -37,37 +37,6 @@ static struct omap_sdrc_params *sdrc_init_params;
 void __iomem *omap2_sdrc_base;
 void __iomem *omap2_sms_base;
 
-struct omap2_sms_regs {
-	u32	sms_sysconfig;
-};
-
-static struct omap2_sms_regs sms_context;
-
-/* SDRC_POWER register bits */
-#define SDRC_POWER_SRFRONRESET			7
-#define SDRC_POWER_EXTCLKDIS_SHIFT		3
-#define SDRC_POWER_PWDENA_SHIFT			2
-#define SDRC_POWER_PAGEPOLICY_SHIFT		0
-
-/**
- * omap2_sms_save_context - Save SMS registers
- *
- * Save SMS registers that need to be restored after off mode.
- */
-void omap2_sms_save_context(void)
-{
-	sms_context.sms_sysconfig = sms_read_reg(SMS_SYSCONFIG);
-}
-
-/**
- * omap2_sms_restore_context - Restore SMS registers
- *
- * Restore SMS registers that need to be Restored after off mode.
- */
-void omap2_sms_restore_context(void)
-{
-	sms_write_reg(sms_context.sms_sysconfig, SMS_SYSCONFIG);
-}
 
 /**
  * omap2_sdrc_get_params - return SDRC register values for a given clock rate
@@ -87,12 +56,9 @@ struct omap_sdrc_params *omap2_sdrc_get_params(unsigned long r)
 {
 	struct omap_sdrc_params *sp;
 
-	if (!sdrc_init_params)
-		return NULL;
-
 	sp = sdrc_init_params;
 
-	while (sp->rate && sp->rate != r)
+	while (sp->rate != r)
 		sp++;
 
 	if (!sp->rate)
@@ -108,14 +74,7 @@ void __init omap2_set_globals_sdrc(struct omap_globals *omap2_globals)
 	omap2_sms_base = omap2_globals->sms;
 }
 
-/**
- * omap2_sdrc_init - initialize SMS, SDRC devices on boot
- * @sp: pointer to a null-terminated list of struct omap_sdrc_params
- *
- * Turn on smart idle modes for SDRAM scheduler and controller.
- * Program a known-good configuration for the SDRC to deal with buggy
- * bootloaders.
- */
+/* turn on smart idle modes for SDRAM scheduler and controller */
 void __init omap2_sdrc_init(struct omap_sdrc_params *sp)
 {
 	u32 l;
@@ -131,15 +90,4 @@ void __init omap2_sdrc_init(struct omap_sdrc_params *sp)
 	sdrc_write_reg(l, SDRC_SYSCONFIG);
 
 	sdrc_init_params = sp;
-
-	/* XXX Enable SRFRONIDLEREQ here also? */
-	/*
-	 * PWDENA should not be set due to 34xx erratum 1.150 - PWDENA
-	 * can cause random memory corruption
-	 */
-	l = (1 << SDRC_POWER_SRFRONRESET) |
-		(1 << SDRC_POWER_EXTCLKDIS_SHIFT) |
-		(1 << SDRC_POWER_PAGEPOLICY_SHIFT);
-	sdrc_write_reg(l, SDRC_POWER);
-	omap2_sms_save_context();
 }

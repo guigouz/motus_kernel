@@ -46,6 +46,7 @@
 #include <mach/nand.h>
 #include <mach/usb.h>
 #include <mach/mcspi.h>
+#include <mach/usb.h>
 
 #include "sdram-micron-mt46h32m32lf-6.h"
 #include "mmc-twl4030.h"
@@ -306,6 +307,7 @@ static void __init omap3pandora_init(void)
 	usb_ehci_init();
 	omap3pandora_flash_init();
 	omap3pandora_ads7846_init();
+	usb_musb_init();
 }
 
 static void __init omap3pandora_map_io(void)

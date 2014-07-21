@@ -224,7 +224,7 @@ static struct powerdomain core_34xx_es3_1_pwrdm = {
 	.name		  = "core_pwrdm",
 	.prcm_offs	  = CORE_MOD,
 	.omap_chip	  = OMAP_CHIP_INIT(CHIP_GE_OMAP3430ES3_1),
-	.pwrsts		  = PWRSTS_RET_ON,/*Temporarily disable OFF*/
+	.pwrsts		  = PWRSTS_OFF_RET_ON,
 	.dep_bit	  = OMAP3430_EN_CORE_SHIFT,
 	.flags		  = PWRDM_HAS_HDWR_SAR, /* for USBTLL only */
 	.banks		  = 2,
@@ -246,7 +246,7 @@ static struct powerdomain dss_pwrdm = {
 	.dep_bit	  = OMAP3430_PM_WKDEP_MPU_EN_DSS_SHIFT,
 	.wkdep_srcs	  = cam_dss_wkdeps,
 	.sleepdep_srcs	  = dss_per_usbhost_sleepdeps,
-	.pwrsts		  = PWRSTS_RET_ON,/*Temporarily disable OFF*/
+	.pwrsts		  = PWRSTS_OFF_RET_ON,
 	.pwrsts_logic_ret = PWRDM_POWER_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
@@ -304,7 +304,7 @@ static struct powerdomain per_pwrdm = {
 	.dep_bit	  = OMAP3430_EN_PER_SHIFT,
 	.wkdep_srcs	  = per_usbhost_wkdeps,
 	.sleepdep_srcs	  = dss_per_usbhost_sleepdeps,
-	.pwrsts		  = PWRSTS_RET_ON,/*Temporarily disable OFF*/
+	.pwrsts		  = PWRSTS_OFF_RET_ON,
 	.pwrsts_logic_ret = PWRSTS_OFF_RET,
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
@@ -338,14 +338,7 @@ static struct powerdomain usbhost_pwrdm = {
 	.sleepdep_srcs	  = dss_per_usbhost_sleepdeps,
 	.pwrsts		  = PWRSTS_OFF_RET_ON,
 	.pwrsts_logic_ret = PWRDM_POWER_RET,
-	/*
-	 * REVISIT: Enabling usb host save and restore mechanism seems to
-	 * leave the usb host domain permanently in ACTIVE mode after
-	 * changing the usb host power domain state from OFF to active once.
-	 * Disabling for now.
-	 */
-	/*.flags	  = PWRDM_HAS_HDWR_SAR,*/ /* for USBHOST ctrlr only */
-	.flags	  = PWRDM_HAS_HDWR_SAR, /* for USBHOST ctrlr only */
+	.flags		  = PWRDM_HAS_HDWR_SAR, /* for USBHOST ctrlr only */
 	.banks		  = 1,
 	.pwrsts_mem_ret	  = {
 		[0] = PWRDM_POWER_RET, /* MEMRETSTATE */

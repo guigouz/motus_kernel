@@ -17,12 +17,12 @@
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/input.h>
-#include <linux/err.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/i2c/twl4030.h>
 #include <linux/regulator/machine.h>
 #include <linux/io.h>
+#include <linux/gpio.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -30,27 +30,20 @@
 #include <asm/mach/map.h>
 
 #include <mach/mcspi.h>
-#include <mach/gpio.h>
 #include <mach/mux.h>
 #include <mach/board.h>
 #include <mach/usb.h>
 #include <mach/common.h>
 #include <mach/dma.h>
 #include <mach/gpmc.h>
-#include <mach/display.h>
-#include <mach/omap-pm.h>
 
 #include <mach/control.h>
-#include <mach/clock.h>
+#include <mach/keypad.h>
 
-#include "sdram-qimonda-hyb18m512160af-6.h"
 #include "mmc-twl4030.h"
-#include "pm.h"
-#include "omap3-opp.h"
 
 #define CONFIG_DISABLE_HFCLK 1
 
-#define SDP3430_ETHR_START		DEBUG_BASE
 #define SDP3430_ETHR_GPIO_IRQ_SDPV1	29
 #define SDP3430_ETHR_GPIO_IRQ_SDPV2	6
 #define SDP3430_SMC91X_CS		3
@@ -125,42 +118,6 @@ static struct twl4030_keypad_data sdp3430_kp_data = {
 
 static int ts_gpio;	/* Needed for ads7846_get_pendown_state */
 
-static int __init msecure_init(void)
-{
-	int ret = 0;
-
-#ifdef CONFIG_RTC_DRV_TWL4030
-	/* 3430ES2.0 doesn't have msecure/gpio-22 line connected to T2 */
-	if (omap_type() == OMAP2_DEVICE_TYPE_GP &&
-			omap_rev() < OMAP3430_REV_ES2_0) {
-		void __iomem *msecure_pad_config_reg = omap_ctrl_base_get() +
-			0xA3C;
-		int mux_mask = 0x04;
-		u16 tmp;
-
-		ret = gpio_request(TWL4030_MSECURE_GPIO, "msecure");
-		if (ret < 0) {
-			printk(KERN_ERR "msecure_init: can't"
-				"reserve GPIO:%d !\n", TWL4030_MSECURE_GPIO);
-			goto out;
-		}
-		/*
-		 * TWL4030 will be in secure mode if msecure line from OMAP
-		 * is low. Make msecure line high in order to change the
-		 * TWL4030 RTC time and calender registers.
-		 */
-		tmp = __raw_readw(msecure_pad_config_reg);
-		tmp &= 0xF8; /* To enable mux mode 03/04 = GPIO_RTC */
-		tmp |= mux_mask;/* To enable mux mode 03/04 = GPIO_RTC */
-		__raw_writew(tmp, msecure_pad_config_reg);
-
-		gpio_direction_output(TWL4030_MSECURE_GPIO, 1);
-	}
-out:
-#endif
-	return ret;
-}
-
 /**
  * @brief ads7846_dev_init : Requests & sets GPIO line for pen-irq
  *
@@ -184,42 +141,9 @@ static int ads7846_get_pendown_state(void)
 	return !gpio_get_value(ts_gpio);
 }
 
-/*
- * This enable(1)/disable(0) the voltage for TS: uses twl4030 calls
- */
-static int ads7846_vaux_control(int vaux_cntrl)
-{
-	int ret = 0;
-
-	/* FIXME use regulator calls */
-
-#ifdef CONFIG_TWL4030_CORE
-	/* check for return value of ldo_use: if success it returns 0 */
-	if (vaux_cntrl == VAUX_ENABLE) {
-		if (ret != twl4030_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER,
-			ENABLE_VAUX3_DEDICATED, TWL4030_VAUX3_DEDICATED))
-			return -EIO;
-		if (ret != twl4030_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER,
-			ENABLE_VAUX3_DEV_GRP, TWL4030_VAUX3_DEV_GRP))
-			return -EIO;
-	} else if (vaux_cntrl == VAUX_DISABLE) {
-		if (ret != twl4030_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER,
-			0x00, TWL4030_VAUX3_DEDICATED))
-			return -EIO;
-		if (ret != twl4030_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER,
-			0x00, TWL4030_VAUX3_DEV_GRP))
-			return -EIO;
-	}
-#else
-	ret = -EIO;
-#endif
-	return ret;
-}
-
 static struct ads7846_platform_data tsc2046_config __initdata = {
 	.get_pendown_state	= ads7846_get_pendown_state,
 	.keep_vref_on		= 1,
-	.vaux_control		= ads7846_vaux_control,
 };
 
 
@@ -244,150 +168,24 @@ static struct spi_board_info sdp3430_spi_board_info[] __initdata = {
 	},
 };
 
-
-#define SDP3430_LCD_PANEL_BACKLIGHT_GPIO	8
-#define SDP3430_LCD_PANEL_ENABLE_GPIO		5
-
-static unsigned backlight_gpio;
-static unsigned enable_gpio;
-static int lcd_enabled;
-static int dvi_enabled;
-
-static void __init sdp3430_display_init(void)
-{
-	int r;
-
-	enable_gpio    = SDP3430_LCD_PANEL_ENABLE_GPIO;
-	backlight_gpio = SDP3430_LCD_PANEL_BACKLIGHT_GPIO;
-
-	r = gpio_request(enable_gpio, "LCD reset");
-	if (r) {
-		printk(KERN_ERR "failed to get LCD reset GPIO\n");
-		goto err0;
-	}
-
-	r = gpio_request(backlight_gpio, "LCD Backlight");
-	if (r) {
-		printk(KERN_ERR "failed to get LCD backlight GPIO\n");
-		goto err1;
-	}
-
-	gpio_direction_output(enable_gpio, 0);
-	gpio_direction_output(backlight_gpio, 0);
-
-	return;
-err1:
-	gpio_free(enable_gpio);
-err0:
-	return;
-}
-
-static int sdp3430_panel_enable_lcd(struct omap_dss_device *dssdev)
-{
-	if (dvi_enabled) {
-		printk(KERN_ERR "cannot enable LCD, DVI is enabled\n");
-		return -EINVAL;
-	}
-
-	gpio_direction_output(enable_gpio, 1);
-	gpio_direction_output(backlight_gpio, 1);
-
-	lcd_enabled = 1;
-
-	return 0;
-}
-
-static void sdp3430_panel_disable_lcd(struct omap_dss_device *dssdev)
-{
-	lcd_enabled = 0;
-
-	gpio_direction_output(enable_gpio, 0);
-	gpio_direction_output(backlight_gpio, 0);
-}
-
-static int sdp3430_panel_enable_dvi(struct omap_dss_device *dssdev)
-{
-	if (lcd_enabled) {
-		printk(KERN_ERR "cannot enable DVI, LCD is enabled\n");
-		return -EINVAL;
-	}
-
-	dvi_enabled = 1;
-
-	return 0;
-}
-
-static void sdp3430_panel_disable_dvi(struct omap_dss_device *dssdev)
-{
-	dvi_enabled = 0;
-}
-
-static int sdp3430_panel_enable_tv(struct omap_dss_device *dssdev)
-{
-	return 0;
-}
-
-static void sdp3430_panel_disable_tv(struct omap_dss_device *dssdev)
-{
-}
-
-
-static struct omap_dss_device sdp3430_lcd_device = {
-	.name = "lcd",
-	.driver_name = "sharp_ls_panel",
-	.type = OMAP_DISPLAY_TYPE_DPI,
-	.phy.dpi.data_lines = 16,
-	.platform_enable = sdp3430_panel_enable_lcd,
-	.platform_disable = sdp3430_panel_disable_lcd,
+static struct platform_device sdp3430_lcd_device = {
+	.name		= "sdp2430_lcd",
+	.id		= -1,
 };
 
-static struct omap_dss_device sdp3430_dvi_device = {
-	.name = "dvi",
-	.driver_name = "generic_panel",
-	.type = OMAP_DISPLAY_TYPE_DPI,
-	.phy.dpi.data_lines = 24,
-	.platform_enable = sdp3430_panel_enable_dvi,
-	.platform_disable = sdp3430_panel_disable_dvi,
+static struct regulator_consumer_supply sdp3430_vdac_supply = {
+	.supply		= "vdac",
+	.dev		= &sdp3430_lcd_device.dev,
 };
 
-static struct omap_dss_device sdp3430_tv_device = {
-	.name = "tv",
-	.driver_name = "venc",
-	.type = OMAP_DISPLAY_TYPE_VENC,
-	.phy.venc.type = OMAP_DSS_VENC_TYPE_SVIDEO,
-	.platform_enable = sdp3430_panel_enable_tv,
-	.platform_disable = sdp3430_panel_disable_tv,
-};
-
-
-static struct omap_dss_device *sdp3430_dss_devices[] = {
-	&sdp3430_lcd_device,
-	&sdp3430_dvi_device,
-	&sdp3430_tv_device,
-};
-
-static struct omap_dss_board_info sdp3430_dss_data = {
-	.num_devices = ARRAY_SIZE(sdp3430_dss_devices),
-	.devices = sdp3430_dss_devices,
-	.default_device = &sdp3430_lcd_device,
-};
-
-static struct platform_device sdp3430_dss_device = {
-	.name          = "omapdss",
-	.id            = -1,
-	.dev            = {
-		.platform_data = &sdp3430_dss_data,
-	},
-};
-
-static struct regulator_consumer_supply sdp3430_vdda_dac_supply = {
-	.supply		= "vdda_dac",
-	.dev		= &sdp3430_dss_device.dev,
+static struct regulator_consumer_supply sdp3430_vdvi_supply = {
+	.supply		= "vdvi",
+	.dev		= &sdp3430_lcd_device.dev,
 };
 
 static struct platform_device *sdp3430_devices[] __initdata = {
 	&sdp3430_smc91x_device,
-	&sdp3430_dss_device,
+	&sdp3430_lcd_device,
 };
 
 static inline void __init sdp3430_init_smc91x(void)
@@ -424,32 +222,7 @@ static inline void __init sdp3430_init_smc91x(void)
 
 static void __init omap_3430sdp_init_irq(void)
 {
-	omap2_init_common_hw(hyb18m512160af6_sdrc_params, omap3_mpu_rate_table,
-	switch (omap_rev_id()) {
-	case OMAP_3420:
-		omap2_init_common_hw(hyb18m512160af6_sdrc_params,
-		omap3_mpu_rate_table, omap3_dsp_rate_table_3420,
-		omap3_l3_rate_table);
-		break;
-
-	case OMAP_3430:
-		omap2_init_common_hw(hyb18m512160af6_sdrc_params,
-		omap3_mpu_rate_table, omap3_dsp_rate_table,
-		omap3_l3_rate_table);
-		break;
-
-	case OMAP_3440:
-		omap2_init_common_hw(hyb18m512160af6_sdrc_params,
-		omap3_mpu_rate_table, omap3_dsp_rate_table_3440,
-		omap3_l3_rate_table);
-		break;
-
-	default:
-		omap2_init_common_hw(hyb18m512160af6_sdrc_params,
-		omap3_mpu_rate_table, omap3_dsp_rate_table,
-		omap3_l3_rate_table);
-		break;
-		}
+	omap2_init_common_hw();
 	omap_init_irq();
 	omap_gpio_init();
 	sdp3430_init_smc91x();
@@ -459,8 +232,13 @@ static struct omap_uart_config sdp3430_uart_config __initdata = {
 	.enabled_uarts	= ((1 << 0) | (1 << 1) | (1 << 2)),
 };
 
+static struct omap_lcd_config sdp3430_lcd_config __initdata = {
+	.ctrl_name	= "internal",
+};
+
 static struct omap_board_config_kernel sdp3430_config[] __initdata = {
 	{ OMAP_TAG_UART,	&sdp3430_uart_config },
+	{ OMAP_TAG_LCD,		&sdp3430_lcd_config },
 };
 
 static int sdp3430_batt_table[] = {
@@ -551,87 +329,6 @@ static struct twl4030_usb_data sdp3430_usb_data = {
 
 static struct twl4030_madc_platform_data sdp3430_madc_data = {
 	.irq_line	= 1,
-};
-
-
-static struct twl4030_ins __initdata sleep_on_seq[] = {
-/*
- * Turn off VDD1 and VDD2.
- */
-	{MSG_SINGULAR(DEV_GRP_P1, 0xf, RES_STATE_OFF), 4},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x10, RES_STATE_OFF), 2},
-#ifdef CONFIG_DISABLE_HFCLK
-/*
- * And also turn off the OMAP3 PLLs and the sysclk output.
- */
-	{MSG_SINGULAR(DEV_GRP_P1, 0x7, RES_STATE_OFF), 3},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x19, RES_STATE_OFF), 3},
-#endif
-};
-
-static struct twl4030_script sleep_on_script __initdata = {
-	.script	= sleep_on_seq,
-	.size	= ARRAY_SIZE(sleep_on_seq),
-	.flags	= TRITON_SLEEP_SCRIPT,
-};
-
-static struct twl4030_ins wakeup_seq[] __initdata = {
-#ifndef CONFIG_DISABLE_HFCLK
-/*
- * Wakeup VDD1 and VDD2.
- */
-	{MSG_SINGULAR(DEV_GRP_P1, 0xf, RES_STATE_ACTIVE), 4},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x10, RES_STATE_ACTIVE), 2},
-#else
-/*
- * Reenable the OMAP3 PLLs.
- * Wakeup VDD1 and VDD2.
- * Reenable sysclk output.
- */
-	{MSG_SINGULAR(DEV_GRP_P1, 0x7, RES_STATE_ACTIVE), 0x30},
-	{MSG_SINGULAR(DEV_GRP_P1, 0xf, RES_STATE_ACTIVE), 0x30},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x10, RES_STATE_ACTIVE), 0x37},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x19, RES_STATE_ACTIVE), 3},
-#endif /* #ifndef CONFIG_DISABLE_HFCLK */
-};
-
-static struct twl4030_script wakeup_script __initdata = {
-	.script	= wakeup_seq,
-	.size	= ARRAY_SIZE(wakeup_seq),
-	.flags	= TRITON_WAKEUP12_SCRIPT | TRITON_WAKEUP3_SCRIPT,
-};
-
-static struct twl4030_ins wrst_seq[] __initdata = {
-/*
- * Reset twl4030.
- * Reset VDD1 regulator.
- * Reset VDD2 regulator.
- * Reset VPLL1 regulator.
- * Enable sysclk output.
- * Reenable twl4030.
- */
-	{MSG_SINGULAR(DEV_GRP_NULL, 0x1b, RES_STATE_OFF), 2},
-	{MSG_SINGULAR(DEV_GRP_P1, 0xf, RES_STATE_WRST), 15},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x10, RES_STATE_WRST), 15},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x7, RES_STATE_WRST), 0x60},
-	{MSG_SINGULAR(DEV_GRP_P1, 0x19, RES_STATE_ACTIVE), 2},
-	{MSG_SINGULAR(DEV_GRP_NULL, 0x1b, RES_STATE_ACTIVE), 2},
-};
-static struct twl4030_script wrst_script __initdata = {
-	.script = wrst_seq,
-	.size   = ARRAY_SIZE(wakeup_seq),
-	.flags  = TRITON_WRST_SCRIPT,
-};
-
-static struct twl4030_script *twl4030_scripts[] __initdata = {
-	&sleep_on_script,
-	&wakeup_script,
-	&wrst_script,
-};
-
-static struct twl4030_power_data sdp3430_t2scripts_data __initdata = {
-	.scripts	= twl4030_scripts,
-	.size		= ARRAY_SIZE(twl4030_scripts),
 };
 
 /*
@@ -748,34 +445,22 @@ static struct regulator_init_data sdp3430_vdac = {
 					| REGULATOR_CHANGE_STATUS,
 	},
 	.num_consumer_supplies	= 1,
-	.consumer_supplies	= &sdp3430_vdda_dac_supply,
+	.consumer_supplies	= &sdp3430_vdac_supply,
 };
 
 /* VPLL2 for digital video outputs */
-static struct regulator_consumer_supply sdp3430_vpll2_supplies[] = {
-	{
-		.supply		= "vdvi",
-		.dev		= &sdp3430_lcd_device.dev,
-	},
-	{
-		.supply		= "vdds_dsi",
-		.dev		= &sdp3430_dss_device.dev,
-	}
-};
-
 static struct regulator_init_data sdp3430_vpll2 = {
 	.constraints = {
 		.name			= "VDVI",
 		.min_uV			= 1800000,
 		.max_uV			= 1800000,
-		.apply_uV		= true,
 		.valid_modes_mask	= REGULATOR_MODE_NORMAL
 					| REGULATOR_MODE_STANDBY,
 		.valid_ops_mask		= REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
-	.num_consumer_supplies	= ARRAY_SIZE(sdp3430_vpll2_supplies),
-	.consumer_supplies	= sdp3430_vpll2_supplies,
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vdvi_supply,
 };
 
 static struct twl4030_platform_data sdp3430_twldata = {
@@ -787,7 +472,6 @@ static struct twl4030_platform_data sdp3430_twldata = {
 	.gpio		= &sdp3430_gpio_data,
 	.madc		= &sdp3430_madc_data,
 	.keypad		= &sdp3430_kp_data,
-	.power		= &sdp3430_t2scripts_data,
 	.usb		= &sdp3430_usb_data,
 
 	.vaux1		= &sdp3430_vaux1,
@@ -836,16 +520,8 @@ static void __init omap_3430sdp_init(void)
 	spi_register_board_info(sdp3430_spi_board_info,
 				ARRAY_SIZE(sdp3430_spi_board_info));
 	ads7846_dev_init();
-	sdp3430_flash_init();
-	msecure_init();
 	omap_serial_init();
 	usb_musb_init();
-	usb_ehci_init();
-	sdp3430_display_init();
-
-	/* Ensure SDRC pins are mux'd for self-refresh */
-	omap_cfg_reg(H16_34XX_SDRC_CKE0);
-	omap_cfg_reg(H17_34XX_SDRC_CKE1);
 }
 
 static void __init omap_3430sdp_map_io(void)

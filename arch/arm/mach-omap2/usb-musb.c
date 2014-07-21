@@ -25,69 +25,13 @@
 #include <linux/io.h>
 
 #include <linux/usb/musb.h>
-#include <linux/usb/android.h>
-
-#include <asm/sizes.h>
 
 #include <mach/hardware.h>
 #include <mach/irqs.h>
+#include <mach/pm.h>
 #include <mach/mux.h>
 #include <mach/usb.h>
 
-#define OTG_SYSCONFIG	   0x404
-#define OTG_SYSC_SOFTRESET BIT(1)
-#define  MIDLEMODE       12      /* bit position */
-#define  FORCESTDBY      (0 << MIDLEMODE)
-#define  NOSTDBY         (1 << MIDLEMODE)
-#define  SMARTSTDBY      (2 << MIDLEMODE)
-#define  SIDLEMODE       3       /* bit position */
-#define  FORCEIDLE       (0 << SIDLEMODE)
-#define  NOIDLE          (1 << SIDLEMODE)
-#define  SMARTIDLE       (2 << SIDLEMODE)
-
-
-static void __init usb_musb_pm_init(void)
-{
-	void __iomem *otg_base;
-
-	if (!cpu_is_omap34xx())
-		return;
-
-	otg_base = ioremap(OMAP34XX_HSUSB_OTG_BASE, SZ_4K);
-	if (WARN_ON(!otg_base))
-		return;
-
-	/* Reset OTG controller.  After reset, it will be in
-	 * force-idle, force-standby mode. */
-	__raw_writel(OTG_SYSC_SOFTRESET, otg_base + OTG_SYSCONFIG);
-
-	iounmap(otg_base);
-}
-
-
-void musb_disable_idle(int on)
-{
-	u32 reg;
-
-	if (!cpu_is_omap34xx())
-		return;
-
-	reg = omap_readl(OMAP34XX_HSUSB_OTG_BASE + OTG_SYSCONFIG);
-
-	if (on) {
-		reg &= ~SMARTSTDBY;    /* remove possible smartstdby */
-		reg |= NOSTDBY;        /* enable no standby */
-		reg |= NOIDLE;        /* enable no idle */
-	} else {
-		reg &= ~NOSTDBY;          /* remove possible nostdby */
-		reg &= ~NOIDLE;          /* remove possible noidle */
-		reg |= SMARTSTDBY;        /* enable smart standby */
-	}
-
-	omap_writel(reg, OMAP34XX_HSUSB_OTG_BASE + OTG_SYSCONFIG);
-}
-
-#ifdef CONFIG_USB_MUSB_SOC
 static struct resource musb_resources[] = {
 	[0] = { /* start and end set dynamically */
 		.flags	= IORESOURCE_MEM,
@@ -217,16 +161,17 @@ static struct platform_device nop_xceiv_device = {
 
 void __init usb_musb_init(void)
 {
-	if (cpu_is_omap243x()) {
+	if (cpu_is_omap243x())
 		musb_resources[0].start = OMAP243X_HS_BASE;
-		musb_plat.clock = "usbhs_ick";
-	} else {
+	else
 		musb_resources[0].start = OMAP34XX_HSUSB_OTG_BASE;
-		musb_plat.clock = "hsotgusb_ick";
-	}
-
 	musb_resources[0].end = musb_resources[0].start + SZ_8K - 1;
 
+	/*
+	 * REVISIT: This line can be removed once all the platforms using
+	 * musb_core.c have been converted to use use clkdev.
+	 */
+	musb_plat.clock = "ick";
 
 #ifdef CONFIG_NOP_USB_XCEIV
 	if (platform_device_register(&nop_xceiv_device) < 0) {
@@ -239,13 +184,4 @@ void __init usb_musb_init(void)
 		printk(KERN_ERR "Unable to register HS-USB (MUSB) device\n");
 		return;
 	}
-
-	usb_musb_pm_init();
 }
-
-#else
-void __init usb_musb_init(void)
-{
-	usb_musb_pm_init();
-}
-#endif /* CONFIG_USB_MUSB_SOC */
