@@ -444,4 +444,7 @@ config LM3535_BUTTON_BL
     help
         LM3535 Display Backlight Button LED Support
 
+comment "iptables trigger is under Netfilter config (LED target)"
+	depends on LEDS_TRIGGERS
+
 endif # NEW_LEDS

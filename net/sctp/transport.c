@@ -79,6 +79,7 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 	peer->rttvar = 0;
 	peer->srtt = 0;
 	peer->rto_pending = 0;
+	peer->hb_sent = 0;
 	peer->fast_recovery = 0;
 
 	peer->last_time_heard = jiffies;
@@ -544,8 +545,8 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		 * congestion indications more than once every window of
 		 * data (or more loosely more than once every round-trip time).
 		 */
-		if ((jiffies - transport->last_time_ecne_reduced) >
-		    transport->rtt) {
+		if (time_after(jiffies, transport->last_time_ecne_reduced +
+					transport->rtt)) {
 			transport->ssthresh = max(transport->cwnd/2,
 						  4*transport->asoc->pathmtu);
 			transport->cwnd = transport->ssthresh;
@@ -562,7 +563,8 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		 * to be done every RTO interval, we do it every hearbeat
 		 * interval.
 		 */
-		if ((jiffies - transport->last_time_used) > transport->rto)
+		if (time_after(jiffies, transport->last_time_used +
+					transport->rto))
 			transport->cwnd = max(transport->cwnd/2,
 						 4*transport->asoc->pathmtu);
 		break;
@@ -610,6 +612,7 @@ void sctp_transport_reset(struct sctp_transport *t)
 	t->flight_size = 0;
 	t->error_count = 0;
 	t->rto_pending = 0;
+	t->hb_sent = 0;
 	t->fast_recovery = 0;
 
 	/* Initialize the state information for SFR-CACC */

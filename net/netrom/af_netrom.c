@@ -1037,6 +1037,10 @@ static int nr_sendmsg(struct kiocb *iocb, struct socket *sock,
 	unsigned char *asmptr;
 	int size;
 
+	/* Netrom empty data frame has no meaning : don't send */
+	if (len == 0)
+		return 0;
+
 	if (msg->msg_flags & ~(MSG_DONTWAIT|MSG_EOR|MSG_CMSG_COMPAT))
 		return -EINVAL;
 
@@ -1173,6 +1177,11 @@ static int nr_recvmsg(struct kiocb *iocb, struct socket *sock,
 	skb_reset_transport_header(skb);
 	copied     = skb->len;
 
+	/* NetRom empty data frame has no meaning : ignore it */
+	if (copied == 0) {
+		goto out;
+	}
+
 	if (copied > size) {
 		copied = size;
 		msg->msg_flags |= MSG_TRUNC;
@@ -1188,7 +1197,7 @@ static int nr_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	msg->msg_namelen = sizeof(*sax);
 
-	skb_free_datagram(sk, skb);
+out:	skb_free_datagram(sk, skb);
 
 	release_sock(sk);
 	return copied;
@@ -1438,7 +1447,7 @@ static int __init nr_proto_init(void)
 		struct net_device *dev;
 
 		sprintf(name, "nr%d", i);
-		dev = alloc_netdev(sizeof(struct nr_private), name, nr_setup);
+		dev = alloc_netdev(0, name, nr_setup);
 		if (!dev) {
 			printk(KERN_ERR "NET/ROM: nr_proto_init - unable to allocate device structure\n");
 			goto fail;
