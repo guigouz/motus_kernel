@@ -1476,7 +1476,7 @@ int vfs_create(struct inode *dir, struct dentry *dentry, int mode,
 	error = security_inode_create(dir, dentry, mode);
 	if (error)
 		return error;
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 	error = dir->i_op->create(dir, dentry, mode, nd);
 	if (!error)
 		fsnotify_create(dir, dentry);
@@ -1492,24 +1492,22 @@ int may_open(struct path *path, int acc_mode, int flag)
 	if (!inode)
 		return -ENOENT;
 
-	if (S_ISLNK(inode->i_mode))
+	switch (inode->i_mode & S_IFMT) {
+	case S_IFLNK:
 		return -ELOOP;
-	
-	if (S_ISDIR(inode->i_mode) && (acc_mode & MAY_WRITE))
-		return -EISDIR;
-
-	/*
-	 * FIFO's, sockets and device files are special: they don't
-	 * actually live on the filesystem itself, and as such you
-	 * can write to them even if the filesystem is read-only.
-	 */
-	if (S_ISFIFO(inode->i_mode) || S_ISSOCK(inode->i_mode)) {
-	    	flag &= ~O_TRUNC;
-	} else if (S_ISBLK(inode->i_mode) || S_ISCHR(inode->i_mode)) {
+	case S_IFDIR:
+		if (acc_mode & MAY_WRITE)
+			return -EISDIR;
+		break;
+	case S_IFBLK:
+	case S_IFCHR:
 		if (path->mnt->mnt_flags & MNT_NODEV)
 			return -EACCES;
-
+		/*FALLTHRU*/
+	case S_IFIFO:
+	case S_IFSOCK:
 		flag &= ~O_TRUNC;
+		break;
 	}
 
 	error = inode_permission(inode, acc_mode);
@@ -1555,7 +1553,7 @@ int may_open(struct path *path, int acc_mode, int flag)
 			error = security_path_truncate(path, 0,
 					       ATTR_MTIME|ATTR_CTIME|ATTR_OPEN);
 		if (!error) {
-			DQUOT_INIT(inode);
+			vfs_dq_init(inode);
 
 			error = do_truncate(dentry, 0,
 					    ATTR_MTIME|ATTR_CTIME|ATTR_OPEN,
@@ -1566,7 +1564,7 @@ int may_open(struct path *path, int acc_mode, int flag)
 			return error;
 	} else
 		if (flag & FMODE_WRITE)
-			DQUOT_INIT(inode);
+			vfs_dq_init(inode);
 
 	return 0;
 }
@@ -1949,7 +1947,7 @@ int vfs_mknod(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 	if (error)
 		return error;
 
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 	error = dir->i_op->mknod(dir, dentry, mode, dev);
 	if (!error)
 		fsnotify_create(dir, dentry);
@@ -2048,7 +2046,7 @@ int vfs_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 	if (error)
 		return error;
 
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 	error = dir->i_op->mkdir(dir, dentry, mode);
 	if (!error)
 		fsnotify_mkdir(dir, dentry);
@@ -2134,7 +2132,7 @@ int vfs_rmdir(struct inode *dir, struct dentry *dentry)
 	if (!dir->i_op->rmdir)
 		return -EPERM;
 
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 
 	mutex_lock(&dentry->d_inode->i_mutex);
 	dentry_unhash(dentry);
@@ -2221,7 +2219,7 @@ int vfs_unlink(struct inode *dir, struct dentry *dentry)
 	if (!dir->i_op->unlink)
 		return -EPERM;
 
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 
 	mutex_lock(&dentry->d_inode->i_mutex);
 	if (d_mountpoint(dentry))
@@ -2332,7 +2330,7 @@ int vfs_symlink(struct inode *dir, struct dentry *dentry, const char *oldname)
 	if (error)
 		return error;
 
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 	error = dir->i_op->symlink(dir, dentry, oldname);
 	if (!error)
 		fsnotify_create(dir, dentry);
@@ -2416,7 +2414,7 @@ int vfs_link(struct dentry *old_dentry, struct inode *dir, struct dentry *new_de
 		return error;
 
 	mutex_lock(&inode->i_mutex);
-	DQUOT_INIT(dir);
+	vfs_dq_init(dir);
 	error = dir->i_op->link(old_dentry, dir, new_dentry);
 	mutex_unlock(&inode->i_mutex);
 	if (!error)
@@ -2615,8 +2613,8 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (!old_dir->i_op->rename)
 		return -EPERM;
 
-	DQUOT_INIT(old_dir);
-	DQUOT_INIT(new_dir);
+	vfs_dq_init(old_dir);
+	vfs_dq_init(new_dir);
 
 	old_name = fsnotify_oldname_init(old_dentry->d_name.name);
 
