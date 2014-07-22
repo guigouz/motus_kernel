@@ -541,7 +541,7 @@ msmsdcc_spin_on_status(struct msmsdcc_host *host, uint32_t mask, int maxspin)
 	return -ETIMEDOUT;
 }
 
-static int
+static irqreturn_t
 msmsdcc_pio_irq(int irq, void *dev_id)
 {
 	struct msmsdcc_host	*host = dev_id;
