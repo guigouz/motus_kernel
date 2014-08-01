@@ -45,18 +45,18 @@ endif
 
 obj-y				+= serial/
 obj-$(CONFIG_PARPORT)		+= parport/
-obj-y				+= base/ block/ misc/ mfd/ net/ media/
+obj-y				+= base/ block/ misc/ mfd/ media/
 ifdef CONFIG_MACH_MAPPHONE
-obj-y				+= i2c/
 obj-y				+= cbus/
 obj-$(CONFIG_MPU_BRIDGE)	+= dsp/bridge/
 endif
 obj-$(CONFIG_NUBUS)		+= nubus/
-obj-$(CONFIG_ATM)		+= atm/
 obj-y				+= macintosh/
 obj-$(CONFIG_IDE)		+= ide/
 obj-$(CONFIG_SCSI)		+= scsi/
 obj-$(CONFIG_ATA)		+= ata/
+obj-y				+= net/
+obj-$(CONFIG_ATM)		+= atm/
 obj-$(CONFIG_FUSION)		+= message/
 obj-$(CONFIG_FIREWIRE)		+= firewire/
 obj-y				+= ieee1394/
@@ -87,9 +87,7 @@ obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
 obj-$(CONFIG_I2O)		+= message/
 obj-$(CONFIG_RTC_LIB)		+= rtc/
-ifndef CONFIG_MACH_MAPPHONE
 obj-y				+= i2c/
-endif
 obj-$(CONFIG_W1)		+= w1/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
 obj-$(CONFIG_HWMON)		+= hwmon/

@@ -49,6 +49,7 @@ asynchronous and synchronous parts of the kernel.
 */
 
 #include <linux/async.h>
+#include <linux/bug.h>
 #include <linux/module.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
@@ -385,6 +386,7 @@ static int async_manager_thread(void *unused)
 	return 0;
 }
 
+#ifdef CONFIG_ARCH_MSM7X01A
 static int __init async_init(void)
 {
 	if (async_enabled)
@@ -394,13 +396,20 @@ static int __init async_init(void)
 	return 0;
 }
 
-static int __init setup_async(char *str)
+/*static int __init setup_async(char *str)
 {
 	async_enabled = 1;
 	return 1;
 }
+__setup("fastboot", setup_async);*/
+#else
+static int __init async_init(void)
+{
+	async_enabled =
+		!IS_ERR(kthread_run(async_manager_thread, NULL, "async/mgr"));
 
-__setup("fastboot", setup_async);
-
-
+	WARN_ON(!async_enabled);
+	return 0;
+}
+#endif
 core_initcall(async_init);
