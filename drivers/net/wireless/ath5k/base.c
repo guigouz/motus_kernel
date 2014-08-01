@@ -685,13 +685,6 @@ ath5k_pci_resume(struct pci_dev *pdev)
 	if (err)
 		return err;
 
-	/*
-	 * Suspend/Resume resets the PCI configuration space, so we have to
-	 * re-disable the RETRY_TIMEOUT register (0x41) to keep
-	 * PCI Tx retries from interfering with C3 CPU state
-	 */
-	pci_write_config_byte(pdev, 0x41, 0);
-
 	err = request_irq(pdev->irq, ath5k_intr, IRQF_SHARED, "ath", sc);
 	if (err) {
 		ATH5K_ERR(sc, "request_irq failed\n");
@@ -1225,6 +1218,9 @@ ath5k_txbuf_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 
 	pktlen = skb->len;
 
+	/* FIXME: If we are in g mode and rate is a CCK rate
+	 * subtract ah->ah_txpower.txp_cck_ofdm_pwr_delta
+	 * from tx power (value is in dB units already) */
 	if (info->control.hw_key) {
 		keyidx = info->control.hw_key->hw_key_idx;
 		pktlen += info->control.hw_key->icv_len;
@@ -2056,6 +2052,9 @@ ath5k_beacon_setup(struct ath5k_softc *sc, struct ath5k_buf *bf)
 			antenna = sc->bsent & 4 ? 2 : 1;
 	}
 
+	/* FIXME: If we are in g mode and rate is a CCK rate
+	 * subtract ah->ah_txpower.txp_cck_ofdm_pwr_delta
+	 * from tx power (value is in dB units already) */
 	ds->ds_data = bf->skbaddr;
 	ret = ah->ah_setup_tx_desc(ah, ds, skb->len,
 			ieee80211_get_hdrlen_from_skb(skb),
@@ -2566,7 +2565,7 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		if (skb_headroom(skb) < padsize) {
 			ATH5K_ERR(sc, "tx hdrlen not %%4: %d not enough"
 				  " headroom to pad %d\n", hdrlen, padsize);
-			return NETDEV_TX_BUSY;
+			goto drop_packet;
 		}
 		skb_push(skb, padsize);
 		memmove(skb->data, skb->data+padsize, hdrlen);
@@ -2577,7 +2576,7 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		ATH5K_ERR(sc, "no further txbuf available, dropping packet\n");
 		spin_unlock_irqrestore(&sc->txbuflock, flags);
 		ieee80211_stop_queue(hw, skb_get_queue_mapping(skb));
-		return NETDEV_TX_BUSY;
+		goto drop_packet;
 	}
 	bf = list_first_entry(&sc->txbuf, struct ath5k_buf, list);
 	list_del(&bf->list);
@@ -2594,10 +2593,12 @@ ath5k_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
 		list_add_tail(&bf->list, &sc->txbuf);
 		sc->txbuf_len++;
 		spin_unlock_irqrestore(&sc->txbuflock, flags);
-		dev_kfree_skb_any(skb);
-		return NETDEV_TX_OK;
+		goto drop_packet;
 	}
+	return NETDEV_TX_OK;
 
+drop_packet:
+	dev_kfree_skb_any(skb);
 	return NETDEV_TX_OK;
 }
 
@@ -2619,12 +2620,6 @@ ath5k_reset(struct ath5k_softc *sc, bool stop, bool change_channel)
 		ATH5K_ERR(sc, "can't reset hardware (%d)\n", ret);
 		goto err;
 	}
-
-	/*
-	 * This is needed only to setup initial state
-	 * but it's best done after a reset.
-	 */
-	ath5k_hw_set_txpower_limit(sc->ah, 0);
 
 	ret = ath5k_rx_start(sc);
 	if (ret) {

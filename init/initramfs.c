@@ -415,13 +415,15 @@ static int __init flush_buffer(void *bufv, unsigned len)
 
 static unsigned my_inptr;   /* index of next byte to be processed in inbuf */
 
-#include <linux/decompress/bunzip2.h>
-#include <linux/decompress/unlzma.h>
-#include <linux/decompress/inflate.h>
+#include <linux/decompress/generic.h>
 
 static char * __init unpack_to_rootfs(char *buf, unsigned len, int check_only)
 {
 	int written;
+	decompress_fn decompress;
+	const char *compress_name;
+	static __initdata char msg_buf[64];
+
 	dry_run = check_only;
 	header_buf = kmalloc(110, GFP_KERNEL);
 	symlink_buf = kmalloc(PATH_MAX + N_ALIGN(PATH_MAX) + 1, GFP_KERNEL);
@@ -449,31 +451,19 @@ static char * __init unpack_to_rootfs(char *buf, unsigned len, int check_only)
 			continue;
 		}
 		this_header = 0;
-		if (!gunzip(buf, len, NULL, flush_buffer, NULL,
-				&my_inptr, error) &&
-				message == NULL)
-			goto ok;
 
-#ifdef CONFIG_RD_BZIP2
-		message = NULL; /* Zero out message, or else cpio will
-				think an error has already occured */
-		if (!bunzip2(buf, len, NULL, flush_buffer, NULL,
-				&my_inptr, error) &&
-				message == NULL) {
-			goto ok;
+		decompress = decompress_method(buf, len, &compress_name);
+		if (decompress)
+			decompress(buf, len, NULL, flush_buffer, NULL,
+				   &my_inptr, error);
+		else if (compress_name) {
+			if (!message) {
+				snprintf(msg_buf, sizeof msg_buf,
+					 "compression method %s not configured",
+					 compress_name);
+				message = msg_buf;
+			}
 		}
-#endif
-
-#ifdef CONFIG_RD_LZMA
-		message = NULL; /* Zero out message, or else cpio will
-				think an error has already occured */
-		if (!unlzma(buf, len, NULL, flush_buffer, NULL,
-				&my_inptr, error) &&
-				message == NULL) {
-			goto ok;
-		}
-#endif
-ok:
 		if (state != Reset)
 			error("junk in compressed archive");
 		this_header = saved_offset + my_inptr;
@@ -539,7 +529,7 @@ static int __init populate_rootfs(void)
 	char *err = unpack_to_rootfs(__initramfs_start,
 			 __initramfs_end - __initramfs_start, 0);
 	if (err)
-		panic(err);
+		panic(err);	/* Failed to decompress INTERNAL initramfs */
 	if (initrd_start) {
 #ifdef CONFIG_BLK_DEV_RAM
 		int fd;
@@ -565,9 +555,12 @@ static int __init populate_rootfs(void)
 		printk(KERN_INFO "Unpacking initramfs...");
 		err = unpack_to_rootfs((char *)initrd_start,
 			initrd_end - initrd_start, 0);
-		if (err)
-			panic(err);
-		printk(" done\n");
+		if (err) {
+			printk(" failed!\n");
+			printk(KERN_EMERG "%s\n", err);
+		} else {
+			printk(" done\n");
+		}
 		free_initrd();
 #endif
 	}

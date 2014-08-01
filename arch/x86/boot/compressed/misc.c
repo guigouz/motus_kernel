@@ -116,12 +116,12 @@
 /*
  * gzip declarations
  */
-
 #define STATIC		static
 
 #undef memset
 #undef memcpy
 #define memzero(s, n)	memset((s), 0, (n))
+
 
 static void error(char *m);
 
@@ -239,6 +239,7 @@ void *memcpy(void *dest, const void *src, unsigned n)
 		d[i] = s[i];
 	return dest;
 }
+
 
 static void error(char *x)
 {

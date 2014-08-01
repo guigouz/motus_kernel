@@ -478,21 +478,7 @@ static bool us122l_create_card(struct snd_card *card)
 	return true;
 }
 
-<<<<<<< HEAD
-static void snd_us122l_free(struct snd_card *card)
-{
-	struct us122l	*us122l = US122L(card);
-	int		index = us122l->chip.index;
-	if (index >= 0  &&  index < SNDRV_CARDS)
-		snd_us122l_card_used[index] = 0;
-}
-
-static struct snd_card *usx2y_create_card(struct usb_device *device)
-||||||| merged common ancestors
-static struct snd_card *usx2y_create_card(struct usb_device *device)
-=======
 static int usx2y_create_card(struct usb_device *device, struct snd_card **cardp)
->>>>>>> 0384e2959
 {
 	int		dev;
 	struct snd_card *card;

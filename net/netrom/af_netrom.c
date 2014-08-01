@@ -1037,10 +1037,6 @@ static int nr_sendmsg(struct kiocb *iocb, struct socket *sock,
 	unsigned char *asmptr;
 	int size;
 
-	/* Netrom empty data frame has no meaning : don't send */
-	if (len == 0)
-		return 0;
-
 	if (msg->msg_flags & ~(MSG_DONTWAIT|MSG_EOR|MSG_CMSG_COMPAT))
 		return -EINVAL;
 
@@ -1088,10 +1084,8 @@ static int nr_sendmsg(struct kiocb *iocb, struct socket *sock,
 
 	/* Build a packet - the conventional user limit is 236 bytes. We can
 	   do ludicrously large NetROM frames but must not overflow */
-	if (len > 65536) {
-		err = -EMSGSIZE;
-		goto out;
-	}
+	if (len > 65536)
+		return -EMSGSIZE;
 
 	SOCK_DEBUG(sk, "NET/ROM: sendto: building packet.\n");
 	size = len + NR_NETWORK_LEN + NR_TRANSPORT_LEN;
@@ -1177,11 +1171,6 @@ static int nr_recvmsg(struct kiocb *iocb, struct socket *sock,
 	skb_reset_transport_header(skb);
 	copied     = skb->len;
 
-	/* NetRom empty data frame has no meaning : ignore it */
-	if (copied == 0) {
-		goto out;
-	}
-
 	if (copied > size) {
 		copied = size;
 		msg->msg_flags |= MSG_TRUNC;
@@ -1197,7 +1186,7 @@ static int nr_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 	msg->msg_namelen = sizeof(*sax);
 
-out:	skb_free_datagram(sk, skb);
+	skb_free_datagram(sk, skb);
 
 	release_sock(sk);
 	return copied;

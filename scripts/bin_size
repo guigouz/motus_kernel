@@ -8,4 +8,3 @@ size_dec=`stat -c "%s" $1`
 size_hex_echo_string=`printf "%08x" $size_dec |
      sed 's/\(..\)\(..\)\(..\)\(..\)/\\\\x\4\\\\x\3\\\\x\2\\\\x\1/g'`
 /bin/echo -ne $size_hex_echo_string
-
