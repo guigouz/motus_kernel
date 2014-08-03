@@ -615,9 +615,7 @@ static int i2c_bit_prepare_bus(struct i2c_adapter *adap)
 
 	/* register new adapter to i2c module... */
 	adap->algo = &i2c_bit_algo;
-
-	adap->timeout = 100;	/* default values, should	*/
-	adap->retries = 3;	/* be replaced by defines	*/
+	adap->retries = 3;
 
 	return 0;
 }
