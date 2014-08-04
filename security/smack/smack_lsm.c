@@ -609,7 +609,8 @@ static int smack_inode_setxattr(struct dentry *dentry, const char *name,
 	    strcmp(name, XATTR_NAME_SMACKIPOUT) == 0) {
 		if (!capable(CAP_MAC_ADMIN))
 			rc = -EPERM;
-		if (size == 0)
+		/* a label cannot be void and cannot begin with '-' */
+		if (size == 0 || (size > 0 && ((char *)value)[0] == '-'))
 			rc = -EINVAL;
 	} else
 		rc = cap_inode_setxattr(dentry, name, value, size, flags);
@@ -1299,6 +1300,43 @@ static void smack_sk_free_security(struct sock *sk)
 }
 
 /**
+* smack_host_label - check host based restrictions
+* @sip: the object end
+*
+* looks for host based access restrictions
+*
+* This version will only be appropriate for really small sets of single label
+* hosts.  The caller is responsible for ensuring that the RCU read lock is
+* taken before calling this function.
+*
+* Returns the label of the far end or NULL if it's not special.
+*/
+static char *smack_host_label(struct sockaddr_in *sip)
+{
+	struct smk_netlbladdr *snp;
+	struct in_addr *siap = &sip->sin_addr;
+
+	if (siap->s_addr == 0)
+		return NULL;
+
+	list_for_each_entry_rcu(snp, &smk_netlbladdr_list, list)
+		/*
+		* we break after finding the first match because
+		* the list is sorted from longest to shortest mask
+		* so we have found the most specific match
+		*/
+		if ((&snp->smk_host.sin_addr)->s_addr ==
+		    (siap->s_addr & (&snp->smk_mask)->s_addr)) {
+			/* we have found the special CIPSO option */
+			if (snp->smk_label == smack_cipso_option)
+				return NULL;
+			return snp->smk_label;
+		}
+
+	return NULL;
+}
+
+/**
  * smack_set_catset - convert a capset to netlabel mls categories
  * @catset: the Smack categories
  * @sap: where to put the netlabel categories
@@ -1369,11 +1407,10 @@ static void smack_to_secattr(char *smack, struct netlbl_lsm_secattr *nlsp)
  */
 static int smack_netlabel(struct sock *sk, int labeled)
 {
-	struct socket_smack *ssp;
+	struct socket_smack *ssp = sk->sk_security;
 	struct netlbl_lsm_secattr secattr;
 	int rc = 0;
 
-	ssp = sk->sk_security;
 	/*
 	 * Usually the netlabel code will handle changing the
 	 * packet labeling based on the label.
@@ -1391,7 +1428,7 @@ static int smack_netlabel(struct sock *sk, int labeled)
 	else {
 		netlbl_secattr_init(&secattr);
 		smack_to_secattr(ssp->smk_out, &secattr);
-		rc = netlbl_sock_setattr(sk, &secattr);
+		rc = netlbl_sock_setattr(sk, sk->sk_family, &secattr);
 		netlbl_secattr_destroy(&secattr);
 	}
 
@@ -1399,6 +1436,40 @@ static int smack_netlabel(struct sock *sk, int labeled)
 	local_bh_enable();
 
 	return rc;
+}
+
+/**
+ * smack_netlbel_send - Set the secattr on a socket and perform access checks
+ * @sk: the socket
+ * @sap: the destination address
+ *
+ * Set the correct secattr for the given socket based on the destination
+ * address and perform any outbound access checks needed.
+ *
+ * Returns 0 on success or an error code.
+ *
+ */
+static int smack_netlabel_send(struct sock *sk, struct sockaddr_in *sap)
+{
+	int rc;
+	int sk_lbl;
+	char *hostsp;
+	struct socket_smack *ssp = sk->sk_security;
+
+	rcu_read_lock();
+	hostsp = smack_host_label(sap);
+	if (hostsp != NULL) {
+		sk_lbl = SMACK_UNLABELED_SOCKET;
+		rc = smk_access(ssp->smk_out, hostsp, MAY_WRITE);
+	} else {
+		sk_lbl = SMACK_CIPSO_SOCKET;
+		rc = 0;
+	}
+	rcu_read_unlock();
+	if (rc != 0)
+		return rc;
+
+	return smack_netlabel(sk, sk_lbl);
 }
 
 /**
@@ -1482,43 +1553,6 @@ static int smack_socket_post_create(struct socket *sock, int family,
 	return smack_netlabel(sock->sk, SMACK_CIPSO_SOCKET);
 }
 
-
-/**
- * smack_host_label - check host based restrictions
- * @sip: the object end
- *
- * looks for host based access restrictions
- *
- * This version will only be appropriate for really small
- * sets of single label hosts.
- *
- * Returns the label of the far end or NULL if it's not special.
- */
-static char *smack_host_label(struct sockaddr_in *sip)
-{
-	struct smk_netlbladdr *snp;
-	struct in_addr *siap = &sip->sin_addr;
-
-	if (siap->s_addr == 0)
-		return NULL;
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(snp, &smk_netlbladdr_list, list) {
-		/*
-		 * we break after finding the first match because
-		 * the list is sorted from longest to shortest mask
-		 * so we have found the most specific match
-		 */
-		if ((&snp->smk_host.sin_addr)->s_addr  ==
-			(siap->s_addr & (&snp->smk_mask)->s_addr)) {
-			rcu_read_unlock();
-			return snp->smk_label;
-		}
-	}
-	rcu_read_unlock();
-	return NULL;
-}
-
 /**
  * smack_socket_connect - connect access check
  * @sock: the socket
@@ -1532,25 +1566,12 @@ static char *smack_host_label(struct sockaddr_in *sip)
 static int smack_socket_connect(struct socket *sock, struct sockaddr *sap,
 				int addrlen)
 {
-	struct socket_smack *ssp = sock->sk->sk_security;
-	char *hostsp;
-	int rc;
-
 	if (sock->sk == NULL || sock->sk->sk_family != PF_INET)
 		return 0;
-
 	if (addrlen < sizeof(struct sockaddr_in))
 		return -EINVAL;
 
-	hostsp = smack_host_label((struct sockaddr_in *)sap);
-	if (hostsp == NULL)
-		return smack_netlabel(sock->sk, SMACK_CIPSO_SOCKET);
-
-	rc = smk_access(ssp->smk_out, hostsp, MAY_WRITE);
-	if (rc != 0)
-		return rc;
-
-	return smack_netlabel(sock->sk, SMACK_UNLABELED_SOCKET);
+	return smack_netlabel_send(sock->sk, (struct sockaddr_in *)sap);
 }
 
 /**
@@ -2251,9 +2272,6 @@ static int smack_socket_sendmsg(struct socket *sock, struct msghdr *msg,
 				int size)
 {
 	struct sockaddr_in *sip = (struct sockaddr_in *) msg->msg_name;
-	struct socket_smack *ssp = sock->sk->sk_security;
-	char *hostsp;
-	int rc;
 
 	/*
 	 * Perfectly reasonable for this to be NULL
@@ -2261,15 +2279,7 @@ static int smack_socket_sendmsg(struct socket *sock, struct msghdr *msg,
 	if (sip == NULL || sip->sin_family != PF_INET)
 		return 0;
 
-	hostsp = smack_host_label(sip);
-	if (hostsp == NULL)
-		return smack_netlabel(sock->sk, SMACK_CIPSO_SOCKET);
-
-	rc = smk_access(ssp->smk_out, hostsp, MAY_WRITE);
-	if (rc != 0)
-		return rc;
-
-	return smack_netlabel(sock->sk, SMACK_UNLABELED_SOCKET);
+	return smack_netlabel_send(sock->sk, sip);
 }
 
 
@@ -2474,11 +2484,12 @@ static int smack_socket_getpeersec_dgram(struct socket *sock,
 }
 
 /**
- * smack_sock_graft - graft access state between two sockets
- * @sk: fresh sock
- * @parent: donor socket
+ * smack_sock_graft - Initialize a newly created socket with an existing sock
+ * @sk: child sock
+ * @parent: parent socket
  *
- * Sets the netlabel socket state on sk from parent
+ * Set the smk_{in,out} state of an existing sock based on the process that
+ * is creating the new socket.
  */
 static void smack_sock_graft(struct sock *sk, struct socket *parent)
 {
@@ -2526,24 +2537,24 @@ static int smack_inet_conn_request(struct sock *sk, struct sk_buff *skb,
 	netlbl_secattr_destroy(&secattr);
 
 	/*
-	* Receiving a packet requires that the other end be able to write
-	* here. Read access is not required.
-	*/
+	 * Receiving a packet requires that the other end be able to write
+	 * here. Read access is not required.
+	 */
 	rc = smk_access(smack, ssp->smk_in, MAY_WRITE);
 	if (rc != 0)
 		return rc;
 
 	/*
-	* Save the peer's label in the request_sock so we can later setup
-	* smk_packet in the child socket so that SO_PEERCRED can report it.
-	*/
+	 * Save the peer's label in the request_sock so we can later setup
+	 * smk_packet in the child socket so that SO_PEERCRED can report it.
+	 */
 	req->peer_secid = smack_to_secid(smack);
 
 	/*
-	* We need to decide if we want to label the incoming connection here
-	* if we do we only need to label the request_sock and the stack will
-	* propogate the wire-label to the sock when it is created.
-	*/
+	 * We need to decide if we want to label the incoming connection here
+	 * if we do we only need to label the request_sock and the stack will
+	 * propogate the wire-label to the sock when it is created.
+	 */
 	hdr = ip_hdr(skb);
 	addr.sin_addr.s_addr = hdr->saddr;
 	rcu_read_lock();
@@ -2562,14 +2573,14 @@ static int smack_inet_conn_request(struct sock *sk, struct sk_buff *skb,
 }
 
 /**
-* smack_inet_csk_clone - Copy the connection information to the new socket
-* @sk: the new socket
-* @req: the connection's request_sock
-*
-* Transfer the connection's peer label to the newly created socket.
-*/
+ * smack_inet_csk_clone - Copy the connection information to the new socket
+ * @sk: the new socket
+ * @req: the connection's request_sock
+ *
+ * Transfer the connection's peer label to the newly created socket.
+ */
 static void smack_inet_csk_clone(struct sock *sk,
-			         const struct request_sock *req)
+				 const struct request_sock *req)
 {
 	struct socket_smack *ssp = sk->sk_security;
 	char *smack;

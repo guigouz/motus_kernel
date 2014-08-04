@@ -5,6 +5,10 @@
 
 struct fs_struct {
 	int users;
+	atomic_t count;	/* This usage count is used by check_unsafe_exec() for
+			 * security checking purposes - therefore it may not be
+			 * incremented, except by clone(CLONE_FS).
+			 */
 	rwlock_t lock;
 	int umask;
 	int in_exec;
