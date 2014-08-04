@@ -241,78 +241,63 @@ int drm_lastclose(struct drm_device * dev)
 
 int drm_init(struct drm_driver *driver)
 {
+#ifdef CONFIG_PCI
+	struct pci_dev *pdev = NULL;
+	const struct pci_device_id *pid;
+	int i;
+#endif
+
+	DRM_DEBUG("\n");
+
 	INIT_LIST_HEAD(&driver->device_list);
 
 	if (driver->driver_features & DRIVER_USE_PLATFORM_DEVICE)
 		return drm_platform_init(driver);
-	else
-		return drm_pci_init(driver);
+
+#ifdef CONFIG_PCI
+
+	if (driver->driver_features & DRIVER_MODESET)
+		return pci_register_driver(&driver->pci_driver);
+
+	/* If not using KMS, fall back to stealth mode manual scanning. */
+	for (i = 0; driver->pci_driver.id_table[i].vendor != 0; i++) {
+		pid = &driver->pci_driver.id_table[i];
+
+		/* Loop around setting up a DRM device for each PCI device
+		 * matching our ID and device class.  If we had the internal
+		 * function that pci_get_subsys and pci_get_class used, we'd
+		 * be able to just pass pid in instead of doing a two-stage
+		 * thing.
+		 */
+		pdev = NULL;
+		while ((pdev =
+			pci_get_subsys(pid->vendor, pid->device, pid->subvendor,
+				       pid->subdevice, pdev)) != NULL) {
+			if ((pdev->class & pid->class_mask) != pid->class)
+				continue;
+
+			/* stealth mode requires a manual probe */
+			pci_dev_get(pdev);
+			drm_get_dev(pdev, pid, driver);
+		}
+	}
+#endif /* CONFIG_PCI */
+	return 0;
 }
 
 EXPORT_SYMBOL(drm_init);
-
-/**
- * Called via cleanup_module() at module unload time.
- *
- * Cleans up all DRM device, calling drm_lastclose().
- *
- * \sa drm_init
- */
-static void drm_cleanup(struct drm_device * dev)
-{
-	struct drm_map_list *r_list, *list_temp;
-	DRM_DEBUG("\n");
-
-	if (!dev) {
-		DRM_ERROR("cleanup called no dev\n");
-		return;
-	}
-
-	drm_vblank_cleanup(dev);
-
-	drm_lastclose(dev);
-
-	if (drm_core_has_MTRR(dev) && drm_core_has_AGP(dev) &&
-	    dev->agp && dev->agp->agp_mtrr >= 0) {
-		int retval;
-		retval = mtrr_del(dev->agp->agp_mtrr,
-				  dev->agp->agp_info.aper_base,
-				  dev->agp->agp_info.aper_size * 1024 * 1024);
-		DRM_DEBUG("mtrr_del=%d\n", retval);
-	}
-
-	if (dev->driver->unload)
-		dev->driver->unload(dev);
-
-	if (drm_core_has_AGP(dev) && dev->agp) {
-		drm_free(dev->agp, sizeof(*dev->agp), DRM_MEM_AGPLISTS);
-		dev->agp = NULL;
-	}
-
-	drm_ht_remove(&dev->map_hash);
-	drm_ctxbitmap_cleanup(dev);
-
-	list_for_each_entry_safe(r_list, list_temp, &dev->maplist, head)
-		drm_rmmap(dev, r_list->map);
-
-	if (drm_core_check_feature(dev, DRIVER_MODESET))
-		drm_put_minor(&dev->control);
-
-	if (dev->driver->driver_features & DRIVER_GEM)
-		drm_gem_destroy(dev);
-
-	drm_put_minor(&dev->primary);
-	if (drm_put_dev(dev))
-		DRM_ERROR("Cannot unload module\n");
-}
 
 void drm_exit(struct drm_driver *driver)
 {
 	struct drm_device *dev, *tmp;
 	DRM_DEBUG("\n");
 
-	list_for_each_entry_safe(dev, tmp, &driver->device_list, driver_item)
-		drm_cleanup(dev);
+	if (driver->driver_features & DRIVER_MODESET) {
+		pci_unregister_driver(&driver->pci_driver);
+	} else {
+		list_for_each_entry_safe(dev, tmp, &driver->device_list, driver_item)
+			drm_put_dev(dev);
+	}
 
 	DRM_INFO("Module unloaded\n");
 }
@@ -432,6 +417,7 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 	drm_ioctl_t *func;
 	unsigned int nr = DRM_IOCTL_NR(cmd);
 	int retcode = -EINVAL;
+	char stack_kdata[128];
 	char *kdata = NULL;
 
 	atomic_inc(&dev->ioctl_count);
@@ -470,10 +456,14 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 		retcode = -EACCES;
 	} else {
 		if (cmd & (IOC_IN | IOC_OUT)) {
-			kdata = kmalloc(_IOC_SIZE(cmd), GFP_KERNEL);
-			if (!kdata) {
-				retcode = -ENOMEM;
-				goto err_i1;
+			if (_IOC_SIZE(cmd) <= sizeof(stack_kdata)) {
+				kdata = stack_kdata;
+			} else {
+				kdata = kmalloc(_IOC_SIZE(cmd), GFP_KERNEL);
+				if (!kdata) {
+					retcode = -ENOMEM;
+					goto err_i1;
+				}
 			}
 		}
 
@@ -494,7 +484,7 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 	}
 
       err_i1:
-	if (kdata)
+	if (kdata != stack_kdata)
 		kfree(kdata);
 	atomic_dec(&dev->ioctl_count);
 	if (retcode)
@@ -504,7 +494,7 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 
 EXPORT_SYMBOL(drm_ioctl);
 
-drm_local_map_t *drm_getsarea(struct drm_device *dev)
+struct drm_local_map *drm_getsarea(struct drm_device *dev)
 {
 	struct drm_map_list *entry;
 

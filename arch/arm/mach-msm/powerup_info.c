@@ -150,7 +150,6 @@ int __init powerup_info_init_module(void)
 {
 
     proc_powerup_info = &proc_root;
-    proc_powerup_info->owner = THIS_MODULE;
     create_proc_read_entry("powerup_info", 0, NULL,
 			   get_powerup_info, NULL);
     return 0;
