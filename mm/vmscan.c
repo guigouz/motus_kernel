@@ -61,8 +61,8 @@ struct scan_control {
 
 	int may_writepage;
 
-	/* Can pages be swapped as part of reclaim? */
-	int may_swap;
+	/* Can mapped pages be reclaimed? */
+	int may_unmap;
 
 	/* This context's SWAP_CLUSTER_MAX. If freeing memory for
 	 * suspend, we effectively ignore SWAP_CLUSTER_MAX.
@@ -609,7 +609,7 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if (unlikely(!page_evictable(page, NULL)))
 			goto cull_mlocked;
 
-		if (!sc->may_swap && page_mapped(page))
+		if (!sc->may_unmap && page_mapped(page))
 			goto keep_locked;
 
 		/* Double the slab pressure for mapped and swapcache pages */
@@ -1713,7 +1713,7 @@ unsigned long try_to_free_pages(struct zonelist *zonelist, int order,
 		.gfp_mask = gfp_mask,
 		.may_writepage = !laptop_mode,
 		.swap_cluster_max = SWAP_CLUSTER_MAX,
-		.may_swap = 1,
+		.may_unmap = 1,
 		.swappiness = vm_swappiness,
 		.order = order,
 		.mem_cgroup = NULL,
@@ -1732,7 +1732,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *mem_cont,
 {
 	struct scan_control sc = {
 		.may_writepage = !laptop_mode,
-		.may_swap = 1,
+		.may_unmap = 1,
 		.swap_cluster_max = SWAP_CLUSTER_MAX,
 		.swappiness = swappiness,
 		.order = 0,
@@ -1742,7 +1742,7 @@ unsigned long try_to_free_mem_cgroup_pages(struct mem_cgroup *mem_cont,
 	struct zonelist *zonelist;
 
 	if (noswap)
-		sc.may_swap = 0;
+		sc.may_unmap = 0;
 
 	sc.gfp_mask = (gfp_mask & GFP_RECLAIM_MASK) |
 			(GFP_HIGHUSER_MOVABLE & ~GFP_RECLAIM_MASK);
@@ -1781,7 +1781,7 @@ static unsigned long balance_pgdat(pg_data_t *pgdat, int order)
 	struct reclaim_state *reclaim_state = current->reclaim_state;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
-		.may_swap = 1,
+		.may_unmap = 1,
 		.swap_cluster_max = SWAP_CLUSTER_MAX,
 		.swappiness = vm_swappiness,
 		.order = order,
@@ -2092,11 +2092,9 @@ static unsigned long shrink_all_zones(unsigned long nr_pages, int prio,
 	struct zone *zone;
 	unsigned long ret = 0;
 
-	for_each_zone(zone) {
+	for_each_populated_zone(zone) {
 		enum lru_list l;
 
-		if (!populated_zone(zone))
-			continue;
 		if (zone_is_all_unreclaimable(zone) && prio != DEF_PRIORITY)
 			continue;
 
@@ -2141,7 +2139,7 @@ unsigned long shrink_all_memory(unsigned long nr_pages)
 	struct reclaim_state reclaim_state;
 	struct scan_control sc = {
 		.gfp_mask = GFP_KERNEL,
-		.may_swap = 0,
+		.may_unmap = 0,
 		.swap_cluster_max = nr_pages,
 		.may_writepage = 1,
 		.isolate_pages = isolate_pages_global,
@@ -2178,7 +2176,7 @@ unsigned long shrink_all_memory(unsigned long nr_pages)
 
 		/* Force reclaiming mapped pages in the passes #3 and #4 */
 		if (pass > 2)
-			sc.may_swap = 1;
+			sc.may_unmap = 1;
 
 		for (prio = DEF_PRIORITY; prio >= 0; prio--) {
 			unsigned long nr_to_scan = nr_pages - ret;
@@ -2321,7 +2319,7 @@ static int __zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
 	int priority;
 	struct scan_control sc = {
 		.may_writepage = !!(zone_reclaim_mode & RECLAIM_WRITE),
-		.may_swap = !!(zone_reclaim_mode & RECLAIM_SWAP),
+		.may_unmap = !!(zone_reclaim_mode & RECLAIM_SWAP),
 		.swap_cluster_max = max_t(unsigned long, nr_pages,
 					SWAP_CLUSTER_MAX),
 		.gfp_mask = gfp_mask,
