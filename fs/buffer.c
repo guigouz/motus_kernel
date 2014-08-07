@@ -290,7 +290,7 @@ static void free_more_memory(void)
 						&zone);
 		if (zone)
 			try_to_free_pages(node_zonelist(nid, GFP_NOFS), 0,
-						GFP_NOFS);
+						GFP_NOFS, NULL);
 	}
 }
 
@@ -621,14 +621,7 @@ static void __set_page_dirty(struct page *page,
 	spin_lock_irq(&mapping->tree_lock);
 	if (page->mapping) {	/* Race with truncate? */
 		WARN_ON_ONCE(warn && !PageUptodate(page));
-
-		if (mapping_cap_account_dirty(mapping)) {
-			__inc_zone_page_state(page, NR_FILE_DIRTY);
-			__inc_bdi_stat(mapping->backing_dev_info,
-					BDI_RECLAIMABLE);
-			task_dirty_inc(current);
-			task_io_account_write(PAGE_CACHE_SIZE);
-		}
+		account_page_dirtied(page, mapping);
 		radix_tree_tag_set(&mapping->page_tree,
 				page_index(page), PAGECACHE_TAG_DIRTY);
 	}
@@ -2334,8 +2327,7 @@ block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	if ((page->mapping != inode->i_mapping) ||
 	    (page_offset(page) > size)) {
 		/* page got truncated out from underneath us */
-		unlock_page(page);
-		goto out;
+		goto out_unlock;
 	}
 
 	/* page is wholly or partially inside EOF */
@@ -2357,7 +2349,8 @@ block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	} else
 		ret = VM_FAULT_LOCKED;
 
-out:
+out_unlock:
+	unlock_page(page);
 	return ret;
 }
 
