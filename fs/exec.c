@@ -51,11 +51,9 @@
 #include <linux/cn_proc.h>
 #include <linux/audit.h>
 #include <linux/tracehook.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
 #include <linux/kmod.h>
 #include <linux/fsnotify.h>
+#include <linux/fs_struct.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>

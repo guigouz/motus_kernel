@@ -60,9 +60,7 @@
 #include <linux/tty.h>
 #include <linux/proc_fs.h>
 #include <linux/blkdev.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
+#include <linux/fs_struct.h>
 #include <trace/sched.h>
 #include <linux/magic.h>
 
