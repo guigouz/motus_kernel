@@ -102,6 +102,7 @@
 #include	<linux/cpu.h>
 #include	<linux/sysctl.h>
 #include	<linux/module.h>
+#include	<trace/kmemtrace.h>
 #include	<linux/rcupdate.h>
 #include	<linux/string.h>
 #include	<linux/uaccess.h>
@@ -566,6 +567,14 @@ static void **dbg_userword(struct kmem_cache *cachep, void *objp)
 #define dbg_redzone2(cachep, objp)	({BUG(); (unsigned long long *)NULL;})
 #define dbg_userword(cachep, objp)	({BUG(); (void **)NULL;})
 
+#endif
+
+#ifdef CONFIG_KMEMTRACE
+size_t slab_buffer_size(struct kmem_cache *cachep)
+{
+	return cachep->buffer_size;
+}
+EXPORT_SYMBOL(slab_buffer_size);
 #endif
 
 /*
@@ -1160,7 +1169,7 @@ static void __cpuinit cpuup_canceled(long cpu)
 	struct kmem_cache *cachep;
 	struct kmem_list3 *l3 = NULL;
 	int node = cpu_to_node(cpu);
-	node_to_cpumask_ptr(mask, node);
+	const struct cpumask *mask = cpumask_of_node(node);
 
 	list_for_each_entry(cachep, &cache_chain, next) {
 		struct array_cache *nc;
@@ -3554,9 +3563,22 @@ static inline void __cache_free(struct kmem_cache *cachep, void *objp)
  */
 void *kmem_cache_alloc(struct kmem_cache *cachep, gfp_t flags)
 {
-	return __cache_alloc(cachep, flags, __builtin_return_address(0));
+	void *ret = __cache_alloc(cachep, flags, __builtin_return_address(0));
+
+	trace_kmem_cache_alloc(_RET_IP_, ret,
+			       obj_size(cachep), cachep->buffer_size, flags);
+
+	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc);
+
+#ifdef CONFIG_KMEMTRACE
+void *kmem_cache_alloc_notrace(struct kmem_cache *cachep, gfp_t flags)
+{
+	return __cache_alloc(cachep, flags, __builtin_return_address(0));
+}
+EXPORT_SYMBOL(kmem_cache_alloc_notrace);
+#endif
 
 /**
  * kmem_ptr_validate - check if an untrusted pointer might be a slab entry.
@@ -3602,23 +3624,46 @@ out:
 #ifdef CONFIG_NUMA
 void *kmem_cache_alloc_node(struct kmem_cache *cachep, gfp_t flags, int nodeid)
 {
-	return __cache_alloc_node(cachep, flags, nodeid,
-			__builtin_return_address(0));
+	void *ret = __cache_alloc_node(cachep, flags, nodeid,
+				       __builtin_return_address(0));
+
+	trace_kmem_cache_alloc_node(_RET_IP_, ret,
+				    obj_size(cachep), cachep->buffer_size,
+				    flags, nodeid);
+
+	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc_node);
+
+#ifdef CONFIG_KMEMTRACE
+void *kmem_cache_alloc_node_notrace(struct kmem_cache *cachep,
+				    gfp_t flags,
+				    int nodeid)
+{
+	return __cache_alloc_node(cachep, flags, nodeid,
+				  __builtin_return_address(0));
+}
+EXPORT_SYMBOL(kmem_cache_alloc_node_notrace);
+#endif
 
 static __always_inline void *
 __do_kmalloc_node(size_t size, gfp_t flags, int node, void *caller)
 {
 	struct kmem_cache *cachep;
+	void *ret;
 
 	cachep = kmem_find_general_cachep(size, flags);
 	if (unlikely(ZERO_OR_NULL_PTR(cachep)))
 		return cachep;
-	return kmem_cache_alloc_node(cachep, flags, node);
+	ret = kmem_cache_alloc_node_notrace(cachep, flags, node);
+
+	trace_kmalloc_node((unsigned long) caller, ret,
+			   size, cachep->buffer_size, flags, node);
+
+	return ret;
 }
 
-#ifdef CONFIG_DEBUG_SLAB
+#if defined(CONFIG_DEBUG_SLAB) || defined(CONFIG_KMEMTRACE)
 void *__kmalloc_node(size_t size, gfp_t flags, int node)
 {
 	return __do_kmalloc_node(size, flags, node,
@@ -3651,6 +3696,7 @@ static __always_inline void *__do_kmalloc(size_t size, gfp_t flags,
 					  void *caller)
 {
 	struct kmem_cache *cachep;
+	void *ret;
 
 	/* If you want to save a few bytes .text space: replace
 	 * __ with kmem_.
@@ -3660,101 +3706,15 @@ static __always_inline void *__do_kmalloc(size_t size, gfp_t flags,
 	cachep = __find_general_cachep(size, flags);
 	if (unlikely(ZERO_OR_NULL_PTR(cachep)))
 		return cachep;
-	return __cache_alloc(cachep, flags, caller);
+	ret = __cache_alloc(cachep, flags, caller);
+
+	trace_kmalloc((unsigned long) caller, ret,
+		      size, cachep->buffer_size, flags);
+
+	return ret;
 }
 
-
-#ifdef CONFIG_DEBUG_SLAB
-
-#ifdef CONFIG_DEBUG_MEMLEAK
-static __always_inline void *
-__memleak_cache_alloc(struct kmem_cache *cachep, gfp_t flags, void *caller)
-{
-	unsigned long save_flags;
-	void *objp;
-
-	if (should_failslab(obj_size(cachep), flags))
-		return NULL;
-
-	cache_alloc_debugcheck_before(cachep, flags);
-	local_irq_save(save_flags);
-	objp = __do_cache_alloc(cachep, flags);
-	local_irq_restore(save_flags);
-	objp = cache_alloc_debugcheck_after(cachep, flags, objp, caller);
-	memleak_alloc(objp, obj_size(cachep), 1);
-	prefetchw(objp);
-
-	if (unlikely((flags & __GFP_ZERO) && objp))
-		memset(objp, 0, obj_size(cachep));
-
-	return objp;
-}
-
-static __always_inline void *__memleak_do_kmalloc(size_t size, gfp_t flags,
-		void *caller)
-{
-	struct kmem_cache *cachep;
-	void *ptr;
-
-	/* If you want to save a few bytes .text space: replace
-	 * __ with kmem_.
-	 * Then kmalloc uses the uninlined functions instead of the inline
-	 * functions.
-	 */
-	cachep = __find_general_cachep(size, flags);
-	if (unlikely(cachep == NULL))
-		return NULL;
-	ptr = __memleak_cache_alloc(cachep, flags, caller);
-	memleak_padding(ptr, 0, size);
-
-	return ptr;
-}
-
-static inline void __memleak_cache_free(struct kmem_cache *cachep, void *objp)
-{
-	struct array_cache *ac = cpu_cache_get(cachep);
-
-	check_irq_off();
-	memleak_free(objp);
-	objp = cache_free_debugcheck(cachep, objp, __builtin_return_address(0));
-
-	if (cache_free_alien(cachep, objp))
-		return;
-
-	if (likely(ac->avail < ac->limit)) {
-		STATS_INC_FREEHIT(cachep);
-		ac->entry[ac->avail++] = objp;
-		return;
-	} else {
-		STATS_INC_FREEMISS(cachep);
-		cache_flusharray(cachep, ac);
-		ac->entry[ac->avail++] = objp;
-	}
-}
-
-void memleak_kfree(void *objp)
-{
-	struct kmem_cache *c;
-	unsigned long flags;
-
-	if (unlikely(!objp))
-		return;
-	local_irq_save(flags);
-	kfree_debugcheck(objp);
-	c = virt_to_cache(objp);
-	debug_check_no_locks_freed(objp, obj_size(c));
-	__memleak_cache_free(c, objp);
-	local_irq_restore(flags);
-}
-EXPORT_SYMBOL(memleak_kfree);
-
-void *__memleak_kmalloc(size_t size, gfp_t flags)
-{
-	return __memleak_do_kmalloc(size, flags, __builtin_return_address(0));
-}
-EXPORT_SYMBOL(__memleak_kmalloc);
-#endif
-
+#if defined(CONFIG_DEBUG_SLAB) || defined(CONFIG_KMEMTRACE)
 void *__kmalloc(size_t size, gfp_t flags)
 {
 	return __do_kmalloc(size, flags, __builtin_return_address(0));
@@ -3793,6 +3753,8 @@ void kmem_cache_free(struct kmem_cache *cachep, void *objp)
 		debug_check_no_obj_freed(objp, obj_size(cachep));
 	__cache_free(cachep, objp);
 	local_irq_restore(flags);
+
+	trace_kmem_cache_free(_RET_IP_, objp);
 }
 EXPORT_SYMBOL(kmem_cache_free);
 
@@ -3809,6 +3771,8 @@ void kfree(const void *objp)
 {
 	struct kmem_cache *c;
 	unsigned long flags;
+
+	trace_kfree(_RET_IP_, objp);
 
 	if (unlikely(ZERO_OR_NULL_PTR(objp)))
 		return;

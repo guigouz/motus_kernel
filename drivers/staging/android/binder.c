@@ -2738,22 +2738,24 @@ err:
 static void binder_vma_open(struct vm_area_struct *vma)
 {
 	struct binder_proc *proc = vma->vm_private_data;
-	binder_debug(BINDER_DEBUG_OPEN_CLOSE,
-		     "binder: %d open vm area %lx-%lx (%ld K) vma %lx pagep %lx\n",
-		     proc->pid, vma->vm_start, vma->vm_end,
-		     (vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
-		     (unsigned long)pgprot_val(vma->vm_page_prot));
+	if (binder_debug_mask & BINDER_DEBUG_OPEN_CLOSE)
+		printk(KERN_INFO
+			"binder: %d open vm area %lx-%lx (%ld K) vma %lx pagep %lx\n",
+			proc->pid, vma->vm_start, vma->vm_end,
+			(vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
+			(unsigned long)pgprot_val(vma->vm_page_prot));
 	dump_stack();
 }
 
 static void binder_vma_close(struct vm_area_struct *vma)
 {
 	struct binder_proc *proc = vma->vm_private_data;
-	binder_debug(BINDER_DEBUG_OPEN_CLOSE,
-		     "binder: %d close vm area %lx-%lx (%ld K) vma %lx pagep %lx\n",
-		     proc->pid, vma->vm_start, vma->vm_end,
-		     (vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
-		     (unsigned long)pgprot_val(vma->vm_page_prot));
+	if (binder_debug_mask & BINDER_DEBUG_OPEN_CLOSE)
+		printk(KERN_INFO
+			"binder: %d close vm area %lx-%lx (%ld K) vma %lx pagep %lx\n",
+			proc->pid, vma->vm_start, vma->vm_end,
+			(vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
+			(unsigned long)pgprot_val(vma->vm_page_prot));
 	proc->vma = NULL;
 	binder_defer_work(proc, BINDER_DEFERRED_PUT_FILES);
 }
@@ -2774,11 +2776,12 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	if ((vma->vm_end - vma->vm_start) > SZ_4M)
 		vma->vm_end = vma->vm_start + SZ_4M;
 
-	binder_debug(BINDER_DEBUG_OPEN_CLOSE,
-		     "binder_mmap: %d %lx-%lx (%ld K) vma %lx pagep %lx\n",
-		     proc->pid, vma->vm_start, vma->vm_end,
-		     (vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
-		     (unsigned long)pgprot_val(vma->vm_page_prot));
+	if (binder_debug_mask & BINDER_DEBUG_OPEN_CLOSE)
+		printk(KERN_INFO
+			"binder_mmap: %d %lx-%lx (%ld K) vma %lx pagep %lx\n",
+			proc->pid, vma->vm_start, vma->vm_end,
+			(vma->vm_end - vma->vm_start) / SZ_1K, vma->vm_flags,
+			(unsigned long)pgprot_val(vma->vm_page_prot));
 
 	if (vma->vm_flags & FORBIDDEN_MMAP_FLAGS) {
 		ret = -EPERM;
