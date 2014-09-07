@@ -179,6 +179,8 @@ source "fs/sysv/Kconfig"
 source "fs/ufs/Kconfig"
 source "fs/aufs/Kconfig"
 
+source "fs/exofs/Kconfig"
+
 endif # MISC_FILESYSTEMS
 
 menuconfig NETWORK_FILESYSTEMS
