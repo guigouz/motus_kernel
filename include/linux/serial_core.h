@@ -165,8 +165,8 @@
 /* NWPSERIAL */
 #define PORT_NWPSERIAL	85
 
-/* TI OMAP CONSOLE */
-#define PORT_OMAP	86
+/* MAX3100 */
+#define PORT_MAX3100    86
 
 #ifdef __KERNEL__
 
