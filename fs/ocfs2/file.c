@@ -1949,8 +1949,7 @@ static ssize_t ocfs2_file_splice_write(struct pipe_inode_info *pipe,
 		   out->f_path.dentry->d_name.len,
 		   out->f_path.dentry->d_name.name);
 
-	if (pipe->inode)
-		mutex_lock_nested(&pipe->inode->i_mutex, I_MUTEX_PARENT);
+	mutex_lock_nested(&inode->i_mutex, I_MUTEX_PARENT);
 
 	splice_from_pipe_begin(&sd);
 	do {
@@ -1971,40 +1970,15 @@ static ssize_t ocfs2_file_splice_write(struct pipe_inode_info *pipe,
 	splice_from_pipe_end(pipe, &sd);
 
 	if (pipe->inode)
+		mutex_lock_nested(&pipe->inode->i_mutex, I_MUTEX_CHILD);
+	ret = generic_file_splice_write_nolock(pipe, out, ppos, len, flags);
+	if (pipe->inode)
 		mutex_unlock(&pipe->inode->i_mutex);
 
-	if (sd.num_spliced)
-		ret = sd.num_spliced;
-
-	if (ret > 0) {
-		unsigned long nr_pages;
-
-		*ppos += ret;
-		nr_pages = (ret + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
-
-		/*
-		 * If file or inode is SYNC and we actually wrote some data,
-		 * sync it.
-		 */
-		if (unlikely((out->f_flags & O_SYNC) || IS_SYNC(inode))) {
-			int err;
-
-			mutex_lock(&inode->i_mutex);
-			err = ocfs2_rw_lock(inode, 1);
-			if (err < 0) {
-				mlog_errno(err);
-			} else {
-				err = generic_osync_inode(inode, mapping,
-						  OSYNC_METADATA|OSYNC_DATA);
-				ocfs2_rw_unlock(inode, 1);
-			}
-			mutex_unlock(&inode->i_mutex);
-
-			if (err)
-				ret = err;
-		}
-		balance_dirty_pages_ratelimited_nr(mapping, nr_pages);
-	}
+out_unlock:
+	ocfs2_rw_unlock(inode, 1);
+out:
+	mutex_unlock(&inode->i_mutex);
 
 	mlog_exit(ret);
 	return ret;
