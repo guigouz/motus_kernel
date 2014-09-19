@@ -48,9 +48,6 @@
 #include <linux/tracehook.h>
 #include <linux/fs_struct.h>
 #include <linux/init_task.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
 #include <trace/sched.h>
 
 #include <asm/uaccess.h>
@@ -931,6 +928,8 @@ NORET_TYPE void do_exit(long code)
 		schedule();
 	}
 
+	exit_irq_thread();
+
 	exit_signals(tsk);  /* sets PF_EXITING */
 	/*
 	 * tsk->flags are checked in the futex code to protect against
@@ -961,9 +960,6 @@ NORET_TYPE void do_exit(long code)
 	taskstats_exit(tsk, group_dead);
 
 	exit_mm(tsk);
-#ifdef CONFIG_LTT_LITE
-	ltt_ev_process_exit(0, 0);
-#endif
 
 	if (group_dead)
 		acct_process();
