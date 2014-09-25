@@ -2397,7 +2397,8 @@ block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	if ((page->mapping != inode->i_mapping) ||
 	    (page_offset(page) > size)) {
 		/* page got truncated out from underneath us */
-		goto out_unlock;
+		unlock_page(page);
+		goto out;
 	}
 
 	/* page is wholly or partially inside EOF */
@@ -2419,8 +2420,7 @@ block_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf,
 	} else
 		ret = VM_FAULT_LOCKED;
 
-out_unlock:
-	unlock_page(page);
+out:
 	return ret;
 }
 
