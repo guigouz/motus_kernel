@@ -21,7 +21,7 @@
  *  02110-1301, USA.
  */
 
-#define TPACPI_VERSION "0.22"
+#define TPACPI_VERSION "0.23"
 #define TPACPI_SYSFS_VERSION 0x020300
 
 /*
@@ -2952,12 +2952,18 @@ static int hotkey_read(char *p)
 	return len;
 }
 
-static void hotkey_enabledisable_warn(void)
+static void hotkey_enabledisable_warn(bool enable)
 {
 	tpacpi_log_usertask("procfs hotkey enable/disable");
-	WARN(1, TPACPI_WARN
-	     "hotkey enable/disable functionality has been "
-	     "removed from the driver. Hotkeys are always enabled.\n");
+	if (!WARN((tpacpi_lifecycle == TPACPI_LIFE_RUNNING || !enable),
+			TPACPI_WARN
+			"hotkey enable/disable functionality has been "
+			"removed from the driver.  Hotkeys are always "
+			"enabled\n"))
+		printk(TPACPI_ERR
+			"Please remove the hotkey=enable module "
+			"parameter, it is deprecated.  Hotkeys are always "
+			"enabled\n");
 }
 
 static int hotkey_write(char *buf)
@@ -2977,9 +2983,9 @@ static int hotkey_write(char *buf)
 	res = 0;
 	while ((cmd = next_cmd(&buf))) {
 		if (strlencmp(cmd, "enable") == 0) {
-			hotkey_enabledisable_warn();
+			hotkey_enabledisable_warn(1);
 		} else if (strlencmp(cmd, "disable") == 0) {
-			hotkey_enabledisable_warn();
+			hotkey_enabledisable_warn(0);
 			res = -EPERM;
 		} else if (strlencmp(cmd, "reset") == 0) {
 			mask = hotkey_orig_mask;
@@ -7855,6 +7861,15 @@ static int __init thinkpad_acpi_module_init(void)
 MODULE_ALIAS(TPACPI_DRVR_SHORTNAME);
 
 /*
+ * This will autoload the driver in almost every ThinkPad
+ * in widespread use.
+ *
+ * Only _VERY_ old models, like the 240, 240x and 570 lack
+ * the HKEY event interface.
+ */
+MODULE_DEVICE_TABLE(acpi, ibm_htk_device_ids);
+
+/*
  * DMI matching for module autoloading
  *
  * See http://thinkwiki.org/wiki/List_of_DMI_IDs
@@ -7866,18 +7881,13 @@ MODULE_ALIAS(TPACPI_DRVR_SHORTNAME);
 #define IBM_BIOS_MODULE_ALIAS(__type) \
 	MODULE_ALIAS("dmi:bvnIBM:bvr" __type "ET??WW*")
 
-/* Non-ancient thinkpads */
-MODULE_ALIAS("dmi:bvnIBM:*:svnIBM:*:pvrThinkPad*:rvnIBM:*");
-MODULE_ALIAS("dmi:bvnLENOVO:*:svnLENOVO:*:pvrThinkPad*:rvnLENOVO:*");
-
 /* Ancient thinkpad BIOSes have to be identified by
  * BIOS type or model number, and there are far less
  * BIOS types than model numbers... */
-IBM_BIOS_MODULE_ALIAS("I[BDHIMNOTWVYZ]");
-IBM_BIOS_MODULE_ALIAS("1[0368A-GIKM-PST]");
-IBM_BIOS_MODULE_ALIAS("K[UX-Z]");
+IBM_BIOS_MODULE_ALIAS("I[MU]");		/* 570, 570e */
 
-MODULE_AUTHOR("Borislav Deianov, Henrique de Moraes Holschuh");
+MODULE_AUTHOR("Borislav Deianov <borislav@users.sf.net>");
+MODULE_AUTHOR("Henrique de Moraes Holschuh <hmh@hmh.eng.br>");
 MODULE_DESCRIPTION(TPACPI_DESC);
 MODULE_VERSION(TPACPI_VERSION);
 MODULE_LICENSE("GPL");

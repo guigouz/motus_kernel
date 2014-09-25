@@ -375,8 +375,8 @@
 		CALL(sys_dup3)
 		CALL(sys_pipe2)
 /* 360 */	CALL(sys_inotify_init1)
-/* 361 */
-		CALL(sys_ni_syscall)
+		CALL(sys_preadv)
+		CALL(sys_pwritev)
 #ifndef syscalls_counted
 .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
 #define syscalls_counted

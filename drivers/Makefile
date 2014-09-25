@@ -43,9 +43,9 @@ ifdef CONFIG_MACH_MAPPHONE
 obj-$(CONFIG_SERIO)		+= input/serio/
 endif
 
+obj-y				+= base/ block/ misc/ mfd/
 obj-y				+= serial/
 obj-$(CONFIG_PARPORT)		+= parport/
-obj-y				+= base/ block/ misc/ mfd/ media/
 ifdef CONFIG_MACH_MAPPHONE
 obj-y				+= cbus/
 obj-$(CONFIG_MPU_BRIDGE)	+= dsp/bridge/
@@ -87,7 +87,7 @@ obj-$(CONFIG_GAMEPORT)		+= input/gameport/
 obj-$(CONFIG_INPUT)		+= input/
 obj-$(CONFIG_I2O)		+= message/
 obj-$(CONFIG_RTC_LIB)		+= rtc/
-obj-y				+= i2c/
+obj-y				+= i2c/ media/
 obj-$(CONFIG_W1)		+= w1/
 obj-$(CONFIG_POWER_SUPPLY)	+= power/
 obj-$(CONFIG_HWMON)		+= hwmon/

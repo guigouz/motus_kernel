@@ -10,6 +10,7 @@
  *
  *  This is the "shell" of the ARMv7 processor support.
  */
+#include <linux/init.h>
 #include <linux/linkage.h>
 #include <asm/assembler.h>
 #include <asm/domain.h>
@@ -163,7 +164,7 @@ cpu_v7_name:
 	.ascii	"ARMv7 Processor"
 	.align
 
-	.section ".text.init", #alloc, #execinstr
+	__INIT
 
 /*
  *	__v7_setup
