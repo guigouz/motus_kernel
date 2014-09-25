@@ -459,11 +459,6 @@ void daemonize(const char *name, ...)
 	atomic_inc(&current->files->count);
 
 	reparent_to_kthreadd();
-
-#ifdef CONFIG_LTT_LITE
-	ltt_lite_ev_process(LTT_LITE_EV_PROCESS_COMM_CHANGE,
-		current);
-#endif
 }
 
 EXPORT_SYMBOL(daemonize);

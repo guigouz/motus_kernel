@@ -13,9 +13,6 @@
 #include <linux/file.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
 #include <trace/sched.h>
 
 #define KTHREAD_NICE_LEVEL (-5)
@@ -162,10 +159,6 @@ struct task_struct *kthread_create(int (*threadfn)(void *data),
 		vsnprintf(create.result->comm, sizeof(create.result->comm),
 			  namefmt, args);
 		va_end(args);
-#ifdef CONFIG_LTT_LITE
-		ltt_lite_ev_process(LTT_LITE_EV_PROCESS_COMM_CHANGE,
-			create.result);
-#endif
 	}
 	return create.result;
 }
