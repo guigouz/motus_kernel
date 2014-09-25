@@ -1625,6 +1625,8 @@ CIFSSMBWrite2(const int xid, struct cifsTconInfo *tcon,
 	int smb_hdr_len;
 	int resp_buf_type = 0;
 
+	*nbytes = 0;
+
 	cFYI(1, ("write2 at %lld %d bytes", (long long)offset, count));
 
 	if (tcon->ses->capabilities & CAP_LARGE_FILES) {
@@ -1681,11 +1683,9 @@ CIFSSMBWrite2(const int xid, struct cifsTconInfo *tcon,
 	cifs_stats_inc(&tcon->num_writes);
 	if (rc) {
 		cFYI(1, ("Send error Write2 = %d", rc));
-		*nbytes = 0;
 	} else if (resp_buf_type == 0) {
 		/* presumably this can not happen, but best to be safe */
 		rc = -EIO;
-		*nbytes = 0;
 	} else {
 		WRITE_RSP *pSMBr = (WRITE_RSP *)iov[0].iov_base;
 		*nbytes = le16_to_cpu(pSMBr->CountHigh);
@@ -3917,7 +3917,7 @@ GetInodeNumberRetry:
 			}
 			pfinfo = (struct file_internal_info *)
 				(data_offset + (char *) &pSMBr->hdr.Protocol);
-			*inode_number = pfinfo->UniqueId;
+			*inode_number = le64_to_cpu(pfinfo->UniqueId);
 		}
 	}
 GetInodeNumOut:

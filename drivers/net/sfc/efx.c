@@ -448,9 +448,6 @@ static void efx_init_channels(struct efx_nic *efx)
 
 		WARN_ON(channel->rx_pkt != NULL);
 		efx_rx_strategy(channel);
-
-		netif_napi_add(channel->napi_dev, &channel->napi_str,
-			       efx_poll, napi_weight);
 	}
 }
 
@@ -1335,12 +1332,9 @@ static void efx_fini_napi(struct efx_nic *efx)
 	struct efx_channel *channel;
 
 	efx_for_each_channel(channel, efx) {
-<<<<<<< HEAD
 		efx_lro_fini(&channel->lro_mgr);
 		if (channel->napi_dev)
 			netif_napi_del(&channel->napi_str);
-=======
->>>>>>> 21cdbc1378
 		channel->napi_dev = NULL;
 	}
 }

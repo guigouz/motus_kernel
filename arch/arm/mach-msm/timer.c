@@ -131,7 +131,7 @@ static uint32_t msm_read_timer_count(struct msm_clock *clock)
 	}
 }
 
-static cycle_t msm_gpt_read(void)
+static cycle_t msm_gpt_read(struct clocksource *cs)
 {
 	struct msm_clock *clock = &msm_clocks[MSM_CLOCK_GPT];
 	if (clock->stopped)
@@ -140,7 +140,7 @@ static cycle_t msm_gpt_read(void)
 		return msm_read_timer_count(clock) + clock->offset;
 }
 
-static cycle_t msm_dgt_read(void)
+static cycle_t msm_dgt_read(struct clocksource *cs)
 {
 	struct msm_clock *clock = &msm_clocks[MSM_CLOCK_DGT];
 	if (clock->stopped)
@@ -652,7 +652,7 @@ unsigned long long sched_clock(void)
 		cs = &clock->clocksource;
 
 		last_ticks = saved_ticks;
-		saved_ticks = ticks = cs->read();
+		saved_ticks = ticks = cs->read(NULL);
 		if (!saved_ticks_valid) {
 			saved_ticks_valid = 1;
 			last_ticks = ticks;

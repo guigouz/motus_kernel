@@ -56,5 +56,7 @@ struct ads7846_platform_data {
 	int	(*vaux_control)(int vaux_cntrl);
 #define VAUX_ENABLE	1
 #define VAUX_DISABLE	0
+
+	void	(*wait_for_sync)(void);
 };
 
