@@ -6,6 +6,8 @@
 
 wm97xx-ts-y := wm97xx-core.o
 
+obj-$(CONFIG_TOUCHSCREEN_AD7877)	+= ad7877.o
+obj-$(CONFIG_TOUCHSCREEN_AD7879)	+= ad7879.o
 obj-$(CONFIG_TOUCHSCREEN_ADS7846)	+= ads7846.o
 obj-$(CONFIG_TOUCHSCREEN_ATMEL_TSADCC)	+= atmel_tsadcc.o
 obj-$(CONFIG_TOUCHSCREEN_BITSY)		+= h3600_ts_input.o
@@ -39,15 +41,11 @@ obj-$(CONFIG_TOUCHSCREEN_WM97XX)	+= wm97xx-ts.o
 wm97xx-ts-$(CONFIG_TOUCHSCREEN_WM9705)	+= wm9705.o
 wm97xx-ts-$(CONFIG_TOUCHSCREEN_WM9712)	+= wm9712.o
 wm97xx-ts-$(CONFIG_TOUCHSCREEN_WM9713)	+= wm9713.o
+obj-$(CONFIG_TOUCHSCREEN_WM97XX_ZYLONITE)	+= zylonite-wm97xx.o
+
 obj-$(CONFIG_TOUCHSCREEN_WM97XX_MAINSTONE)	+= mainstone-wm97xx.o
-ifeq ($(CONFIG_KERNEL_MOTOROLA),y)
-obj-$(CONFIG_TOUCHSCREEN_KEY08) 	+= key08.o
-endif #ifeq ($(CONFIG_KERNEL_MOTOROLA),y)
 obj-$(CONFIG_TOUCHSCREEN_MSM_LEGACY)		+= msm_touch.o
 ifeq (y, $(findstring y, $(CONFIG_MACH_CALGARY) $(CONFIG_MACH_MOT)))
 obj-$(CONFIG_TOUCHSCREEN_KEY08) 	+= key08.o
 obj-$(CONFIG_TOUCHSCREEN_KEY08_MULTITOUCH)         += key08_mt.o
-endif
-ifeq ($(CONFIG_KERNEL_MOTOROLA),y)
-EXTRA_CFLAGS += -Iarch/arm/mach-msm
 endif
