@@ -12,7 +12,7 @@
 #
 #   http://www.arm.linux.org.uk/developer/machines/?action=new
 #
-# Last update: Mon Mar 23 20:09:01 2009
+# Last update: Fri May 29 10:14:20 2009
 #
 # machine_is_xxx	CONFIG_xxxx		MACH_TYPE_xxx		number
 #
@@ -1232,7 +1232,7 @@ ql202b			MACH_QL202B		QL202B			1226
 vpac270			MACH_VPAC270		VPAC270			1227
 rd129			MACH_RD129		RD129			1228
 htcwizard		MACH_HTCWIZARD		HTCWIZARD		1229
-xscale_treo680		MACH_XSCALE_TREO680	XSCALE_TREO680		1230
+treo680			MACH_TREO680		TREO680			1230
 tecon_tmezon		MACH_TECON_TMEZON	TECON_TMEZON		1231
 zylonite		MACH_ZYLONITE		ZYLONITE		1233
 gene1270		MACH_GENE1270		GENE1270		1234
