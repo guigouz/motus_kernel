@@ -670,6 +670,8 @@ static struct usb_device_id id_table_combined [] = {
 	{ USB_DEVICE(ADI_VID, ADI_GNICE_PID),
 		.driver_info = (kernel_ulong_t)&ftdi_jtag_quirk },
 	{ USB_DEVICE(JETI_VID, JETI_SPC1201_PID) },
+	{ USB_DEVICE(MARVELL_VID, MARVELL_SHEEVAPLUG_PID),
+		.driver_info = (kernel_ulong_t)&ftdi_jtag_quirk },
 	{ },					/* Optional parameter entry */
 	{ }					/* Terminating entry */
 };
@@ -1485,7 +1487,14 @@ static int ftdi_sio_port_remove(struct usb_serial_port *port)
 
 	remove_sysfs_attrs(port);
 
-	kref_put(&priv->kref, ftdi_sio_priv_release);
+	/* all open ports are closed at this point
+	 *    (by usbserial.c:__serial_close, which calls ftdi_close)
+	 */
+
+	if (priv) {
+		usb_set_serial_port_data(port, NULL);
+		kref_put(&priv->kref, ftdi_sio_priv_release);
+	}
 
 	return 0;
 }

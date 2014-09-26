@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.30-rc2
-# Wed Sep 24 21:38:08 2014
+# Linux kernel version: 2.6.30-rc6
+# Thu Sep 25 19:50:39 2014
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -317,6 +317,7 @@ CONFIG_ARM_L1_CACHE_SHIFT=5
 #
 # errata
 #
+CONFIG_ARM_ERRATA_411920=y
 
 #
 # Bus support

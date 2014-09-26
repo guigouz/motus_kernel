@@ -1906,7 +1906,7 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
 	struct ext4_ext_cache *cex;
 	int ret = EXT4_EXT_CACHE_NO;
 
-	/*
+	/* 
 	 * We borrow i_block_reservation_lock to protect i_cached_extent
 	 */
 	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
