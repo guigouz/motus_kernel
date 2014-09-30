@@ -541,7 +541,7 @@ setup_rt_frame(int usig, struct k_sigaction *ka, siginfo_t *info,
 	return err;
 }
 
-static inline void restart_syscall(struct pt_regs *regs)
+static inline void setup_syscall_restart(struct pt_regs *regs)
 {
 	if (regs->ARM_ORIG_r0 == -ERESTARTNOHAND ||
 	    regs->ARM_ORIG_r0 == -ERESTARTSYS ||
@@ -584,7 +584,7 @@ handle_signal(unsigned long sig, struct k_sigaction *ka,
 			}
 			/* fallthrough */
 		case -ERESTARTNOINTR:
-			restart_syscall(regs);
+			setup_syscall_restart(regs);
 		}
 	}
 
@@ -709,7 +709,7 @@ static int do_signal(sigset_t *oldset, struct pt_regs *regs, int syscall)
 		if (regs->ARM_r0 == -ERESTARTNOHAND ||
 		    regs->ARM_r0 == -ERESTARTSYS ||
 		    regs->ARM_r0 == -ERESTARTNOINTR) {
-			restart_syscall(regs);
+			setup_syscall_restart(regs);
 		}
 	}
 	single_step_set(current);

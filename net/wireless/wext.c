@@ -690,7 +690,7 @@ static const struct seq_operations wireless_seq_ops = {
 	.show  = wireless_dev_seq_show,
 };
 
-static int wireless_seq_open(struct inode *inode, struct file *file)
+static int seq_open_wireless(struct inode *inode, struct file *file)
 {
 	return seq_open_net(inode, file, &wireless_seq_ops,
 			    sizeof(struct seq_net_private));
@@ -698,7 +698,7 @@ static int wireless_seq_open(struct inode *inode, struct file *file)
 
 static const struct file_operations wireless_seq_fops = {
 	.owner	 = THIS_MODULE,
-	.open    = wireless_seq_open,
+	.open    = seq_open_wireless,
 	.read    = seq_read,
 	.llseek  = seq_lseek,
 	.release = seq_release_net,

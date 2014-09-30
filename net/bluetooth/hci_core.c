@@ -479,10 +479,8 @@ int hci_dev_open(__u16 dev)
 
 	hci_req_lock(hdev);
 
-	if (hdev->rfkill &&
-	    (hdev->rfkill->state == RFKILL_STATE_HARD_BLOCKED ||
-	     hdev->rfkill->state == RFKILL_STATE_SOFT_BLOCKED)) {
-		ret = -EBUSY;
+	if (hdev->rfkill && rfkill_blocked(hdev->rfkill)) {
+		ret = -ERFKILL;
 		goto done;
 	}
 
@@ -823,10 +821,9 @@ int hci_get_dev_info(void __user *arg)
 
 /* ---- Interface to HCI drivers ---- */
 
-static int hci_rfkill_set_block(void *data, enum rfkill_state state)
+static int hci_rfkill_set_block(void *data, bool blocked)
 {
 	struct hci_dev *hdev = data;
-	bool blocked = !(state == RFKILL_STATE_UNBLOCKED);
 
 	BT_DBG("%p name %s blocked %d", hdev, hdev->name, blocked);
 
@@ -837,6 +834,10 @@ static int hci_rfkill_set_block(void *data, enum rfkill_state state)
 
 	return 0;
 }
+
+static const struct rfkill_ops hci_rfkill_ops = {
+	.set_block = hci_rfkill_set_block,
+};
 
 /* Alloc HCI device */
 struct hci_dev *hci_alloc_dev(void)
@@ -927,13 +928,11 @@ int hci_register_dev(struct hci_dev *hdev)
 
 	hci_register_sysfs(hdev);
 
-	hdev->rfkill = rfkill_allocate(&hdev->dev, RFKILL_TYPE_BLUETOOTH);
+	hdev->rfkill = rfkill_alloc(hdev->name, &hdev->dev,
+				RFKILL_TYPE_BLUETOOTH, &hci_rfkill_ops, hdev);
 	if (hdev->rfkill) {
-		hdev->rfkill->name = hdev->name;
-		hdev->rfkill->toggle_radio = hci_rfkill_set_block;
-		hdev->rfkill->data = hdev;
 		if (rfkill_register(hdev->rfkill) < 0) {
-			rfkill_free(hdev->rfkill);
+			rfkill_destroy(hdev->rfkill);
 			hdev->rfkill = NULL;
 		}
 	}
@@ -964,6 +963,7 @@ int hci_unregister_dev(struct hci_dev *hdev)
 
 	if (hdev->rfkill) {
 		rfkill_unregister(hdev->rfkill);
+		rfkill_destroy(hdev->rfkill);
 	}
 
 	hci_unregister_sysfs(hdev);

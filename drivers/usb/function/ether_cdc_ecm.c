@@ -1092,6 +1092,14 @@ static void  eth_unbind(void *_ctxt)
 	return ;
 }
 
+static const struct net_device_ops usb_eth_netdev_ops = {
+	.ndo_open = eth_open,
+	.ndo_stop = eth_stop,
+	.ndo_start_xmit = eth_start_xmit,
+	.ndo_change_mtu = usb_eth_change_mtu,
+	.ndo_get_stats = eth_get_stats,
+};
+
 static void  eth_bind(void *_ctxt)
 {
 	struct eth_dev		*dev;
@@ -1193,11 +1201,8 @@ static void  eth_bind(void *_ctxt)
 		dev->host_mac[2], dev->host_mac[3],
 		dev->host_mac[4], dev->host_mac[5]);
 
-	net->change_mtu = usb_eth_change_mtu;
-	net->get_stats = eth_get_stats;
-	net->hard_start_xmit = eth_start_xmit;
-	net->open = eth_open;
-	net->stop = eth_stop;
+	net->netdev_ops = &usb_eth_netdev_ops;
+
 	/* watchdog_timeo, tx_timeout ...
 	 * set_multicast_list */
 	SET_ETHTOOL_OPS(net, &ops);
