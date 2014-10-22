@@ -46,7 +46,7 @@
 #include <linux/page-isolation.h>
 #include <linux/page_cgroup.h>
 #include <linux/debugobjects.h>
-#include <linux/mem_notify.h>
+#include <linux/kmemleak.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
@@ -459,7 +459,6 @@ static inline void __free_one_page(struct page *page,
 	int order_size = 1 << order;
 	int migratetype = get_pageblock_migratetype(page);
 	unsigned long prev_free;
-	unsigned long notify_threshold;
 
 	if (unlikely(PageCompound(page)))
 		if (unlikely(destroy_compound_page(page, order)))
@@ -493,14 +492,6 @@ static inline void __free_one_page(struct page *page,
 	list_add(&page->lru,
 		&zone->free_area[order].free_list[migratetype]);
 	zone->free_area[order].nr_free++;
-
-	notify_threshold = (zone->pages_high +
-			    zone->lowmem_reserve[MAX_NR_ZONES-1]) * 2;
-
-	if (unlikely((zone->mem_notify_status == 1) &&
-		     (prev_free <= notify_threshold) &&
-		     (zone_page_state(zone, NR_FREE_PAGES) > notify_threshold)))
-		memory_pressure_notify(zone, 0);
 }
 
 static inline int free_pages_check(struct page *page)
@@ -4648,6 +4639,16 @@ void *__init alloc_large_system_hash(const char *tablename,
 		*_hash_shift = log2qty;
 	if (_hash_mask)
 		*_hash_mask = (1 << log2qty) - 1;
+
+	/*
+	 * If hashdist is set, the table allocation is done with __vmalloc()
+	 * which invokes the kmemleak_alloc() callback. This function may also
+	 * be called before the slab and kmemleak are initialised when
+	 * kmemleak simply buffers the request to be executed later
+	 * (GFP_ATOMIC flag ignored in this case).
+	 */
+	if (!hashdist)
+		kmemleak_alloc(table, size, 1, GFP_ATOMIC);
 
 	return table;
 }

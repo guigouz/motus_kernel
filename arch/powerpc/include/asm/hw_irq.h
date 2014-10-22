@@ -64,6 +64,8 @@ static inline int irqs_disabled_flags(unsigned long flags)
 	return flags == 0;
 }
 
+extern void perf_counter_do_pending(void);
+
 #else
 
 #if defined(CONFIG_BOOKE)

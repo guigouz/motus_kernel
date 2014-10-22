@@ -424,7 +424,7 @@ extern int set_irq_msi(unsigned int irq, struct msi_desc *entry);
 
 #ifdef CONFIG_SMP
 /**
- * init_alloc_desc_masks - allocate cpumasks for irq_desc
+ * alloc_desc_masks - allocate cpumasks for irq_desc
  * @desc:	pointer to irq_desc struct
  * @cpu:	cpu which will be handling the cpumasks
  * @boot:	true if need bootmem
@@ -433,58 +433,27 @@ extern int set_irq_msi(unsigned int irq, struct msi_desc *entry);
  * Returns true if successful (or not required).
  * Side effect: affinity has all bits set, pending_mask has all bits clear.
  */
-static inline bool init_alloc_desc_masks(struct irq_desc *desc, int cpu,
-								bool boot)
+static inline bool alloc_desc_masks(struct irq_desc *desc, int node,
+                                                       bool boot)
 {
-	int node;
+       gfp_t gfp = GFP_ATOMIC;
 
-	if (boot) {
-		alloc_bootmem_cpumask_var(&desc->affinity);
-		cpumask_setall(desc->affinity);
+       if (boot)
+               gfp = GFP_NOWAIT;
 
-#ifdef CONFIG_GENERIC_PENDING_IRQ
-		alloc_bootmem_cpumask_var(&desc->pending_mask);
-		cpumask_clear(desc->pending_mask);
-#endif
-		return true;
-	}
-
-	node = cpu_to_node(cpu);
-
-	if (!alloc_cpumask_var_node(&desc->affinity, GFP_ATOMIC, node))
-		return false;
-	cpumask_setall(desc->affinity);
+#ifdef CONFIG_CPUMASK_OFFSTACK
+       if (!alloc_cpumask_var_node(&desc->affinity, gfp, node))
+                return false;
 
 #ifdef CONFIG_GENERIC_PENDING_IRQ
-	if (!alloc_cpumask_var_node(&desc->pending_mask, GFP_ATOMIC, node)) {
-		free_cpumask_var(desc->affinity);
-		return false;
-	}
+       if (!alloc_cpumask_var_node(&desc->pending_mask, gfp, node)) {
+                free_cpumask_var(desc->affinity);
+                return false;
+        }
 	cpumask_clear(desc->pending_mask);
 #endif
+#endif
 	return true;
-}
-
-/**
- * init_copy_desc_masks - copy cpumasks for irq_desc
- * @old_desc:	pointer to old irq_desc struct
- * @new_desc:	pointer to new irq_desc struct
- *
- * Insures affinity and pending_masks are copied to new irq_desc.
- * If !CONFIG_CPUMASKS_OFFSTACK the cpumasks are embedded in the
- * irq_desc struct so the copy is redundant.
- */
-
-static inline void init_copy_desc_masks(struct irq_desc *old_desc,
-					struct irq_desc *new_desc)
-{
-#ifdef CONFIG_CPUMASKS_OFFSTACK
-	cpumask_copy(new_desc->affinity, old_desc->affinity);
-
-#ifdef CONFIG_GENERIC_PENDING_IRQ
-	cpumask_copy(new_desc->pending_mask, old_desc->pending_mask);
-#endif
-#endif
 }
 
 static inline void free_desc_masks(struct irq_desc *old_desc,
