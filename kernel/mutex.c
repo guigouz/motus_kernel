@@ -89,7 +89,7 @@ __mutex_lock_slowpath(atomic_t *lock_count);
  *
  * This function is similar to (but not equivalent to) down().
  */
-void inline __sched mutex_lock(struct mutex *lock)
+void __sched mutex_lock(struct mutex *lock)
 {
 	might_sleep();
 	/*
@@ -249,7 +249,9 @@ __mutex_lock_common(struct mutex *lock, long state, unsigned int subclass,
 
 		/* didnt get the lock, go to sleep: */
 		spin_unlock_mutex(&lock->wait_lock, flags);
-		__schedule();
+		preempt_enable_no_resched();
+		schedule(); /* __schedule() */
+		preempt_disable();
 		spin_lock_mutex(&lock->wait_lock, flags);
 	}
 
@@ -471,7 +473,6 @@ int __sched mutex_trylock(struct mutex *lock)
 
 	return ret;
 }
-
 EXPORT_SYMBOL(mutex_trylock);
 
 /**
@@ -497,4 +498,3 @@ int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock)
 	return 1;
 }
 EXPORT_SYMBOL(atomic_dec_and_mutex_lock);
-
