@@ -257,7 +257,7 @@ void VFP_bounce(u32 trigger, u32 fpexc, struct pt_regs *regs)
 	}
 
 	if (fpexc & FPEXC_EX) {
-#ifndef CONFIG_ARCH_OMAP3430
+#ifndef CONFIG_CPU_FEROCEON
 		/*
 		 * Asynchronous exception. The instruction is read from FPINST
 		 * and the interrupted instruction has to be restarted.

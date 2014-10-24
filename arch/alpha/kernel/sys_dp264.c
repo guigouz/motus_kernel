@@ -194,7 +194,7 @@ clipper_set_affinity(unsigned int irq, const struct cpumask *affinity)
 	spin_unlock(&dp264_irq_lock);
 }
 
-static struct hw_interrupt_type dp264_irq_type = {
+static struct irq_chip dp264_irq_type = {
 	.typename	= "DP264",
 	.startup	= dp264_startup_irq,
 	.shutdown	= dp264_disable_irq,
@@ -205,7 +205,7 @@ static struct hw_interrupt_type dp264_irq_type = {
 	.set_affinity	= dp264_set_affinity,
 };
 
-static struct hw_interrupt_type clipper_irq_type = {
+static struct irq_chip clipper_irq_type = {
 	.typename	= "CLIPPER",
 	.startup	= clipper_startup_irq,
 	.shutdown	= clipper_disable_irq,
@@ -294,7 +294,7 @@ clipper_srm_device_interrupt(unsigned long vector)
 }
 
 static void __init
-init_tsunami_irqs(struct hw_interrupt_type * ops, int imin, int imax)
+init_tsunami_irqs(struct irq_chip * ops, int imin, int imax)
 {
 	long i;
 	for (i = imin; i <= imax; ++i) {

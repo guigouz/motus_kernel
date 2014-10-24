@@ -24,6 +24,7 @@
 #include <linux/ioport.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/vmalloc.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/timer.h>
@@ -59,7 +60,6 @@
  * providing early devices for those host controllers to talk to!
  */
 
-#define DRIVER_VERSION "10 Dec 2004"
 #define DRIVER_AUTHOR "David Brownell"
 #define DRIVER_DESC "USB 2.0 'Enhanced' Host Controller (EHCI) Driver"
 
@@ -405,6 +405,25 @@ static void ehci_shutdown(struct usb_hcd *hcd)
 	spin_unlock_irq(&ehci->lock);
 }
 
+#ifndef CONFIG_USB_EHCI_MSM
+static void ehci_port_power (struct ehci_hcd *ehci, int is_on)
+{
+	unsigned port;
+
+	if (!HCS_PPC (ehci->hcs_params))
+		return;
+
+	ehci_dbg (ehci, "...power%s ports...\n", is_on ? "up" : "down");
+	for (port = HCS_N_PORTS (ehci->hcs_params); port > 0; )
+		(void) ehci_hub_control(ehci_to_hcd(ehci),
+				is_on ? SetPortFeature : ClearPortFeature,
+				USB_PORT_FEAT_POWER,
+				port--, NULL, 0);
+	/* Flush those writes */
+	ehci_readl(ehci, &ehci->regs->command);
+	msleep(20);
+}
+#endif /* !CONFIG_USB_EHCI_MSM */
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -503,6 +522,7 @@ static int ehci_init(struct usb_hcd *hcd)
 	 * periodic_size can shrink by USBCMD update if hcc_params allows.
 	 */
 	ehci->periodic_size = DEFAULT_I_TDPS;
+	INIT_LIST_HEAD(&ehci->cached_itd_list);
 	if ((retval = ehci_mem_init(ehci, GFP_KERNEL)) < 0)
 		return retval;
 
@@ -515,6 +535,7 @@ static int ehci_init(struct usb_hcd *hcd)
 
 	ehci->reclaim = NULL;
 	ehci->next_uframe = -1;
+	ehci->clock_frame = -1;
 
 	/*
 	 * dedicate a qh for the async ring head, since we couldn't unlink
@@ -639,9 +660,9 @@ static int ehci_run (struct usb_hcd *hcd)
 
 	temp = HC_VERSION(ehci_readl(ehci, &ehci->caps->hc_capbase));
 	ehci_info (ehci,
-		"USB %x.%x started, EHCI %x.%02x, driver %s%s\n",
+		"USB %x.%x started, EHCI %x.%02x%s\n",
 		((ehci->sbrn & 0xf0)>>4), (ehci->sbrn & 0x0f),
-		temp >> 8, temp & 0xff, DRIVER_VERSION,
+		temp >> 8, temp & 0xff,
 		ignore_oc ? ", overcurrent ignored" : "");
 
 	ehci_writel(ehci, INTR_MASK,
@@ -657,6 +678,7 @@ static int ehci_run (struct usb_hcd *hcd)
 	return 0;
 }
 #endif /* 0 */
+
 /*-------------------------------------------------------------------------*/
 
 static irqreturn_t ehci_irq (struct usb_hcd *hcd)
@@ -725,7 +747,7 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 		pcd_status = status;
 
 		/* resume root hub? */
-		if (!(ehci_readl(ehci, &ehci->regs->command) & CMD_RUN))
+		if (!(cmd & CMD_RUN))
 			usb_hcd_resume_root_hub(hcd);
 
 		while (i--) {
@@ -734,8 +756,11 @@ static irqreturn_t ehci_irq (struct usb_hcd *hcd)
 
 			if (pstatus & PORT_OWNER)
 				continue;
-			if (!(pstatus & PORT_RESUME)
-					|| ehci->reset_done [i] != 0)
+			if (!(test_bit(i, &ehci->suspended_ports) &&
+					((pstatus & PORT_RESUME) ||
+						!(pstatus & PORT_SUSPEND)) &&
+					(pstatus & PORT_PE) &&
+					ehci->reset_done[i] == 0))
 				continue;
 
 			/* start 20 msec resume signaling from this port,
@@ -1006,6 +1031,53 @@ done:
 	return;
 }
 
+#ifndef CONFIG_USB_EHCI_MSM
+static void
+ehci_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *ep)
+{
+	struct ehci_hcd		*ehci = hcd_to_ehci(hcd);
+	struct ehci_qh		*qh;
+	int			eptype = usb_endpoint_type(&ep->desc);
+
+	if (eptype != USB_ENDPOINT_XFER_BULK && eptype != USB_ENDPOINT_XFER_INT)
+		return;
+
+ rescan:
+	spin_lock_irq(&ehci->lock);
+	qh = ep->hcpriv;
+
+	/* For Bulk and Interrupt endpoints we maintain the toggle state
+	 * in the hardware; the toggle bits in udev aren't used at all.
+	 * When an endpoint is reset by usb_clear_halt() we must reset
+	 * the toggle bit in the QH.
+	 */
+	if (qh) {
+		if (!list_empty(&qh->qtd_list)) {
+			WARN_ONCE(1, "clear_halt for a busy endpoint\n");
+		} else if (qh->qh_state == QH_STATE_IDLE) {
+			qh->hw_token &= ~cpu_to_hc32(ehci, QTD_TOGGLE);
+		} else {
+			/* It's not safe to write into the overlay area
+			 * while the QH is active.  Unlink it first and
+			 * wait for the unlink to complete.
+			 */
+			if (qh->qh_state == QH_STATE_LINKED) {
+				if (eptype == USB_ENDPOINT_XFER_BULK) {
+					unlink_async(ehci, qh);
+				} else {
+					intr_deschedule(ehci, qh);
+					(void) qh_schedule(ehci, qh);
+				}
+			}
+			spin_unlock_irq(&ehci->lock);
+			schedule_timeout_uninterruptible(1);
+			goto rescan;
+		}
+	}
+	spin_unlock_irq(&ehci->lock);
+}
+#endif /* !CONFIG_USB_EHCI_MSM */
+
 static int ehci_get_frame (struct usb_hcd *hcd)
 {
 	struct ehci_hcd		*ehci = hcd_to_ehci (hcd);
@@ -1015,9 +1087,7 @@ static int ehci_get_frame (struct usb_hcd *hcd)
 
 /*-------------------------------------------------------------------------*/
 
-#define DRIVER_INFO DRIVER_VERSION " " DRIVER_DESC
-
-MODULE_DESCRIPTION (DRIVER_INFO);
+MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR (DRIVER_AUTHOR);
 MODULE_LICENSE ("GPL");
 
@@ -1080,6 +1150,10 @@ static int __init ehci_hcd_init(void)
 {
 	int retval = 0;
 
+	if (usb_disabled())
+		return -ENODEV;
+
+	printk(KERN_INFO "%s: " DRIVER_DESC "\n", hcd_name);
 	set_bit(USB_EHCI_LOADED, &usb_hcds_loaded);
 	if (test_bit(USB_UHCI_LOADED, &usb_hcds_loaded) ||
 			test_bit(USB_OHCI_LOADED, &usb_hcds_loaded))
@@ -1092,7 +1166,7 @@ static int __init ehci_hcd_init(void)
 		 sizeof(struct ehci_itd), sizeof(struct ehci_sitd));
 
 #ifdef DEBUG
-	ehci_debug_root = debugfs_create_dir("ehci", NULL);
+	ehci_debug_root = debugfs_create_dir("ehci", usb_debug_root);
 	if (!ehci_debug_root) {
 		retval = -ENOENT;
 		goto err_debug;

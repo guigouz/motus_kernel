@@ -89,6 +89,14 @@ SECTIONS
 		*(.exitcall.exit)
 		*(.ARM.exidx.exit.text)
 		*(.ARM.extab.exit.text)
+#ifndef CONFIG_HOTPLUG_CPU
+		*(.ARM.exidx.cpuexit.text)
+		*(.ARM.extab.cpuexit.text)
+#endif
+#ifndef CONFIG_HOTPLUG
+		*(.ARM.exidx.devexit.text)
+		*(.ARM.extab.devexit.text)
+#endif
 #ifndef CONFIG_MMU
 		*(.fixup)
 		*(__ex_table)
@@ -146,9 +154,8 @@ SECTIONS
 
 	.data : AT(__data_loc) {
 		_data = .;		/* address in memory */
-#ifdef CONFIG_DEBUG_MEMLEAK
 		_sdata = .;
-#endif
+
 		/*
 		 * first, the init task union, aligned
 		 * to an 8192 byte boundary.
@@ -199,9 +206,7 @@ SECTIONS
 		__bss_start = .;	/* BSS				*/
 		*(.bss)
 		*(COMMON)
-#ifdef CONFIG_DEBUG_MEMLEAK
 		__bss_stop = .;
-#endif
 		_end = .;
 	}
 					/* Stabs debugging sections.	*/

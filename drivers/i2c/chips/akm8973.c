@@ -950,7 +950,6 @@ static int akm8973_remove(struct i2c_client *client)
 	printk(KERN_INFO "AK8973 compass driver: init\n");
 #endif
 	input_unregister_device(akm->input_dev);
-	i2c_detach_client(client);
 	kfree(akm);
 	return 0;
 }

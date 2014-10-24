@@ -9,11 +9,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  *
- */
-
-#if defined(CONFIG_ARCH_OMAP34XX)
-#include <mach/io.h>
-#endif
+*/
 
 		.macro	addruart,rx
 		mrc	p15, 0, \rx, c1, c0
@@ -40,13 +36,9 @@
 		add	\rx, \rx, #0x00004000	@ UART 3
 #endif
 
-#elif	CONFIG_ARCH_OMAP3
-#ifdef CONFIG_OMAP_LL_DEBUG_UART_EXT
-		moveq   \rx, #0x10000000        @ physical base address
-		movne   \rx, #0xfb000000        @ virtual base address
-#else
+#elif defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
 		moveq	\rx, #0x48000000	@ physical base address
-		movne	\rx, #omap343x_l4_io_p2v(0x48000000)	@ virtual base
+		movne	\rx, #0xd8000000	@ virtual base
 		orr	\rx, \rx, #0x0006a000
 #ifdef CONFIG_OMAP_LL_DEBUG_UART2
 		add	\rx, \rx, #0x00002000	@ UART 2
@@ -56,28 +48,20 @@
 		add	\rx, \rx, #0x00006000
 #endif
 #endif
-#endif
 		.endm
 
 		.macro	senduart,rd,rx
 		strb	\rd, [\rx]
 		.endm
 
-#ifdef CONFIG_OMAP_LL_DEBUG_UART_EXT
-#define REGSHIFT 1
-#else
-#define REGSHIFT 2
-#endif
 		.macro	busyuart,rd,rx
-1001:		ldrb	\rd, [\rx, #(0x5 << REGSHIFT)]	@ OMAP-1510 and friends
+1001:		ldrb	\rd, [\rx, #(0x5 << 2)]	@ OMAP-1510 and friends
 		and	\rd, \rd, #0x60
 		teq	\rd, #0x60
-#ifndef CONFIG_OMAP_LL_DEBUG_UART_EXT
 		beq	1002f
 		ldrb	\rd, [\rx, #(0x5 << 0)]	@ OMAP-730 only
 		and	\rd, \rd, #0x60
 		teq	\rd, #0x60
-#endif
 		bne	1001b
 1002:
 		.endm

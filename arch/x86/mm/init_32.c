@@ -114,7 +114,7 @@ static pte_t * __init one_page_table_init(pmd_t *pmd)
 		pte_t *page_table = NULL;
 
 		if (after_bootmem) {
-#ifdef CONFIG_DEBUG_PAGEALLOC
+#if defined(CONFIG_DEBUG_PAGEALLOC) || defined(CONFIG_KMEMCHECK)
 			page_table = (pte_t *) alloc_bootmem_pages(PAGE_SIZE);
 #endif
 			if (!page_table)
@@ -567,7 +567,7 @@ static inline void save_pg_dir(void)
 }
 #endif /* !CONFIG_ACPI_SLEEP */
 
-void zap_low_mappings(void)
+void zap_low_mappings(bool early)
 {
 	int i;
 
@@ -584,7 +584,11 @@ void zap_low_mappings(void)
 		set_pgd(swapper_pg_dir+i, __pgd(0));
 #endif
 	}
-	flush_tlb_all();
+
+	if (early)
+		__flush_tlb();
+	else
+		flush_tlb_all();
 }
 
 int nx_enabled;
@@ -1011,7 +1015,7 @@ void __init mem_init(void)
 		test_wp_bit();
 
 	save_pg_dir();
-	zap_low_mappings();
+	zap_low_mappings(true);
 }
 
 #ifdef CONFIG_MEMORY_HOTPLUG

@@ -23,9 +23,6 @@
 #include <linux/uaccess.h>
 #include <linux/poll.h>
 #include <linux/time.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
 #include "logger.h"
 
 #include <asm/ioctls.h>
@@ -41,7 +38,7 @@
  * mutex 'mutex'.
  */
 struct logger_log {
-	unsigned char *		buffer;	/* the ring buffer itself */
+	unsigned char 		*buffer;/* the ring buffer itself */
 	struct miscdevice	misc;	/* misc device representing the log */
 	wait_queue_head_t	wq;	/* wait queue for readers */
 	struct list_head	readers; /* this log's readers */
@@ -58,7 +55,7 @@ struct logger_log {
  * reference counting. The structure is protected by log->mutex.
  */
 struct logger_reader {
-	struct logger_log *	log;	/* associated log */
+	struct logger_log	*log;	/* associated log */
 	struct list_head	list;	/* entry in logger_log's list */
 	size_t			r_off;	/* current read head offset */
 };
@@ -91,7 +88,7 @@ int Filter_Mot_Log_Enable = 1;
  * file->logger_log. Thus what file->private_data points at depends on whether
  * or not the file was opened for reading. This function hides that dirtiness.
  */
-static inline struct logger_log * file_get_log(struct file *file)
+static inline struct logger_log *file_get_log(struct file *file)
 {
 	if (file->f_mode & FMODE_READ) {
 		struct logger_reader *reader = file->private_data;
@@ -345,20 +342,6 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	struct timespec now;
 	ssize_t ret = 0;
 
-#ifdef CONFIG_LTT_LITE
-#ifdef CONFIG_LTT_LITE_ANDROID_LOG
-	/*
-	 * If LTT-lite logging for Android messages is enabled, the LTT Lite
-	 * driver will aggregate the Android log message with LTT-lite kernel
-	 * trace data.
-	 * The 5th character of the log name is an indicator of a specific
-	 * Android log, stream, each of which has a different payload format
-	 * and must be differentiated.
-	 */
-	if (ltt_lite_log_android(iov, nr_segs, log->misc.name[4]))
-		return 0;
-#endif
-#endif
 	now = current_kernel_time();
 
 	header.pid = current->tgid;
@@ -421,7 +404,7 @@ ssize_t logger_aio_write(struct kiocb *iocb, const struct iovec *iov,
 	return ret;
 }
 
-static struct logger_log * get_log_from_minor(int);
+static struct logger_log *get_log_from_minor(int);
 
 /*
  * logger_open - the log's open() file operation
@@ -570,7 +553,7 @@ static long logger_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return ret;
 }
 
-static struct file_operations logger_fops = {
+static const struct file_operations logger_fops = {
 	.owner = THIS_MODULE,
 	.read = logger_read,
 	.aio_write = logger_aio_write,
@@ -716,7 +699,7 @@ static void logger_kernel_write(struct console *co, const char *s, unsigned coun
 
 #endif
 
-static struct logger_log * get_log_from_minor(int minor)
+static struct logger_log *get_log_from_minor(int minor)
 {
 	if (log_main.misc.minor == minor)
 		return &log_main;

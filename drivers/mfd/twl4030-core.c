@@ -114,6 +114,13 @@
 #define twl_has_pwrbutton()	false
 #endif
 
+#if defined(CONFIG_TWL4030_WATCHDOG) || \
+	defined(CONFIG_TWL4030_WATCHDOG_MODULE)
+#define twl_has_watchdog()        true
+#else
+#define twl_has_watchdog()        false
+#endif
+
 /* Triton Core internal information (BEGIN) */
 
 /* Last - for index max*/
@@ -547,6 +554,12 @@ add_children(struct twl4030_platform_data *pdata, unsigned long features)
 			return PTR_ERR(child);
 	}
 
+	if (twl_has_watchdog()) {
+		child = add_child(0, "twl4030_wdt", NULL, 0, false, 0, 0);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+	}
+
 	if (twl_has_regulator()) {
 		/*
 		child = add_regulator(TWL4030_REG_VPLL1, pdata->vpll1);
@@ -668,7 +681,7 @@ static inline int __init unprotect_pm_master(void)
 	return e;
 }
 
-static void __init clocks_init(struct device *dev)
+static void clocks_init(struct device *dev)
 {
 	int e = 0;
 	struct clk *osc;

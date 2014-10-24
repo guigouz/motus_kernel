@@ -1612,7 +1612,6 @@ err_power_failed:
 err_alloc_data_failed:
 err_check_functionality_failed:
 // exit_detach:
-	i2c_detach_client(client);
 	printk("key08_ts_probe: Exit after error\n");
 	return ret;
 }

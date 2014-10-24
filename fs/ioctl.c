@@ -15,9 +15,8 @@
 #include <linux/uaccess.h>
 #include <linux/writeback.h>
 #include <linux/buffer_head.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
+#include <linux/falloc.h>
+
 #include <asm/ioctls.h>
 
 /* So that the fiemap access checks can't overflow on 32 bit machines. */
@@ -72,9 +71,7 @@ static int ioctl_fibmap(struct file *filp, int __user *p)
 	res = get_user(block, p);
 	if (res)
 		return res;
-	lock_kernel();
 	res = mapping->a_ops->bmap(mapping, block);
-	unlock_kernel();
 	return put_user(res, p);
 }
 
@@ -407,6 +404,37 @@ EXPORT_SYMBOL(generic_block_fiemap);
 
 #endif  /*  CONFIG_BLOCK  */
 
+/*
+ * This provides compatibility with legacy XFS pre-allocation ioctls
+ * which predate the fallocate syscall.
+ *
+ * Only the l_start, l_len and l_whence fields of the 'struct space_resv'
+ * are used here, rest are ignored.
+ */
+int ioctl_preallocate(struct file *filp, void __user *argp)
+{
+	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct space_resv sr;
+
+	if (copy_from_user(&sr, argp, sizeof(sr)))
+		return -EFAULT;
+
+	switch (sr.l_whence) {
+	case SEEK_SET:
+		break;
+	case SEEK_CUR:
+		sr.l_start += filp->f_pos;
+		break;
+	case SEEK_END:
+		sr.l_start += i_size_read(inode);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	return do_fallocate(filp, FALLOC_FL_KEEP_SIZE, sr.l_start, sr.l_len);
+}
+
 static int file_ioctl(struct file *filp, unsigned int cmd,
 		unsigned long arg)
 {
@@ -422,6 +450,9 @@ static int file_ioctl(struct file *filp, unsigned int cmd,
 		return put_user(inode->i_sb->s_blocksize, p);
 	case FIONREAD:
 		return put_user(i_size_read(inode) - filp->f_pos, p);
+	case FS_IOC_RESVSP:
+	case FS_IOC_RESVSP64:
+		return ioctl_preallocate(filp, p);
 	}
 
 	return vfs_ioctl(filp, cmd, arg);
@@ -521,17 +552,6 @@ int do_vfs_ioctl(struct file *filp, unsigned int fd, unsigned int cmd,
 {
 	int error = 0;
 	int __user *argp = (int __user *)arg;
-#ifdef CONFIG_LTT_LITE
-	char ltt_string[LTT_LITE_MAX_LOG_STRING_SIZE];
-
-	sprintf(ltt_string, "fd=%X/cmd=%X/arg=%X/pid=%d\n", fd,
-		cmd, (int)arg, current->pid);
-	ltt_lite_syscall_param(LTT_EV_FILE_SYSTEM_IOCTL, ltt_string,
-		strlen(ltt_string));
-	sprintf(ltt_string, "f_op=%X/pid=%d\n", (int)filp->f_op, current->pid);
-	ltt_lite_syscall_param(LTT_EV_FILE_SYSTEM_IOCTL, ltt_string,
-		strlen(ltt_string));
-#endif
 
 	switch (cmd) {
 	case FIOCLEX:

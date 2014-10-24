@@ -572,46 +572,14 @@ static noinline int add_dirty_roots(struct btrfs_trans_handle *trans,
 			btrfs_free_log(trans, root);
 			btrfs_free_reloc_root(trans, root);
 
-			if (root->commit_root == root->node) {
-				WARN_ON(root->node->start !=
-					btrfs_root_bytenr(&root->root_item));
-
+			if (root->commit_root != root->node) {
 				free_extent_buffer(root->commit_root);
-				root->commit_root = NULL;
-				root->dirty_root = NULL;
-
-				spin_lock(&root->list_lock);
-				list_del_init(&dirty->root->dead_list);
-				spin_unlock(&root->list_lock);
-
-				kfree(dirty->root);
-				kfree(dirty);
-
-				/* make sure to update the root on disk
-				 * so we get any updates to the block used
-				 * counts
-				 */
-				err = btrfs_update_root(trans,
-						root->fs_info->tree_root,
-						&root->root_key,
-						&root->root_item);
-				continue;
+				root->commit_root = btrfs_root_node(root);
+				btrfs_set_root_node(&root->root_item,
+						    root->node);
 			}
 
-			memset(&root->root_item.drop_progress, 0,
-			       sizeof(struct btrfs_disk_key));
-			root->root_item.drop_level = 0;
-			root->commit_root = NULL;
-			root->dirty_root = NULL;
-			root->root_key.offset = root->fs_info->generation;
-			btrfs_set_root_bytenr(&root->root_item,
-					      root->node->start);
-			btrfs_set_root_level(&root->root_item,
-					     btrfs_header_level(root->node));
-			btrfs_set_root_generation(&root->root_item,
-						  root->root_key.offset);
-
-			err = btrfs_insert_root(trans, root->fs_info->tree_root,
+			err = btrfs_update_root(trans, fs_info->tree_root,
 						&root->root_key,
 						&root->root_item);
 			if (err)

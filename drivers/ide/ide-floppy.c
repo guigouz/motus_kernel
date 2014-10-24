@@ -77,7 +77,8 @@ static int ide_floppy_callback(ide_drive_t *drive, int dsc)
 	    (rq && blk_pc_request(rq)))
 		uptodate = 1; /* FIXME */
 	else if (pc->c[0] == GPCMD_REQUEST_SENSE) {
-		u8 *buf = pc->buf;
+
+		u8 *buf = bio_data(rq->bio);
 
 		if (!pc->error) {
 			floppy->sense_key = buf[2] & 0x0F;
@@ -205,8 +206,7 @@ static void idefloppy_create_rw_cmd(ide_drive_t *drive,
 	pc->rq = rq;
 	if (rq->cmd_flags & REQ_RW)
 		pc->flags |= PC_FLAG_WRITING;
-	pc->buf = NULL;
-	pc->req_xfer = pc->buf_size = blocks * floppy->block_size;
+
 	pc->flags |= PC_FLAG_DMA_OK;
 }
 
@@ -221,11 +221,9 @@ static void idefloppy_blockpc_cmd(struct ide_disk_obj *floppy,
 	pc->buf = rq->data;
 	if (rq->bio)
 		pc->flags |= PC_FLAG_DMA_OK;
-	/*
-	 * possibly problematic, doesn't look like ide-floppy correctly
-	 * handled scattered requests if dma fails...
-	 */
-	pc->req_xfer = pc->buf_size = rq->data_len;
+		if (rq_data_dir(rq) == WRITE)
+			pc->flags |= PC_FLAG_WRITING;
+	}
 }
 
 static ide_startstop_t ide_floppy_do_request(ide_drive_t *drive,
@@ -270,10 +268,8 @@ static ide_startstop_t ide_floppy_do_request(ide_drive_t *drive,
 	} else if (blk_pc_request(rq)) {
 		pc = &floppy->queued_pc;
 		idefloppy_blockpc_cmd(floppy, pc, rq);
-	} else {
-		blk_dump_rq_flags(rq, PFX "unsupported command in queue");
-		goto out_end;
-	}
+	} else
+		BUG();
 
 	memset(&cmd, 0, sizeof(cmd));
 
@@ -282,8 +278,8 @@ static ide_startstop_t ide_floppy_do_request(ide_drive_t *drive,
 
 	cmd.rq = rq;
 
-	if (blk_fs_request(rq) || pc->req_xfer) {
-		ide_init_sg_cmd(&cmd, pc->req_xfer);
+	if (blk_fs_request(rq) || blk_rq_bytes(rq)) {
+		ide_init_sg_cmd(&cmd, blk_rq_bytes(rq));
 		ide_map_sg(drive, &cmd);
 	}
 
@@ -307,33 +303,33 @@ static int ide_floppy_get_flexible_disk_page(ide_drive_t *drive,
 {
 	struct ide_disk_obj *floppy = drive->driver_data;
 	struct gendisk *disk = floppy->disk;
-	u8 *page;
+	u8 *page, buf[40];
 	int capacity, lba_capacity;
 	u16 transfer_rate, sector_size, cyls, rpm;
 	u8 heads, sectors;
 
 	ide_floppy_create_mode_sense_cmd(pc, IDEFLOPPY_FLEXIBLE_DISK_PAGE);
 
-	if (ide_queue_pc_tail(drive, disk, pc)) {
+	if (ide_queue_pc_tail(drive, disk, pc, buf, pc->req_xfer)) {
 		printk(KERN_ERR PFX "Can't get flexible disk page params\n");
 		return 1;
 	}
 
-	if (pc->buf[3] & 0x80)
+	if (buf[3] & 0x80)
 		drive->dev_flags |= IDE_DFLAG_WP;
 	else
 		drive->dev_flags &= ~IDE_DFLAG_WP;
 
 	set_disk_ro(disk, !!(drive->dev_flags & IDE_DFLAG_WP));
 
-	page = &pc->buf[8];
+	page = &buf[8];
 
-	transfer_rate = be16_to_cpup((__be16 *)&pc->buf[8 + 2]);
-	sector_size   = be16_to_cpup((__be16 *)&pc->buf[8 + 6]);
-	cyls          = be16_to_cpup((__be16 *)&pc->buf[8 + 8]);
-	rpm           = be16_to_cpup((__be16 *)&pc->buf[8 + 28]);
-	heads         = pc->buf[8 + 4];
-	sectors       = pc->buf[8 + 5];
+	transfer_rate = be16_to_cpup((__be16 *)&buf[8 + 2]);
+	sector_size   = be16_to_cpup((__be16 *)&buf[8 + 6]);
+	cyls          = be16_to_cpup((__be16 *)&buf[8 + 8]);
+	rpm           = be16_to_cpup((__be16 *)&buf[8 + 28]);
+	heads         = buf[8 + 4];
+	sectors       = buf[8 + 5];
 
 	capacity = cyls * heads * sectors * sector_size;
 
@@ -383,22 +379,19 @@ static int ide_floppy_get_capacity(ide_drive_t *drive)
 	drive->capacity64 = 0;
 
 	ide_floppy_create_read_capacity_cmd(&pc);
-	pc.buf = &pc_buf[0];
-	pc.buf_size = sizeof(pc_buf);
-
-	if (ide_queue_pc_tail(drive, disk, &pc)) {
+	if (ide_queue_pc_tail(drive, disk, &pc, pc_buf, pc.req_xfer)) {
 		printk(KERN_ERR PFX "Can't get floppy parameters\n");
 		return 1;
 	}
-	header_len = pc.buf[3];
-	cap_desc = &pc.buf[4];
+	header_len = pc_buf[3];
+	cap_desc = &pc_buf[4];
 	desc_cnt = header_len / 8; /* capacity descriptor of 8 bytes */
 
 	for (i = 0; i < desc_cnt; i++) {
 		unsigned int desc_start = 4 + i*8;
 
-		blocks = be32_to_cpup((__be32 *)&pc.buf[desc_start]);
-		length = be16_to_cpup((__be16 *)&pc.buf[desc_start + 6]);
+		blocks = be32_to_cpup((__be32 *)&pc_buf[desc_start]);
+		length = be16_to_cpup((__be16 *)&pc_buf[desc_start + 6]);
 
 		ide_debug_log(IDE_DBG_PROBE, "Descriptor %d: %dkB, %d blocks, "
 					     "%d sector size",
@@ -411,7 +404,7 @@ static int ide_floppy_get_capacity(ide_drive_t *drive)
 		 * the code below is valid only for the 1st descriptor, ie i=0
 		 */
 
-		switch (pc.buf[desc_start + 4] & 0x03) {
+		switch (pc_buf[desc_start + 4] & 0x03) {
 		/* Clik! drive returns this instead of CAPACITY_CURRENT */
 		case CAPACITY_UNFORMATTED:
 			if (!(drive->atapi_flags & IDE_AFLAG_CLIK_DRIVE))
@@ -460,7 +453,7 @@ static int ide_floppy_get_capacity(ide_drive_t *drive)
 			break;
 		}
 		ide_debug_log(IDE_DBG_PROBE, "Descriptor 0 Code: %d",
-					     pc.buf[desc_start + 4] & 0x03);
+					     pc_buf[desc_start + 4] & 0x03);
 	}
 
 	/* Clik! disk does not support get_flexible_disk_page */

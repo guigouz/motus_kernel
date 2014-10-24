@@ -297,7 +297,7 @@ config INPUT_GPIO_ROTARY_ENCODER
 	depends on GPIOLIB && GENERIC_GPIO
 	help
 	  Say Y here to add support for rotary encoders connected to GPIO lines.
-	  Check file:Documentation/incput/rotary_encoder.txt for more
+	  Check file:Documentation/input/rotary-encoder.txt for more
 	  information.
 
 	  To compile this driver as a module, choose M here: the
@@ -315,4 +315,13 @@ config INPUT_RB532_BUTTON
 	  To compile this driver as a module, choose M here: the
 	  module will be called rb532_button.
 
+config INPUT_DM355EVM
+	tristate "TI DaVinci DM355 EVM Keypad and IR Remote"
+	depends on MFD_DM355EVM_MSP
+	help
+	  Supports the pushbuttons and IR remote used with
+	  the DM355 EVM board.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called dm355evm_keys.
 endif

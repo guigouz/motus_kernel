@@ -130,10 +130,13 @@ int freeze_processes(void)
 	error = try_to_freeze_tasks(false);
 	if (error)
 		goto Exit;
-	pr_debug("done.");
+	printk("done.");
+
+	oom_killer_disable();
  Exit:
 	BUG_ON(in_atomic());
-	pr_debug("\n");
+	printk("\n");
+
 	return error;
 }
 
@@ -159,7 +162,9 @@ static void thaw_tasks(bool nosig_only)
 
 void thaw_processes(void)
 {
-	pr_debug("Restarting tasks ... ");
+	oom_killer_enable();
+
+	printk("Restarting tasks ... ");
 	thaw_tasks(true);
 	thaw_tasks(false);
 	schedule();

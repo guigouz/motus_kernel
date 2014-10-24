@@ -11,7 +11,6 @@
  */
 
 #include <linux/platform_device.h>
-#include <linux/io.h>
 
 #include <mach/iommu.h>
 
@@ -20,27 +19,16 @@
 #define OMAP3_MMU1_IRQ	24
 #define OMAP3_MMU2_IRQ	28
 
-static struct resource omap3_iommu_res[] = {
-	{ /* Camera ISP MMU */
-		.start		= OMAP3_MMU1_BASE,
-		.end		= OMAP3_MMU1_BASE + MMU_REG_SIZE - 1,
-		.flags		= IORESOURCE_MEM,
-	},
-	{
-		.start		= OMAP3_MMU1_IRQ,
-		.flags		= IORESOURCE_IRQ,
-	},
-	{ /* IVA2.2 MMU */
-		.start		= OMAP3_MMU2_BASE,
-		.end		= OMAP3_MMU2_BASE + MMU_REG_SIZE - 1,
-		.flags		= IORESOURCE_MEM,
-	},
-	{
-		.start		= OMAP3_MMU2_IRQ,
-		.flags		= IORESOURCE_IRQ,
-	},
+
+static unsigned long iommu_base[] __initdata = {
+	OMAP3_MMU1_BASE,
+	OMAP3_MMU2_BASE,
 };
-#define NR_IOMMU_RES (ARRAY_SIZE(omap3_iommu_res) / 2)
+
+static int iommu_irq[] __initdata = {
+	OMAP3_MMU1_IRQ,
+	OMAP3_MMU2_IRQ,
+};
 
 static const struct iommu_platform_data omap3_iommu_pdata[] __initconst = {
 	{
@@ -48,11 +36,13 @@ static const struct iommu_platform_data omap3_iommu_pdata[] __initconst = {
 		.nr_tlb_entries = 8,
 		.clk_name = "cam_ick",
 	},
+#if defined(CONFIG_MPU_BRIDGE_IOMMU)
 	{
 		.name = "iva2",
 		.nr_tlb_entries = 32,
 		.clk_name = "iva2_ck",
 	},
+#endif
 };
 #define NR_IOMMU_DEVICES ARRAY_SIZE(omap3_iommu_pdata)
 
@@ -64,12 +54,23 @@ static int __init omap3_iommu_init(void)
 
 	for (i = 0; i < NR_IOMMU_DEVICES; i++) {
 		struct platform_device *pdev;
+		struct resource res[2];
 
-		pdev = platform_device_alloc("omap-iommu", i + 1);
-		if (!pdev)
+		pdev = platform_device_alloc("omap-iommu", i);
+		if (!pdev) {
+			err = -ENOMEM;
 			goto err_out;
-		err = platform_device_add_resources(pdev,
-				    &omap3_iommu_res[2 * i], NR_IOMMU_RES);
+		}
+
+		memset(res, 0,  sizeof(res));
+		res[0].start = iommu_base[i];
+		res[0].end = iommu_base[i] + MMU_REG_SIZE - 1;
+		res[0].flags = IORESOURCE_MEM;
+		res[1].start = res[1].end = iommu_irq[i];
+		res[1].flags = IORESOURCE_IRQ;
+
+		err = platform_device_add_resources(pdev, res,
+						    ARRAY_SIZE(res));
 		if (err)
 			goto err_out;
 		err = platform_device_add_data(pdev, &omap3_iommu_pdata[i],

@@ -32,7 +32,6 @@
 #define INTC_MIR_CLEAR0		0x0088
 #define INTC_MIR_SET0		0x008c
 #define INTC_PENDING_IRQ0	0x0098
-
 /* Number of IRQ state bits in each MIR register */
 #define IRQ_BITS_PER_REG	32
 
@@ -150,7 +149,6 @@ static struct irq_chip omap_irq_chip = {
 	.ack	= omap_mask_ack_irq,
 	.mask	= omap_mask_irq,
 	.unmask	= omap_unmask_irq,
-	.disable = omap_mask_irq,
 };
 
 static void __init omap_irq_bank_init_one(struct omap_irq_bank *bank)
@@ -193,6 +191,22 @@ int omap_irq_pending(void)
 		}
 	}
 
+	return 0;
+}
+
+int omap_irq_pending(void)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(irq_banks); i++) {
+		struct omap_irq_bank *bank = irq_banks + i;
+		int irq;
+
+		for (irq = 0; irq < bank->nr_irqs; irq += 32)
+			if (intc_bank_read_reg(bank, INTC_PENDING_IRQ0 +
+					       ((irq >> 5) << 5)))
+				return 1;
+	}
 	return 0;
 }
 

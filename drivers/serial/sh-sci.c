@@ -1280,56 +1280,47 @@ err_unreg:
 	return ret;
 }
 
-static int __devexit sci_remove(struct platform_device *dev)
+=======
+static int sci_suspend(struct device *dev)
 {
-	int i;
+	struct sh_sci_priv *priv = dev_get_drvdata(dev);
+	struct sci_port *p;
+	unsigned long flags;
 
-#ifdef CONFIG_HAVE_CLK
-	cpufreq_unregister_notifier(&sci_nb, CPUFREQ_TRANSITION_NOTIFIER);
-#endif
-
-	for (i = 0; i < SCI_NPORTS; i++)
-		uart_remove_one_port(&sci_uart_driver, &sci_ports[i].port);
+	spin_lock_irqsave(&priv->lock, flags);
+	list_for_each_entry(p, &priv->ports, node)
+		uart_suspend_port(&sci_uart_driver, &p->port);
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return 0;
 }
 
-static int sci_suspend(struct platform_device *dev, pm_message_t state)
+static int sci_resume(struct device *dev)
 {
-	int i;
+	struct sh_sci_priv *priv = dev_get_drvdata(dev);
+	struct sci_port *p;
+	unsigned long flags;
 
-	for (i = 0; i < SCI_NPORTS; i++) {
-		struct sci_port *p = &sci_ports[i];
-
-		if (p->type != PORT_UNKNOWN && p->port.dev == &dev->dev)
-			uart_suspend_port(&sci_uart_driver, &p->port);
-	}
+	spin_lock_irqsave(&priv->lock, flags);
+	list_for_each_entry(p, &priv->ports, node)
+		uart_resume_port(&sci_uart_driver, &p->port);
+	spin_unlock_irqrestore(&priv->lock, flags);
 
 	return 0;
 }
 
-static int sci_resume(struct platform_device *dev)
-{
-	int i;
-
-	for (i = 0; i < SCI_NPORTS; i++) {
-		struct sci_port *p = &sci_ports[i];
-
-		if (p->type != PORT_UNKNOWN && p->port.dev == &dev->dev)
-			uart_resume_port(&sci_uart_driver, &p->port);
-	}
-
-	return 0;
-}
+static struct dev_pm_ops sci_dev_pm_ops = {
+	.suspend	= sci_suspend,
+	.resume		= sci_resume,
+};
 
 static struct platform_driver sci_driver = {
 	.probe		= sci_probe,
 	.remove		= __devexit_p(sci_remove),
-	.suspend	= sci_suspend,
-	.resume		= sci_resume,
 	.driver		= {
 		.name	= "sh-sci",
 		.owner	= THIS_MODULE,
+		.pm	= &sci_dev_pm_ops,
 	},
 };
 

@@ -91,6 +91,10 @@ struct ehci_hcd {			/* one per controller */
 	int			next_uframe;	/* scan periodic, start here */
 	unsigned		periodic_sched;	/* periodic activity count */
 
+	/* list of itds completed while clock_frame was still active */
+	struct list_head	cached_itd_list;
+	unsigned		clock_frame;
+
 	/* per root hub port */
 	unsigned long		reset_done [EHCI_MAX_ROOT_PORTS];
 
@@ -103,6 +107,8 @@ struct ehci_hcd {			/* one per controller */
 			owned by the companion during a bus suspend */
 	unsigned long		port_c_suspend;		/* which ports have
 			the change-suspend feature turned on */
+	unsigned long		suspended_ports;	/* which ports are
+			suspended */
 
 	/* per-HC memory pools (could be per-bus, but ...) */
 	struct dma_pool		*qh_pool;	/* qh per active urb */
@@ -114,6 +120,7 @@ struct ehci_hcd {			/* one per controller */
 	struct timer_list	watchdog;
 	unsigned long		actions;
 	unsigned		stamp;
+	unsigned		random_frame;
 	unsigned long		next_statechange;
 	u32			command;
 

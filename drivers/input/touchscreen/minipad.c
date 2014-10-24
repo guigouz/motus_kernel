@@ -1418,7 +1418,6 @@ err_power_failed:
     kfree(ts);
 err_alloc_data_failed:
 err_check_functionality_failed:
-    i2c_detach_client(client);
     minipad_log_critical("minipad_probe: Exit after error\n");
     return ret;
 }

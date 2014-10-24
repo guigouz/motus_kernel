@@ -18,6 +18,7 @@
 */
 #include <linux/module.h>
 #include <linux/moduleloader.h>
+#include <linux/ftrace_event.h>
 #include <linux/init.h>
 #include <linux/kallsyms.h>
 #include <linux/fs.h>
@@ -46,7 +47,6 @@
 #include <linux/rculist.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
-#include <linux/gcov.h>
 #include <linux/license.h>
 #include <asm/sections.h>
 #include <linux/tracepoint.h>
@@ -54,10 +54,6 @@
 #include <linux/async.h>
 #include <linux/percpu.h>
 #include <linux/kmemleak.h>
-
-#ifdef CONFIG_DEBUG_MEMLEAK
-int kmemleak_module;
-#endif
 
 #if 0
 #define DEBUGP printk
@@ -77,6 +73,9 @@ int kmemleak_module;
 DEFINE_MUTEX(module_mutex);
 EXPORT_SYMBOL_GPL(module_mutex);
 static LIST_HEAD(modules);
+
+/* Block module loading/unloading? */
+int modules_disabled = 0;
 
 /* Waiting for a module to finish initializing? */
 static DECLARE_WAIT_QUEUE_HEAD(module_wq);
@@ -332,19 +331,6 @@ const struct kernel_symbol *find_symbol(const char *name,
 					bool warn)
 {
 	struct find_symbol_arg fsa;
-
-#ifdef CONFIG_DEBUG_MEMLEAK
-	if (kmemleak_module) {
-		if (strcmp(name, "__kmalloc") == 0)
-			name = "__memleak_kmalloc";
-		else if (strcmp(name, "kfree") == 0)
-			name = "memleak_kfree";
-		else if (strcmp(name, "vfree") == 0)
-			name = "memleak_vfree";
-		else if (strcmp(name, "vmalloc") == 0)
-			name = "memleak_vmalloc";
-	}
-#endif
 
 	fsa.name = name;
 	fsa.gplok = gplok;
@@ -807,7 +793,7 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	char name[MODULE_NAME_LEN];
 	int ret, forced = 0;
 
-	if (!capable(CAP_SYS_MODULE))
+	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
 	if (strncpy_from_user(name, name_user, MODULE_NAME_LEN-1) < 0)
@@ -1513,19 +1499,11 @@ static void free_module(struct module *mod)
 	/* Arch-specific cleanup. */
 	module_arch_cleanup(mod);
 
-#ifdef CONFIG_GCOV_PROFILE
-	if (mod->ctors_start && mod->ctors_end)
-		remove_bb_link(mod);
-#endif
-
 	/* Module unload stuff */
 	module_unload_free(mod);
 
 	/* Free any allocated parameters. */
 	destroy_params(mod->kp, mod->num_kp);
-
-	/* release any pointers to mcount in this module */
-	ftrace_release(mod->module_core, mod->core_size);
 
 	/* This may be NULL, but that's OK */
 	module_free(mod, mod->module_init);
@@ -1913,40 +1891,6 @@ static void *module_alloc_update_bounds(unsigned long size)
 	return ret;
 }
 
-#ifdef CONFIG_DEBUG_MEMLEAK
-static void memleak_load_module(struct module *mod, Elf_Ehdr *hdr,
-				Elf_Shdr *sechdrs, char *secstrings)
-{
-	unsigned int mloffindex, i;
-
-	/* insert any new pointer aliases */
-	mloffindex = find_sec(hdr, sechdrs, secstrings,
-				".init.memleak_offsets");
-	if (mloffindex)
-		memleak_insert_aliases((void *)sechdrs[mloffindex].sh_addr,
-				       (void *)sechdrs[mloffindex].sh_addr
-				       + sechdrs[mloffindex].sh_size);
-
-	/* only scan the sections containing data */
-	memleak_scan_area(mod->module_core,
-			  (unsigned long)mod - (unsigned long)mod->module_core,
-			  sizeof(struct module));
-
-	for (i = 1; i < hdr->e_shnum; i++) {
-		if (!(sechdrs[i].sh_flags & SHF_ALLOC))
-			continue;
-		if (strncmp(secstrings + sechdrs[i].sh_name, ".data", 5) != 0
-		    && strncmp(secstrings + sechdrs[i].sh_name, ".bss", 4) != 0)
-			continue;
-
-		memleak_scan_area(mod->module_core,
-				  sechdrs[i].sh_addr -
-				  (unsigned long)mod->module_core,
-				  sechdrs[i].sh_size);
-	}
-}
-#endif
-
 #ifdef CONFIG_DEBUG_KMEMLEAK
 static void kmemleak_load_module(struct module *mod, Elf_Ehdr *hdr,
 				 Elf_Shdr *sechdrs, char *secstrings)
@@ -1991,11 +1935,9 @@ static noinline struct module *load_module(void __user *umod,
 	unsigned int symindex = 0;
 	unsigned int strindex = 0;
 	unsigned int modindex, versindex, infoindex, pcpuindex;
-	unsigned int num_mcount;
 	struct module *mod;
 	long err = 0;
 	void *percpu = NULL, *ptr = NULL; /* Stops spurious gcc warning */
-	unsigned long *mseg;
 	mm_segment_t old_fs;
 
 	DEBUGP("load_module: umod=%p, len=%lu, uargs=%p\n",
@@ -2062,9 +2004,6 @@ static noinline struct module *load_module(void __user *umod,
 	}
 	/* This is temporary: point mod into copy of data. */
 	mod = (void *)sechdrs[modindex].sh_addr;
-#ifdef CONFIG_DEBUG_MEMLEAK
-	memleak_load_module(mod, hdr, sechdrs, secstrings);
-#endif
 
 	if (symindex == 0) {
 		printk(KERN_WARNING "%s: module has no symbols (stripped?)\n",
@@ -2213,13 +2152,6 @@ static noinline struct module *load_module(void __user *umod,
 		goto free_init;
 	}
 #endif
-
-#ifdef CONFIG_GCOV_PROFILE
-	modindex = find_sec(hdr, sechdrs, secstrings, ".init_array");
-	mod->ctors_start = (char *)sechdrs[modindex].sh_addr;
-	mod->ctors_end   = (char *)(mod->ctors_start +
-				sechdrs[modindex].sh_size);
-#endif
 	/* Now we've moved module, initialize linked lists, etc. */
 	module_unload_init(mod);
 
@@ -2284,6 +2216,10 @@ static noinline struct module *load_module(void __user *umod,
 	mod->unused_gpl_crcs = section_addr(hdr, sechdrs, secstrings,
 					    "__kcrctab_unused_gpl");
 #endif
+#ifdef CONFIG_CONSTRUCTORS
+	mod->ctors = section_objs(hdr, sechdrs, secstrings, ".ctors",
+				  sizeof(*mod->ctors), &mod->num_ctors);
+#endif
 
 #ifdef CONFIG_MARKERS
 	mod->markers = section_objs(hdr, sechdrs, secstrings, "__markers",
@@ -2295,7 +2231,19 @@ static noinline struct module *load_module(void __user *umod,
 					sizeof(*mod->tracepoints),
 					&mod->num_tracepoints);
 #endif
-
+#ifdef CONFIG_EVENT_TRACING
+	mod->trace_events = section_objs(hdr, sechdrs, secstrings,
+					 "_ftrace_events",
+					 sizeof(*mod->trace_events),
+					 &mod->num_trace_events);
+#endif
+#ifdef CONFIG_FTRACE_MCOUNT_RECORD
+	/* sechdrs[0].sh_size is always zero */
+	mod->ftrace_callsites = section_objs(hdr, sechdrs, secstrings,
+					     "__mcount_loc",
+					     sizeof(*mod->ftrace_callsites),
+					     &mod->num_ftrace_callsites);
+#endif
 #ifdef CONFIG_MODVERSIONS
 	if ((mod->num_syms && !mod->crcs)
 	    || (mod->num_gpl_syms && !mod->gpl_crcs)
@@ -2360,11 +2308,6 @@ static noinline struct module *load_module(void __user *umod,
 			dynamic_debug_setup(debug, num_debug);
 	}
 
-	/* sechdrs[0].sh_size is always zero */
-	mseg = section_objs(hdr, sechdrs, secstrings, "__mcount_loc",
-			    sizeof(*mseg), &num_mcount);
-	ftrace_init_module(mod, mseg, mseg + num_mcount);
-
 	err = module_finalize(hdr, sechdrs, mod);
 	if (err < 0)
 		goto cleanup;
@@ -2425,7 +2368,6 @@ static noinline struct module *load_module(void __user *umod,
  cleanup:
 	kobject_del(&mod->mkobj.kobj);
 	kobject_put(&mod->mkobj.kobj);
-	ftrace_release(mod->module_core, mod->core_size);
  free_unload:
 	module_unload_free(mod);
 #if defined(CONFIG_MODULE_UNLOAD) && defined(CONFIG_SMP)
@@ -2451,6 +2393,17 @@ static noinline struct module *load_module(void __user *umod,
 	goto free_hdr;
 }
 
+/* Call module constructors. */
+static void do_mod_ctors(struct module *mod)
+{
+#ifdef CONFIG_CONSTRUCTORS
+	unsigned long i;
+
+	for (i = 0; i < mod->num_ctors; i++)
+		mod->ctors[i]();
+#endif
+}
+
 /* This is where the real work happens */
 SYSCALL_DEFINE3(init_module, void __user *, umod,
 		unsigned long, len, const char __user *, uargs)
@@ -2459,7 +2412,7 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	int ret = 0;
 
 	/* Must have permission */
-	if (!capable(CAP_SYS_MODULE))
+	if (!capable(CAP_SYS_MODULE) || modules_disabled)
 		return -EPERM;
 
 	/* Only one module load at a time, please */
@@ -2479,14 +2432,7 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	blocking_notifier_call_chain(&module_notify_list,
 			MODULE_STATE_COMING, mod);
 
-#ifdef CONFIG_GCOV_PROFILE
-	if (mod->ctors_start && mod->ctors_end) {
-		do_global_ctors((ctor_t *) mod->ctors_start,
-			(mod->ctors_end - mod->ctors_start) / sizeof(ctor_t),
-			 mod);
-	}
-#endif
-
+	do_mod_ctors(mod);
 	/* Start the module */
 	if (mod->init != NULL)
 		ret = do_one_initcall(mod->init);
@@ -2525,6 +2471,7 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 	mutex_lock(&module_mutex);
 	/* Drop initial reference. */
 	module_put(mod);
+	trim_init_extable(mod);
 	module_free(mod, mod->module_init);
 	mod->module_init = NULL;
 	mod->init_size = 0;
@@ -2968,7 +2915,7 @@ void print_modules(void)
 	struct module *mod;
 	char buf[8];
 
-	printk("Modules linked in:");
+	printk(KERN_DEFAULT "Modules linked in:");
 	/* Most callers should already have preempt disabled, but make sure */
 	preempt_disable();
 	list_for_each_entry_rcu(mod, &modules, list)

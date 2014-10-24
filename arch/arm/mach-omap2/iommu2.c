@@ -17,10 +17,7 @@
 #include <linux/module.h>
 #include <linux/stringify.h>
 
-#include <asm/io.h>
-
 #include <mach/iommu.h>
-#include <mach/iommu2.h>
 
 /*
  * omap2 architecture specific register bit definitions

@@ -100,7 +100,7 @@ ENTRY(vfp_support_entry)
 	beq	no_old_VFP_process
 	VFPFSTMIA r4, r5		@ save the working registers
 	VFPFMRX	r5, FPSCR		@ current status
-#ifndef CONFIG_ARCH_OMAP3430
+#ifndef CONFIG_CPU_FEROCEON
 	tst	r1, #FPEXC_EX		@ is there additional state to save?
 	beq	1f
 	VFPFMRX	r6, FPINST		@ FPINST (only if FPEXC.EX is set)
@@ -121,7 +121,7 @@ no_old_VFP_process:
 	VFPFLDMIA r10, r5		@ reload the working registers while
 					@ FPEXC is in a safe state
 	ldmia	r10, {r1, r5, r6, r8}	@ load FPEXC, FPSCR, FPINST, FPINST2
-#ifndef CONFIG_ARCH_OMAP3430
+#ifndef CONFIG_CPU_FEROCEON
 	tst	r1, #FPEXC_EX		@ is there additional state to restore?
 	beq	1f
 	VFPFMXR	FPINST, r6		@ restore FPINST (only if FPEXC.EX is set)

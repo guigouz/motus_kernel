@@ -1236,6 +1236,7 @@ int scsi_prep_fn(struct request_queue *q, struct request *req)
 		ret = scsi_setup_blk_pc_cmnd(sdev, req);
 	return scsi_prep_return(q, req, ret);
 }
+EXPORT_SYMBOL(scsi_prep_fn);
 
 /*
  * scsi_dev_queue_ready: if we can send requests to sdev, return 1 else
@@ -2441,20 +2442,18 @@ int
 scsi_internal_device_unblock(struct scsi_device *sdev)
 {
 	struct request_queue *q = sdev->request_queue; 
-	int err;
 	unsigned long flags;
 	
 	/* 
 	 * Try to transition the scsi device to SDEV_RUNNING
 	 * and goose the device queue if successful.  
 	 */
-	err = scsi_device_set_state(sdev, SDEV_RUNNING);
-	if (err) {
-		err = scsi_device_set_state(sdev, SDEV_CREATED);
-
-		if (err)
-			return err;
-	}
+	if (sdev->sdev_state == SDEV_BLOCK)
+		sdev->sdev_state = SDEV_RUNNING;
+	else if (sdev->sdev_state == SDEV_CREATED_BLOCK)
+		sdev->sdev_state = SDEV_CREATED;
+	else
+		return -EINVAL;
 
 	spin_lock_irqsave(q->queue_lock, flags);
 	blk_start_queue(q);

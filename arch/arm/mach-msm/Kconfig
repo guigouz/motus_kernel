@@ -13,6 +13,7 @@ config ARCH_MSM7X27
 	bool "MSM7x27"
 	select ARCH_MSM_ARM11
 	select CPU_V6
+	select CACHE_L2X0
 
 config ARCH_MSM7X30
 	bool "MSM7x30"
@@ -30,9 +31,9 @@ endchoice
 
 config  ARCH_MSM_ARM11
 	bool
+
 config  ARCH_MSM_SCORPION
 	bool
-
 
 menu "MSM Board Selection"
 

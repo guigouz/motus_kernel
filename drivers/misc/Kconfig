@@ -405,5 +405,6 @@ source "drivers/misc/netmux_linkdriver/Kconfig"
 source "drivers/misc/modem_pm_driver/Kconfig"
 source "drivers/misc/smc/Kconfig"
 source "drivers/misc/sec/Kconfig"
+source "drivers/misc/cb710/Kconfig"
 
 endif # MISC_DEVICES

@@ -41,8 +41,6 @@ struct btrfs_ordered_sum;
 
 #define BTRFS_MAGIC "_BHRfS_M"
 
-#define BTRFS_ACL_NOT_CACHED    ((void *)-1)
-
 #define BTRFS_MAX_LEVEL 8
 
 /*

@@ -43,6 +43,8 @@ EXPORT_SYMBOL(vfsmount_lock);
 static int event;
 static DEFINE_IDA(mnt_id_ida);
 static DEFINE_IDA(mnt_group_ida);
+static int mnt_id_start = 0;
+static int mnt_group_start = 1;
 
 static struct list_head *mount_hashtable __read_mostly;
 static struct kmem_cache *mnt_cache __read_mostly;
@@ -70,7 +72,9 @@ static int mnt_alloc_id(struct vfsmount *mnt)
 retry:
 	ida_pre_get(&mnt_id_ida, GFP_KERNEL);
 	spin_lock(&vfsmount_lock);
-	res = ida_get_new(&mnt_id_ida, &mnt->mnt_id);
+	res = ida_get_new_above(&mnt_id_ida, mnt_id_start, &mnt->mnt_id);
+	if (!res)
+		mnt_id_start = mnt->mnt_id + 1;
 	spin_unlock(&vfsmount_lock);
 	if (res == -EAGAIN)
 		goto retry;
@@ -80,8 +84,11 @@ retry:
 
 static void mnt_free_id(struct vfsmount *mnt)
 {
+	int id = mnt->mnt_id;
 	spin_lock(&vfsmount_lock);
-	ida_remove(&mnt_id_ida, mnt->mnt_id);
+	ida_remove(&mnt_id_ida, id);
+	if (mnt_id_start > id)
+		mnt_id_start = id;
 	spin_unlock(&vfsmount_lock);
 }
 
@@ -92,10 +99,18 @@ static void mnt_free_id(struct vfsmount *mnt)
  */
 static int mnt_alloc_group_id(struct vfsmount *mnt)
 {
+	int res;
+
 	if (!ida_pre_get(&mnt_group_ida, GFP_KERNEL))
 		return -ENOMEM;
 
-	return ida_get_new_above(&mnt_group_ida, 1, &mnt->mnt_group_id);
+	res = ida_get_new_above(&mnt_group_ida,
+				mnt_group_start,
+				&mnt->mnt_group_id);
+	if (!res)
+		mnt_group_start = mnt->mnt_group_id + 1;
+
+	return res;
 }
 
 /*
@@ -103,7 +118,10 @@ static int mnt_alloc_group_id(struct vfsmount *mnt)
  */
 void mnt_release_group_id(struct vfsmount *mnt)
 {
-	ida_remove(&mnt_group_ida, mnt->mnt_group_id);
+	int id = mnt->mnt_group_id;
+	ida_remove(&mnt_group_ida, id);
+	if (mnt_group_start > id)
+		mnt_group_start = id;
 	mnt->mnt_group_id = 0;
 }
 
@@ -1938,6 +1956,21 @@ dput_out:
 	return retval;
 }
 
+static struct mnt_namespace *alloc_mnt_ns(void)
+{
+	struct mnt_namespace *new_ns;
+
+	new_ns = kmalloc(sizeof(struct mnt_namespace), GFP_KERNEL);
+	if (!new_ns)
+		return ERR_PTR(-ENOMEM);
+	atomic_set(&new_ns->count, 1);
+	new_ns->root = NULL;
+	INIT_LIST_HEAD(&new_ns->list);
+	init_waitqueue_head(&new_ns->poll);
+	new_ns->event = 0;
+	return new_ns;
+}
+
 /*
  * Allocate a new namespace structure and populate it with contents
  * copied from the namespace of the passed in task structure.
@@ -1949,14 +1982,9 @@ static struct mnt_namespace *dup_mnt_ns(struct mnt_namespace *mnt_ns,
 	struct vfsmount *rootmnt = NULL, *pwdmnt = NULL;
 	struct vfsmount *p, *q;
 
-	new_ns = kmalloc(sizeof(struct mnt_namespace), GFP_KERNEL);
-	if (!new_ns)
-		return ERR_PTR(-ENOMEM);
-
-	atomic_set(&new_ns->count, 1);
-	INIT_LIST_HEAD(&new_ns->list);
-	init_waitqueue_head(&new_ns->poll);
-	new_ns->event = 0;
+	new_ns = alloc_mnt_ns();
+	if (IS_ERR(new_ns))
+		return new_ns;
 
 	down_write(&namespace_sem);
 	/* First pass: copy the tree topology */
@@ -2019,6 +2047,24 @@ struct mnt_namespace *copy_mnt_ns(unsigned long flags, struct mnt_namespace *ns,
 	put_mnt_ns(ns);
 	return new_ns;
 }
+
+/**
+ * create_mnt_ns - creates a private namespace and adds a root filesystem
+ * @mnt: pointer to the new root filesystem mountpoint
+ */
+struct mnt_namespace *create_mnt_ns(struct vfsmount *mnt)
+{
+	struct mnt_namespace *new_ns;
+
+	new_ns = alloc_mnt_ns();
+	if (!IS_ERR(new_ns)) {
+		mnt->mnt_ns = new_ns;
+		new_ns->root = mnt;
+		list_add(&new_ns->list, &new_ns->root->mnt_list);
+	}
+	return new_ns;
+}
+EXPORT_SYMBOL(create_mnt_ns);
 
 SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
 		char __user *, type, unsigned long, flags, void __user *, data)
@@ -2195,16 +2241,9 @@ static void __init init_mount_tree(void)
 	mnt = do_kern_mount("rootfs", 0, "rootfs", NULL);
 	if (IS_ERR(mnt))
 		panic("Can't create rootfs");
-	ns = kmalloc(sizeof(*ns), GFP_KERNEL);
-	if (!ns)
+	ns = create_mnt_ns(mnt);
+	if (IS_ERR(ns))
 		panic("Can't allocate initial namespace");
-	atomic_set(&ns->count, 1);
-	INIT_LIST_HEAD(&ns->list);
-	init_waitqueue_head(&ns->poll);
-	ns->event = 0;
-	list_add(&mnt->mnt_list, &ns->list);
-	ns->root = mnt;
-	mnt->mnt_ns = ns;
 
 	init_task.nsproxy->mnt_ns = ns;
 	get_mnt_ns(ns);
@@ -2247,10 +2286,14 @@ void __init mnt_init(void)
 	init_mount_tree();
 }
 
-void __put_mnt_ns(struct mnt_namespace *ns)
+void put_mnt_ns(struct mnt_namespace *ns)
 {
-	struct vfsmount *root = ns->root;
+	struct vfsmount *root;
 	LIST_HEAD(umount_list);
+
+	if (!atomic_dec_and_lock(&ns->count, &vfsmount_lock))
+		return;
+	root = ns->root;
 	ns->root = NULL;
 	spin_unlock(&vfsmount_lock);
 	down_write(&namespace_sem);
@@ -2261,3 +2304,4 @@ void __put_mnt_ns(struct mnt_namespace *ns)
 	release_mounts(&umount_list);
 	kfree(ns);
 }
+EXPORT_SYMBOL(put_mnt_ns);

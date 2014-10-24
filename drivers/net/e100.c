@@ -1716,7 +1716,7 @@ static int e100_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 		/* This is a hard error - log it. */
 		DPRINTK(TX_ERR, DEBUG, "Out of Tx resources, returning skb\n");
 		netif_stop_queue(netdev);
-		return 1;
+		return NETDEV_TX_BUSY;
 	}
 
 	netdev->trans_start = jiffies;
@@ -2895,12 +2895,13 @@ static void __e100_shutdown(struct pci_dev *pdev, bool *enable_wake)
 
 static int __e100_power_off(struct pci_dev *pdev, bool wake)
 {
-	if (wake) {
+	if (wake)
 		return pci_prepare_to_sleep(pdev);
-	} else {
-		pci_wake_from_d3(pdev, false);
-		return pci_set_power_state(pdev, PCI_D3hot);
-	}
+
+	pci_wake_from_d3(pdev, false);
+	pci_set_power_state(pdev, PCI_D3hot);
+
+	return 0;
 }
 
 #ifdef CONFIG_PM
@@ -2921,7 +2922,7 @@ static int e100_resume(struct pci_dev *pdev)
 	/* ack any pending wake events, disable PME */
 	pci_enable_wake(pdev, 0, 0);
 
-	/* disbale reverse auto-negotiation */
+	/* disable reverse auto-negotiation */
 	if (nic->phy == phy_82552_v) {
 		u16 smartspeed = mdio_read(netdev, nic->mii.phy_id,
 		                           E100_82552_SMARTSPEED);

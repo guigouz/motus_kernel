@@ -156,7 +156,6 @@
 #define PORT_MN10300_CTS	81
 
 #define PORT_SC26XX	82
-#define PORT_MSM	83
 
 /* SH-SCI */
 #define PORT_SCIFA	83
@@ -171,6 +170,9 @@
 
 /* Timberdale UART */
 #define PORT_TIMBUART	87
+
+/* Qualcomm MSM SoCs */
+#define PORT_MSM	88
 
 #ifdef __KERNEL__
 

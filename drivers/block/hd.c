@@ -99,7 +99,6 @@
 static DEFINE_SPINLOCK(hd_lock);
 static struct request_queue *hd_queue;
 
-#define MAJOR_NR HD_MAJOR
 #define QUEUE (hd_queue)
 #define CURRENT elv_next_request(hd_queue)
 
@@ -708,12 +707,12 @@ static int __init hd_init(void)
 {
 	int drive;
 
-	if (register_blkdev(MAJOR_NR, "hd"))
+	if (register_blkdev(HD_MAJOR, "hd"))
 		return -1;
 
 	hd_queue = blk_init_queue(do_hd_request, &hd_lock);
 	if (!hd_queue) {
-		unregister_blkdev(MAJOR_NR, "hd");
+		unregister_blkdev(HD_MAJOR, "hd");
 		return -ENOMEM;
 	}
 
@@ -747,7 +746,7 @@ static int __init hd_init(void)
 		struct hd_i_struct *p = &hd_info[drive];
 		if (!disk)
 			goto Enomem;
-		disk->major = MAJOR_NR;
+		disk->major = HD_MAJOR;
 		disk->first_minor = drive << 6;
 		disk->fops = &hd_fops;
 		sprintf(disk->disk_name, "hd%c", 'a'+drive);
@@ -791,7 +790,7 @@ out1:
 	NR_HD = 0;
 out:
 	del_timer(&device_timer);
-	unregister_blkdev(MAJOR_NR, "hd");
+	unregister_blkdev(HD_MAJOR, "hd");
 	blk_cleanup_queue(hd_queue);
 	return -1;
 Enomem:

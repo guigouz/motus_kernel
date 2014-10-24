@@ -6,6 +6,9 @@
  * Copyright (C) 2005 Nokia Corporation
  * Written by Tony Lindgren <tony@atomide.com>
  *
+ * Copyright (C) 2009 Texas Instruments
+ * Added OMAP4 support - Santosh Shilimkar <santosh.shilimkar@ti.com>
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -41,9 +44,11 @@
 #define OMAP2_SRAM_VA		0xe3000000
 #define OMAP2_SRAM_PUB_VA	(OMAP2_SRAM_VA + 0x800)
 #define OMAP3_SRAM_PA           0x40200000
-#define OMAP3_SRAM_VA           0xfc800000
+#define OMAP3_SRAM_VA           0xd7000000
 #define OMAP3_SRAM_PUB_PA       0x40208000
-#define OMAP3_SRAM_PUB_VA       (OMAP3_SRAM_VA + 0x8000)
+#define OMAP3_SRAM_PUB_VA       0xd7008000
+#define OMAP4_SRAM_PA		0x40200000		/*0x402f0000*/
+#define OMAP4_SRAM_VA		0xd7000000		/*0xd70f0000*/
 
 #if defined(CONFIG_ARCH_OMAP24XX) || defined(CONFIG_ARCH_OMAP34XX)
 #define SRAM_BOOTLOADER_SZ	0x00
@@ -87,6 +92,10 @@ static int is_sram_locked(void)
 {
 	int type = 0;
 
+	if (cpu_is_omap44xx())
+		/* Not yet supported */
+		return 0;
+
 	if (cpu_is_omap242x())
 		type = omap_rev() & OMAP2_DEVICETYPE_MASK;
 
@@ -122,15 +131,9 @@ void __init omap_detect_sram(void)
 	if (cpu_class_is_omap2()) {
 		if (is_sram_locked()) {
 			if (cpu_is_omap34xx()) {
-				if (omap_type() == OMAP2_DEVICE_TYPE_GP) {
-					omap_sram_base = OMAP3_SRAM_PUB_VA;
-					omap_sram_start = OMAP3_SRAM_PUB_PA;
-					omap_sram_size = 0x8000; /* 32K */
-				} else {
-					omap_sram_base = OMAP3_SRAM_PUB_VA;
-					omap_sram_start = OMAP3_SRAM_PUB_PA;
-					omap_sram_size = 0x7000; /* 28K */
-				}
+				omap_sram_base = OMAP3_SRAM_PUB_VA;
+				omap_sram_start = OMAP3_SRAM_PUB_PA;
+				omap_sram_size = 0x8000; /* 32K */
 			} else {
 				omap_sram_base = OMAP2_SRAM_PUB_VA;
 				omap_sram_start = OMAP2_SRAM_PUB_PA;
@@ -141,6 +144,10 @@ void __init omap_detect_sram(void)
 				omap_sram_base = OMAP3_SRAM_VA;
 				omap_sram_start = OMAP3_SRAM_PA;
 				omap_sram_size = 0x10000; /* 64K */
+			} else if (cpu_is_omap44xx()) {
+				omap_sram_base = OMAP4_SRAM_VA;
+				omap_sram_start = OMAP4_SRAM_PA;
+				omap_sram_size = 0x8000; /* 32K */
 			} else {
 				omap_sram_base = OMAP2_SRAM_VA;
 				omap_sram_start = OMAP2_SRAM_PA;
@@ -218,6 +225,12 @@ void __init omap_map_sram(void)
 		omap_sram_io_desc[0].type = MT_MEMORY_NONCACHED;
 	}
 
+	if (cpu_is_omap44xx()) {
+		omap_sram_io_desc[0].virtual = OMAP4_SRAM_VA;
+		base = OMAP4_SRAM_PA;
+		base = ROUND_DOWN(base, PAGE_SIZE);
+		omap_sram_io_desc[0].pfn = __phys_to_pfn(base);
+	}
 	omap_sram_io_desc[0].length = 1024 * 1024;	/* Use section desc */
 	iotable_init(omap_sram_io_desc, ARRAY_SIZE(omap_sram_io_desc));
 
@@ -257,20 +270,13 @@ void * omap_sram_push(void * start, unsigned long size)
 	return (void *)omap_sram_ceil;
 }
 
-static void omap_sram_error(void)
-{
-	panic("Uninitialized SRAM function\n");
-}
-
 #ifdef CONFIG_ARCH_OMAP1
 
 static void (*_omap_sram_reprogram_clock)(u32 dpllctl, u32 ckctl);
 
 void omap_sram_reprogram_clock(u32 dpllctl, u32 ckctl)
 {
-	if (!_omap_sram_reprogram_clock)
-		omap_sram_error();
-
+	BUG_ON(!_omap_sram_reprogram_clock);
 	_omap_sram_reprogram_clock(dpllctl, ckctl);
 }
 
@@ -295,9 +301,7 @@ static void (*_omap2_sram_ddr_init)(u32 *slow_dll_ctrl, u32 fast_dll_ctrl,
 void omap2_sram_ddr_init(u32 *slow_dll_ctrl, u32 fast_dll_ctrl,
 		   u32 base_cs, u32 force_unlock)
 {
-	if (!_omap2_sram_ddr_init)
-		omap_sram_error();
-
+	BUG_ON(!_omap2_sram_ddr_init);
 	_omap2_sram_ddr_init(slow_dll_ctrl, fast_dll_ctrl,
 			     base_cs, force_unlock);
 }
@@ -307,9 +311,7 @@ static void (*_omap2_sram_reprogram_sdrc)(u32 perf_level, u32 dll_val,
 
 void omap2_sram_reprogram_sdrc(u32 perf_level, u32 dll_val, u32 mem_type)
 {
-	if (!_omap2_sram_reprogram_sdrc)
-		omap_sram_error();
-
+	BUG_ON(!_omap2_sram_reprogram_sdrc);
 	_omap2_sram_reprogram_sdrc(perf_level, dll_val, mem_type);
 }
 
@@ -317,9 +319,7 @@ static u32 (*_omap2_set_prcm)(u32 dpll_ctrl_val, u32 sdrc_rfr_val, int bypass);
 
 u32 omap2_set_prcm(u32 dpll_ctrl_val, u32 sdrc_rfr_val, int bypass)
 {
-	if (!_omap2_set_prcm)
-		omap_sram_error();
-
+	BUG_ON(!_omap2_set_prcm);
 	return _omap2_set_prcm(dpll_ctrl_val, sdrc_rfr_val, bypass);
 }
 #endif
@@ -376,38 +376,34 @@ static u32 (*_omap3_sram_configure_core_dpll)(u32 sdrc_rfr_ctrl,
 u32 omap3_configure_core_dpll(u32 sdrc_rfr_ctrl, u32 sdrc_actim_ctrla,
 			      u32 sdrc_actim_ctrlb, u32 m2, u32 unlock_dll,
 			      u32 f, u32 sdrc_mr, u32 inc)
- {
-	if (!_omap3_sram_configure_core_dpll)
-		omap_sram_error();
-
+{
+	BUG_ON(!_omap3_sram_configure_core_dpll);
 	return _omap3_sram_configure_core_dpll(sdrc_rfr_ctrl,
 					       sdrc_actim_ctrla,
 					       sdrc_actim_ctrlb, m2,
 					       unlock_dll, f, sdrc_mr, inc);
- }
+}
 
-#ifdef CONFIG_PM
-void omap3_sram_restore_context(void)
+/* REVISIT: Should this be same as omap34xx_sram_init() after off-idle? */
+void restore_sram_functions(void)
 {
 	omap_sram_ceil = omap_sram_base + omap_sram_size;
 
 	_omap3_sram_configure_core_dpll =
 		omap_sram_push(omap3_sram_configure_core_dpll,
 			       omap3_sram_configure_core_dpll_sz);
-	omap_push_sram_idle();
 }
-#endif /* CONFIG_PM */
 
-int __init omap3_sram_init(void)
+int __init omap34xx_sram_init(void)
 {
 	_omap3_sram_configure_core_dpll =
 		omap_sram_push(omap3_sram_configure_core_dpll,
 			       omap3_sram_configure_core_dpll_sz);
-	omap_push_sram_idle();
+
 	return 0;
 }
 #else
-static inline int omap3_sram_init(void)
+static inline int omap34xx_sram_init(void)
 {
 	return 0;
 }
@@ -425,7 +421,9 @@ int __init omap_sram_init(void)
 	else if (cpu_is_omap2430())
 		omap243x_sram_init();
 	else if (cpu_is_omap34xx())
-		omap3_sram_init();
+		omap34xx_sram_init();
+	else if (cpu_is_omap44xx())
+		omap34xx_sram_init(); /* FIXME: */
 
 	return 0;
 }

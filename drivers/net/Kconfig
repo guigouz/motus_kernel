@@ -1730,6 +1730,7 @@ config TLAN
 
 config KS8842
 	tristate "Micrel KSZ8842"
+	depends on HAS_IOMEM
 	help
 	  This platform driver is for Micrel KSZ8842 chip.
 
@@ -1891,7 +1892,7 @@ config FEC_MPC52xx
 	---help---
 	  This option enables support for the MPC5200's on-chip
 	  Fast Ethernet Controller
-	  If compiled as module, it will be called 'fec_mpc52xx.ko'.
+	  If compiled as module, it will be called fec_mpc52xx.
 
 config FEC_MPC52xx_MDIO
 	bool "MPC52xx FEC MDIO bus driver"
@@ -1903,7 +1904,7 @@ config FEC_MPC52xx_MDIO
 	  (Motorola? industry standard).
 	  If your board uses an external PHY connected to FEC, enable this.
 	  If not sure, enable.
-	  If compiled as module, it will be called 'fec_mpc52xx_phy.ko'.
+	  If compiled as module, it will be called fec_mpc52xx_phy.
 
 config NE_H8300
 	tristate "NE2000 compatible support for H8/300"
@@ -2211,7 +2212,7 @@ config SKGE_DEBUG
        depends on SKGE && DEBUG_FS
        help
 	 This option adds the ability to dump driver state for debugging.
-	 The file debugfs/skge/ethX displays the state of the internal
+	 The file /sys/kernel/debug/skge/ethX displays the state of the internal
 	 transmit and receive rings.
 
 	 If unsure, say N.
@@ -2237,7 +2238,7 @@ config SKY2_DEBUG
        depends on SKY2 && DEBUG_FS
        help
 	 This option adds the ability to dump driver state for debugging.
-	 The file debugfs/sky2/ethX displays the state of the internal
+	 The file /sys/kernel/debug/sky2/ethX displays the state of the internal
 	 transmit and receive rings.
 
 	 If unsure, say N.
@@ -2274,6 +2275,18 @@ config BNX2
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called bnx2.  This is recommended.
+
+config CNIC
+	tristate "Broadcom CNIC support"
+	depends on PCI
+	select BNX2
+	select UIO
+	help
+	  This driver supports offload features of Broadcom NetXtremeII
+	  gigabit Ethernet cards.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called cnic.  This is recommended.
 
 config SPIDER_NET
 	tristate "Spider Gigabit Ethernet driver"
@@ -2435,6 +2448,17 @@ config JME
 
 	  To compile this driver as a module, choose M here. The module
 	  will be called jme.
+
+config S6GMAC
+	tristate "S6105 GMAC ethernet support"
+	depends on XTENSA_VARIANT_S6000
+	select PHYLIB
+	help
+	  This driver supports the on chip ethernet device on the
+	  S6105 xtensa processor.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called s6gmac.
 
 endif # NETDEV_1000
 

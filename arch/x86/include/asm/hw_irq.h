@@ -32,6 +32,7 @@ extern void error_interrupt(void);
 extern void spurious_interrupt(void);
 extern void thermal_interrupt(void);
 extern void reschedule_interrupt(void);
+extern void mce_self_interrupt(void);
 
 extern void invalidate_interrupt(void);
 extern void invalidate_interrupt0(void);
@@ -44,6 +45,7 @@ extern void invalidate_interrupt6(void);
 extern void invalidate_interrupt7(void);
 
 extern void irq_move_cleanup_interrupt(void);
+extern void reboot_interrupt(void);
 extern void threshold_interrupt(void);
 
 extern void call_function_interrupt(void);

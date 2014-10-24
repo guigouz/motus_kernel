@@ -58,6 +58,9 @@ int __init_or_module omap_cfg_reg(const unsigned long index)
 	int is_mux_config = 0;
 #endif
 
+	if (cpu_is_omap44xx())
+		return 0;
+
 	if (mux_cfg == NULL) {
 		printk(KERN_ERR "Pin mux table not initialized\n");
 		return -ENODEV;

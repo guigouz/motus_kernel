@@ -30,6 +30,7 @@
 #include <linux/smp_lock.h>
 #include <linux/initrd.h>
 #include <linux/bootmem.h>
+#include <linux/acpi.h>
 #include <linux/tty.h>
 #include <linux/gfp.h>
 #include <linux/percpu.h>
@@ -71,9 +72,8 @@
 #include <linux/idr.h>
 #include <linux/ftrace.h>
 #include <linux/async.h>
-#ifdef CONFIG_LTT_LITE
-#include <linux/lttlite-events.h>
-#endif
+#include <linux/kmemcheck.h>
+#include <linux/kmemtrace.h>
 #include <trace/boot.h>
 
 #include <asm/io.h>
@@ -99,11 +99,6 @@ extern void sbus_init(void);
 extern void prio_tree_init(void);
 extern void radix_tree_init(void);
 extern void free_initmem(void);
-#ifdef	CONFIG_ACPI
-extern void acpi_early_init(void);
-#else
-static inline void acpi_early_init(void) { }
-#endif
 #ifndef CONFIG_DEBUG_RODATA
 static inline void mark_rodata_ro(void) { }
 #endif
@@ -475,11 +470,6 @@ static noinline void __init_refok rest_init(void)
 {
 	int pid;
 
-#ifdef CONFIG_LTT_LITE
-	/* initialize before the init process is started */
-	ltt_lite_early_init();
-#endif
-
 	kernel_thread(kernel_init, NULL, CLONE_FS | CLONE_SIGHAND);
 	numa_default_policy();
 	pid = kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES);
@@ -565,8 +555,14 @@ void __init __weak thread_info_cache_init(void)
  */
 static void __init mm_init(void)
 {
+	/*
+	 * page_cgroup requires countinous pages as memmap
+	 * and it's bigger than MAX_ORDER unless SPARSEMEM.
+	 */
+	page_cgroup_init_flatmem();
 	mem_init();
 	kmem_cache_init();
+	pgtable_cache_init();
 	vmalloc_init();
 }
 
@@ -662,6 +658,11 @@ asmlinkage void __init start_kernel(void)
 	early_boot_irqs_on();
 	local_irq_enable();
 
+	/* Interrupts are enabled now so all GFP allocations are safe. */
+	set_gfp_allowed_mask(__GFP_BITS_MASK);
+
+	kmem_cache_init_late();
+
 	/*
 	 * HACK ALERT! This is early. We're enabling the console before
 	 * we've done PCI setups etc, and console_init() must be aware of
@@ -690,10 +691,8 @@ asmlinkage void __init start_kernel(void)
 		initrd_start = 0;
 	}
 #endif
-	cpuset_init_early();
 	page_cgroup_init();
 	enable_debug_pagealloc();
-	cpu_hotplug_init();
 	kmemtrace_init();
 	kmemleak_init();
 	debug_objects_mem_init();
@@ -708,7 +707,6 @@ asmlinkage void __init start_kernel(void)
 		late_time_init();
 	calibrate_delay();
 	pidmap_init();
-	pgtable_cache_init();
 	anon_vma_init();
 #ifdef CONFIG_X86
 	if (efi_enabled)
@@ -744,6 +742,17 @@ asmlinkage void __init start_kernel(void)
 
 	/* Do the rest non-__init'ed, we're now alive */
 	rest_init();
+}
+
+/* Call all constructor functions linked into the kernel. */
+static void __init do_ctors(void)
+{
+#ifdef CONFIG_CONSTRUCTORS
+	ctor_fn_t *call = (ctor_fn_t *) __ctors_start;
+
+	for (; call < (ctor_fn_t *) __ctors_end; call++)
+		(*call)();
+#endif
 }
 
 int initcall_debug;
@@ -826,6 +835,7 @@ static void __init do_basic_setup(void)
 	usermodehelper_init();
 	driver_init();
 	init_irq_proc();
+	do_ctors();
 	do_initcalls();
 }
 
@@ -893,6 +903,11 @@ static noinline int init_post(void)
 static int __init kernel_init(void * unused)
 {
 	lock_kernel();
+
+	/*
+	 * init can allocate pages on any node
+	 */
+	set_mems_allowed(node_possible_map);
 	/*
 	 * init can run on any cpu.
 	 */
