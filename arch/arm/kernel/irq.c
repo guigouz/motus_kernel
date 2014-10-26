@@ -20,10 +20,6 @@
  *
  *  IRQ's are in fact implemented a bit like signal handlers for the kernel.
  *  Naturally it's not a 1:1 relation, but there are similarities.
- *  Date        Author    Comment
- *  ---------   --------- ------------------------------------
- *  11/05/2007  Motorola  add irq log for LTT-LITE
- *
  */
 #include <linux/kernel_stat.h>
 #include <linux/module.h>
@@ -40,6 +36,7 @@
 #include <linux/list.h>
 #include <linux/kallsyms.h>
 #include <linux/proc_fs.h>
+
 #include <asm/system.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
@@ -101,17 +98,6 @@ unlock:
 	return 0;
 }
 
-/* Handle bad interrupts */
-static struct irq_desc bad_irq_desc = {
-	.handle_irq = handle_bad_irq,
-	.lock = __SPIN_LOCK_UNLOCKED(bad_irq_desc.lock),
-};
-
-#ifdef CONFIG_CPUMASK_OFFSTACK
-/* We are not allocating bad_irq_desc.affinity or .pending_mask */
-#error "ARM architecture does not support CONFIG_CPUMASK_OFFSTACK."
-#endif
-
 /*
  * do_IRQ handles all hardware IRQ's.  Decoded IRQs should not
  * come via this function.  Instead, they should provide their
@@ -127,9 +113,11 @@ asmlinkage void __exception asm_do_IRQ(unsigned int irq, struct pt_regs *regs)
 	 * Some hardware gives randomly wrong interrupts.  Rather
 	 * than crashing, do something sensible.
 	 */
-	if (irq >= NR_IRQS)
-		handle_bad_irq(irq, &bad_irq_desc);
-	else {
+	if (unlikely(irq >= NR_IRQS)) {
+		if (printk_ratelimit())
+			printk(KERN_WARNING "Bad IRQ%u\n", irq);
+		ack_bad_irq(irq);
+	} else {
 		generic_handle_irq(irq);
 	}
 
@@ -169,10 +157,6 @@ void __init init_IRQ(void)
 	for (irq = 0; irq < NR_IRQS; irq++)
 		irq_desc[irq].status |= IRQ_NOREQUEST | IRQ_NOPROBE;
 
-#ifdef CONFIG_SMP
-	cpumask_setall(bad_irq_desc.affinity);
-	bad_irq_desc.node = smp_processor_id();
-#endif
 	init_arch_irq();
 }
 

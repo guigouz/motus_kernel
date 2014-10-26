@@ -11,9 +11,11 @@ int generic_ide_suspend(struct device *dev, pm_message_t mesg)
 	struct ide_cmd cmd;
 	int ret;
 
-	/* call ACPI _GTM only once */
-	if ((drive->dn & 1) == 0 || pair == NULL)
-		ide_acpi_get_timing(hwif);
+	if (ide_port_acpi(hwif)) {
+		/* call ACPI _GTM only once */
+		if ((drive->dn & 1) == 0 || pair == NULL)
+			ide_acpi_get_timing(hwif);
+	}
 
 	memset(&rqpm, 0, sizeof(rqpm));
 	memset(&cmd, 0, sizeof(cmd));
@@ -29,9 +31,11 @@ int generic_ide_suspend(struct device *dev, pm_message_t mesg)
 	ret = blk_execute_rq(drive->queue, NULL, rq, 0);
 	blk_put_request(rq);
 
-	/* call ACPI _PS3 only after both devices are suspended */
-	if (ret == 0 && ((drive->dn & 1) || pair == NULL))
-		ide_acpi_set_state(hwif, 0);
+	if (ret == 0 && ide_port_acpi(hwif)) {
+		/* call ACPI _PS3 only after both devices are suspended */
+		if ((drive->dn & 1) || pair == NULL)
+			ide_acpi_set_state(hwif, 0);
+	}
 
 	return ret;
 }
@@ -46,13 +50,15 @@ int generic_ide_resume(struct device *dev)
 	struct ide_cmd cmd;
 	int err;
 
-	/* call ACPI _PS0 / _STM only once */
-	if ((drive->dn & 1) == 0 || pair == NULL) {
-		ide_acpi_set_state(hwif, 1);
-		ide_acpi_push_timing(hwif);
-	}
+	if (ide_port_acpi(hwif)) {
+		/* call ACPI _PS0 / _STM only once */
+		if ((drive->dn & 1) == 0 || pair == NULL) {
+			ide_acpi_set_state(hwif, 1);
+			ide_acpi_push_timing(hwif);
+		}
 
-	ide_acpi_exec_tfs(drive);
+		ide_acpi_exec_tfs(drive);
+	}
 
 	memset(&rqpm, 0, sizeof(rqpm));
 	memset(&cmd, 0, sizeof(cmd));

@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.31-rc1
-# Fri Oct 24 11:12:06 2014
+# Linux kernel version: 2.6.31-rc2
+# Sat Oct 25 23:52:19 2014
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -1661,6 +1661,7 @@ CONFIG_LEDS_CLASS=y
 #
 # CONFIG_LEDS_PCA9532 is not set
 # CONFIG_LEDS_GPIO is not set
+# CONFIG_LEDS_LP3944 is not set
 # CONFIG_LEDS_LP5521 is not set
 # CONFIG_LEDS_CPLD is not set
 # CONFIG_LEDS_PCA955X is not set

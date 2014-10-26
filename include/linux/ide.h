@@ -1060,7 +1060,6 @@ int generic_ide_ioctl(ide_drive_t *, struct block_device *, unsigned, unsigned l
 extern int ide_vlb_clk;
 extern int ide_pci_clk;
 
-unsigned int ide_rq_bytes(struct request *);
 int ide_end_rq(ide_drive_t *, struct request *, int, unsigned int);
 void ide_kill_rq(ide_drive_t *, struct request *);
 
@@ -1356,7 +1355,6 @@ int ide_in_drive_list(u16 *, const struct drive_list_entry *);
 #ifdef CONFIG_BLK_DEV_IDEDMA
 int ide_dma_good_drive(ide_drive_t *);
 int __ide_dma_bad_drive(ide_drive_t *);
-int ide_id_dma_bug(ide_drive_t *);
 
 u8 ide_find_dma_mode(ide_drive_t *, u8);
 
@@ -1397,7 +1395,6 @@ void ide_dma_lost_irq(ide_drive_t *);
 ide_startstop_t ide_dma_timeout_retry(ide_drive_t *, int);
 
 #else
-static inline int ide_id_dma_bug(ide_drive_t *drive) { return 0; }
 static inline u8 ide_find_dma_mode(ide_drive_t *drive, u8 speed) { return 0; }
 static inline u8 ide_max_dma_mode(ide_drive_t *drive) { return 0; }
 static inline void ide_dma_off_quietly(ide_drive_t *drive) { ; }
@@ -1417,6 +1414,7 @@ static inline void ide_dma_unmap_sg(ide_drive_t *drive,
 
 #ifdef CONFIG_BLK_DEV_IDEACPI
 int ide_acpi_init(void);
+bool ide_port_acpi(ide_hwif_t *hwif);
 extern int ide_acpi_exec_tfs(ide_drive_t *drive);
 extern void ide_acpi_get_timing(ide_hwif_t *hwif);
 extern void ide_acpi_push_timing(ide_hwif_t *hwif);
@@ -1425,6 +1423,7 @@ void ide_acpi_port_init_devices(ide_hwif_t *);
 extern void ide_acpi_set_state(ide_hwif_t *hwif, int on);
 #else
 static inline int ide_acpi_init(void) { return 0; }
+static inline bool ide_port_acpi(ide_hwif_t *hwif) { return 0; }
 static inline int ide_acpi_exec_tfs(ide_drive_t *drive) { return 0; }
 static inline void ide_acpi_get_timing(ide_hwif_t *hwif) { ; }
 static inline void ide_acpi_push_timing(ide_hwif_t *hwif) { ; }

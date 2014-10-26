@@ -11,8 +11,7 @@
 #define _OMAP_BOARD_H
 
 #include <linux/types.h>
-#include <linux/platform_device.h>
-#include <linux/usb/omap.h>
+
 #include <mach/gpio-switch.h>
 
 /* Different peripheral ids */
@@ -24,12 +23,9 @@
 #define OMAP_TAG_FBMEM		0x4f08
 #define OMAP_TAG_STI_CONSOLE	0x4f09
 #define OMAP_TAG_CAMERA_SENSOR	0x4f0a
-#define OMAP_TAG_PARTITION      0x4f0b
-#define OMAP_TAG_TEA5761	0x4f10
-#define OMAP_TAG_TMP105		0x4f11
 
 #define OMAP_TAG_BOOT_REASON    0x4f80
-#define OMAP_TAG_FLASH_PART_STR	0x4f81
+#define OMAP_TAG_FLASH_PART	0x4f81
 #define OMAP_TAG_VERSION_STR	0x4f82
 
 struct omap_clock_config {
@@ -45,6 +41,12 @@ struct omap_serial_console_config {
 struct omap_sti_console_config {
 	unsigned enable:1;
 	u8 channel;
+};
+
+struct omap_camera_sensor_config {
+	u16 reset_gpio;
+	int (*power_on)(void * data);
+	int (*power_off)(void * data);
 };
 
 struct omap_usb_config {
@@ -73,9 +75,6 @@ struct omap_usb_config {
 	 *  6 == 6 wire unidirectional (or TLL)
 	 */
 	u8		pins[3];
-	int (*usbhost_standby_status)(void);
-	u8		usb_remote_wake_gpio;
-	struct omap_usb_platform_data *plat_data;
 };
 
 struct omap_lcd_config {
@@ -109,9 +108,9 @@ struct omap_pwm_led_platform_data {
 struct omap_gpio_switch_config {
 	char name[12];
 	u16 gpio;
-	u8 flags:4;
-	u8 type:4;
-	unsigned int key_code:24; /* Linux key code */
+	int flags:4;
+	int type:4;
+	int key_code:24; /* Linux key code */
 };
 
 struct omap_uart_config {
@@ -119,25 +118,8 @@ struct omap_uart_config {
 	unsigned int enabled_uarts;
 };
 
-struct omap_tea5761_config {
-	u16 enable_gpio;
-};
 
-/* This cannot be passed from the bootloader */
-struct omap_tmp105_config {
-	u16 tmp105_irq_pin;
-	int (*set_power)(int enable);
-};
-
-struct omap_partition_config {
-	char name[16];
-	unsigned int size;
-	unsigned int offset;
-	/* same as in include/linux/mtd/partitions.h */
-	unsigned int mask_flags;
-};
-
-struct omap_flash_part_str_config {
+struct omap_flash_part_config {
 	char part_table[0];
 };
 
@@ -161,21 +143,12 @@ struct omap_board_config_kernel {
 	const void *data;
 };
 
-struct omap_vout_config {
-	u16 max_width;
-	u16 max_height;
-	u32 max_buffer_size;
-	u8  num_buffers;
-	u8  num_devices;
-	int device_ids[2]; /* -1 for any videoX */
-};
-
 extern const void *__omap_get_config(u16 tag, size_t len, int nr);
 
 #define omap_get_config(tag, type) \
-	((const type*) __omap_get_config((tag), sizeof(type), 0))
+	((const type *) __omap_get_config((tag), sizeof(type), 0))
 #define omap_get_nr_config(tag, type, nr) \
-	((const type*) __omap_get_config((tag), sizeof(type), (nr)))
+	((const type *) __omap_get_config((tag), sizeof(type), (nr)))
 
 extern const void *omap_get_var_config(u16 tag, size_t *len);
 

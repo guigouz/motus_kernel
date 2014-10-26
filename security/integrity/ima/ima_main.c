@@ -234,7 +234,43 @@ out:
 	return rc;
 }
 
-static void opencount_get(struct file *file)
+/*
+ * ima_counts_put - decrement file counts
+ *
+ * File counts are incremented in ima_path_check. On file open
+ * error, such as ETXTBSY, decrement the counts to prevent
+ * unnecessary imbalance messages.
+ */
+void ima_counts_put(struct path *path, int mask)
+{
+	struct inode *inode = path->dentry->d_inode;
+	struct ima_iint_cache *iint;
+
+	if (!ima_initialized || !S_ISREG(inode->i_mode))
+		return;
+	iint = ima_iint_find_insert_get(inode);
+	if (!iint)
+		return;
+
+	mutex_lock(&iint->mutex);
+	iint->opencount--;
+	if ((mask & MAY_WRITE) || (mask == 0))
+		iint->writecount--;
+	else if (mask & (MAY_READ | MAY_EXEC))
+		iint->readcount--;
+	mutex_unlock(&iint->mutex);
+}
+
+/*
+ * ima_counts_get - increment file counts
+ *
+ * - for IPC shm and shmat file.
+ * - for nfsd exported files.
+ *
+ * Increment the counts for these files to prevent unnecessary
+ * imbalance messages.
+ */
+void ima_counts_get(struct file *file)
 {
 	struct inode *inode = file->f_dentry->d_inode;
 	struct ima_iint_cache *iint;

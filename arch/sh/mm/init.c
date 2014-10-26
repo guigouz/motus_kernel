@@ -182,7 +182,6 @@ void __init paging_init(void)
 }
 
 static struct kcore_list kcore_mem, kcore_vmalloc;
-int after_bootmem = 0;
 
 void __init mem_init(void)
 {
@@ -214,8 +213,6 @@ void __init mem_init(void)
 	/* clear the zero-page */
 	memset(empty_zero_page, 0, PAGE_SIZE);
 	__flush_wback_region(empty_zero_page, PAGE_SIZE);
-
-	after_bootmem = 1;
 
 	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
 	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;

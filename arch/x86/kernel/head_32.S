@@ -607,13 +607,6 @@ ignore_int:
 ENTRY(initial_code)
 	.long i386_start_kernel
 
-.section .text
-/*
- * Real beginning of normal "text" segment
- */
-ENTRY(stext)
-ENTRY(_stext)
-
 /*
  * BSS section
  */

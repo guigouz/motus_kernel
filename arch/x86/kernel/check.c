@@ -89,9 +89,6 @@ void __init setup_bios_corruption_check(void)
 		if (addr >= corruption_check_size)
 			break;
 
-		if (addr >= corruption_check_size)
-			break;
-
 		if ((addr + size) > corruption_check_size)
 			size = corruption_check_size - addr;
 
