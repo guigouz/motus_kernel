@@ -1587,13 +1587,13 @@ void report_sd_failure(struct mmc_host *mmc) {
 #endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 
 static struct platform_driver msmsdcc_driver = {
+	.driver		= {
+		.name	= "msm_sdcc",
+	},
 	.probe		= msmsdcc_probe,
 	.remove		= msmsdcc_remove,
 	.suspend	= msmsdcc_suspend,
 	.resume		= msmsdcc_resume,
-	.driver		= {
-		.name	= "msm_sdcc",
-	},
 };
 
 static int __init msmsdcc_init(void)

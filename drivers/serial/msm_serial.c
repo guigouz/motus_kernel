@@ -1045,8 +1045,9 @@ static int __devexit msm_serial_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_PM
-static int msm_serial_suspend(struct platform_device *pdev, pm_message_t state)
+static int msm_serial_suspend(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct uart_port *port;
 #if defined(CONFIG_KERNEL_MOTOROLA)
 	struct vreg *vreg;
@@ -1076,8 +1077,9 @@ static int msm_serial_suspend(struct platform_device *pdev, pm_message_t state)
 	return 0;
 }
 
-static int msm_serial_resume(struct platform_device *pdev)
+static int msm_serial_resume(struct device *dev)
 {
+	struct platform_device *pdev = to_platform_device(dev);
 	struct uart_port *port;
 #if defined(CONFIG_KERNEL_MOTOROLA)
 	struct vreg *vreg;
@@ -1110,15 +1112,19 @@ static int msm_serial_resume(struct platform_device *pdev)
 #define msm_serial_resume NULL
 #endif
 
-static struct platform_driver msm_platform_driver = {
-	.probe = msm_serial_probe,
-	.remove = msm_serial_remove,
+static struct dev_pm_ops msm_serial_dev_pm_ops = {
 	.suspend = msm_serial_suspend,
 	.resume = msm_serial_resume,
+};
+
+static struct platform_driver msm_platform_driver = {
 	.driver = {
 		.name = "msm_serial",
 		.owner = THIS_MODULE,
+		.pm = &msm_serial_dev_pm_ops,
 	},
+	.probe = msm_serial_probe,
+	.remove = __devexit_p(msm_serial_remove),
 };
 
 static int __init msm_serial_init(void)

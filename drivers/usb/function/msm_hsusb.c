@@ -4068,8 +4068,7 @@ static int usb_power_get_property(struct power_supply *psy,
 #endif
 
 #ifdef CONFIG_PM
-static int usb_platform_suspend(struct platform_device *pdev,
-		pm_message_t state)
+static int usb_platform_suspend(struct device *dev)
 {
 	struct usb_info *ui = the_usb_info;
 	unsigned long flags;
@@ -4099,16 +4098,21 @@ static int usb_platform_suspend(struct platform_device *pdev,
 	return ret;
 }
 #else
-static int usb_platform_suspend(struct platform_device *pdev,
-		pm_message_t state)
+static int usb_platform_suspend(struct device *dev)
 {
 }
 #endif
 
-static struct platform_driver usb_driver = {
-	.probe = usb_probe,
+static struct dev_pm_ops usb_dev_pm_ops = {
 	.suspend = usb_platform_suspend,
-	.driver = { .name = DRIVER_NAME, },
+};
+
+static struct platform_driver usb_driver = {
+	.driver = {
+		.name = DRIVER_NAME,
+		.pm = &usb_dev_pm_ops,
+	},
+	.probe = usb_probe,
 };
 
 static int __init usb_module_init(void)

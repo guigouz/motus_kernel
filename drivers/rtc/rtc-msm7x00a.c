@@ -229,7 +229,7 @@ static unsigned long msmrtc_get_seconds(void)
 }
 
 static int
-msmrtc_suspend(struct platform_device *dev, pm_message_t state)
+msmrtc_suspend(struct device *dev)
 {
 	if (rtcalarm_time) {
 		unsigned long now = msmrtc_get_seconds();
@@ -246,7 +246,7 @@ msmrtc_suspend(struct platform_device *dev, pm_message_t state)
 }
 
 static int
-msmrtc_resume(struct platform_device *dev)
+msmrtc_resume(struct device *dev)
 {
 	if (rtcalarm_time) {
 		unsigned long now = msmrtc_get_seconds();
@@ -257,14 +257,18 @@ msmrtc_resume(struct platform_device *dev)
 	return 0;
 }
 
-static struct platform_driver msmrtc_driver = {
-	.probe		= msmrtc_probe,
+static struct dev_pm_ops msmrtc_dev_pm_ops = {
 	.suspend	= msmrtc_suspend,
 	.resume		= msmrtc_resume,
+};
+
+static struct platform_driver msmrtc_driver = {
 	.driver	= {
 		.name	= APP_TIMEREMOTE_PDEV_NAME,
 		.owner	= THIS_MODULE,
+		.pm	= &msmrtc_dev_pm_ops,
 	},
+	.probe		= msmrtc_probe,
 };
 
 static int __init msmrtc_init(void)

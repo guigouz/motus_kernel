@@ -877,8 +877,9 @@ msm_i2c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int msm_i2c_suspend(struct platform_device *pdev, pm_message_t state)
+static int msm_i2c_suspend(struct device *device)
 {
+	struct platform_device *pdev = to_platform_device(device);
 	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
 	/* Wait until current transaction finishes
 	 * Make sure remote lock is released before we suspend
@@ -893,27 +894,32 @@ static int msm_i2c_suspend(struct platform_device *pdev, pm_message_t state)
 	return 0;
 }
 
-static int msm_i2c_resume(struct platform_device *pdev)
+static int msm_i2c_resume(struct device *device)
 {
+	struct platform_device *pdev = to_platform_device(device);
 	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
 	if (dev) {
 		clk_enable(dev->clk);
-		mutex_lock(&dev->mlock);		
+		mutex_lock(&dev->mlock);
 		dev->suspended = 0;
 		mutex_unlock(&dev->mlock);
 	}
 	return 0;
 }
 
-static struct platform_driver msm_i2c_driver = {
-	.probe		= msm_i2c_probe,
-	.remove		= msm_i2c_remove,
+static struct dev_pm_ops msm_i2c_dev_pm_ops = {
 	.suspend	= msm_i2c_suspend,
 	.resume		= msm_i2c_resume,
+};
+
+static struct platform_driver msm_i2c_driver = {
 	.driver		= {
 		.name	= "msm_i2c",
 		.owner	= THIS_MODULE,
+		.pm	= &msm_i2c_dev_pm_ops,
 	},
+	.probe		= msm_i2c_probe,
+	.remove		= msm_i2c_remove,
 };
 
 /* I2C may be needed to bring up other drivers */
