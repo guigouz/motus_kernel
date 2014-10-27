@@ -98,6 +98,11 @@ static const char *const ep_name[] = {
 #define LANGUAGE_ID             0x0409 /* en-US */
 #define SOC_ROC_2_0		0x10002 /* ROC 2.0 */
 
+static unsigned char str_lang_desc[] = {4,
+				USB_DT_STRING,
+				(unsigned char)LANGUAGE_ID,
+				(unsigned char)(LANGUAGE_ID >> 8)};
+
 #define TRUE			1
 #define FALSE			0
 #define USB_LINK_RESET_TIMEOUT	(msecs_to_jiffies(10))
@@ -120,19 +125,13 @@ static int pid = 0x9018;
 #endif /* defined(CONFIG_KERNEL_MOTOROLA) */
 static int usb_init_err;
 
-struct usb_fi_ept {
-	struct usb_endpoint *ept;
-	struct usb_endpoint_descriptor desc;
-};
-
-struct usb_function_info {
-	struct list_head list;
-	unsigned enabled;
-	struct usb_function *func;
-};
-
 struct msm_request {
 	struct usb_request req;
+
+	/* saved copy of req.complete */
+	void	(*gadget_complete)(struct usb_ep *ep,
+					struct usb_request *req);
+
 
 	struct usb_info *ui;
 	struct msm_request *next;
@@ -143,16 +142,33 @@ struct msm_request {
 	unsigned dead:1;
 
 	dma_addr_t dma;
+	dma_addr_t item_dma;
 
 	struct ept_queue_item *item;
-	dma_addr_t item_dma;
 };
-static unsigned char str_lang_desc[] = {4,
-				USB_DT_STRING,
-				(unsigned char)LANGUAGE_ID,
-				(unsigned char)(LANGUAGE_ID >> 8)};
 
 #define to_msm_request(r) container_of(r, struct msm_request, req)
+#define to_msm_endpoint(r) container_of(r, struct msm_endpoint, ep)
+
+struct msm_endpoint {
+	struct usb_ep ep;
+	struct usb_info *ui;
+	struct msm_request *req; /* head of pending requests */
+	struct msm_request *last;
+	unsigned flags;
+
+	/* bit number (0-31) in various status registers
+	** as well as the index into the usb_info's array
+	** of all endpoints
+	*/
+	unsigned char bit;
+	unsigned char num;
+
+	/* pointers to DMA transfer list area */
+	/* these are allocated from the usb_info dma space */
+	struct ept_queue_head *head;
+};
+
 static int usb_hw_reset(struct usb_info *ui);
 static void usb_vbus_online(struct usb_info *);
 static void usb_vbus_offline(struct usb_info *ui);
@@ -265,19 +281,21 @@ struct usb_info {
 	/* endpoints are ordered based on their status bits,
 	** so they are OUT0, OUT1, ... OUT15, IN0, IN1, ... IN15
 	*/
-	struct usb_endpoint ept[32];
+	struct msm_endpoint ept[32];
+
+	int *phy_init_seq;
+	void (*phy_reset)(void);
+
+	struct work_struct work;
+	unsigned phy_status;
+	unsigned phy_fail_count;
+
+	struct usb_gadget		gadget;
+	struct usb_gadget_driver	*driver;
 
 	struct delayed_work work;
 	unsigned phy_status;
 	unsigned phy_fail_count;
-	struct usb_composition *composition;
-
-	struct usb_function_info **func;
-	unsigned num_funcs;
-	struct usb_function_map *functions_map;
-
-#define MAX_INTERFACE_NUM	15
-	struct usb_function *func2ifc_map[MAX_INTERFACE_NUM];
 
 #define ep0out ept[0]
 #define ep0in  ept[16]
@@ -4591,20 +4609,85 @@ void usb_free_endpoint_all_req(struct usb_endpoint *ep)
 }
 EXPORT_SYMBOL(usb_free_endpoint_all_req);
 
-int usb_function_unregister(struct usb_function *func)
+int usb_gadget_register_driver(struct usb_gadget_driver *driver)
 {
 	struct usb_info *ui = the_usb_info;
-	int i;
-	struct usb_function_info *fi;
-	unsigned long flags;
+	int			retval, n;
 
-	if (!func)
+	if (!driver
+			|| driver->speed < USB_SPEED_FULL
+			|| !driver->bind
+			|| !driver->disconnect
+			|| !driver->setup)
+		return -EINVAL;
+	if (!ui)
+		return -ENODEV;
+	if (ui->driver)
+		return -EBUSY;
+
+	/* first hook up the driver ... */
+	ui->driver = driver;
+	ui->gadget.dev.driver = &driver->driver;
+	ui->gadget.name = driver_name;
+	INIT_LIST_HEAD(&ui->gadget.ep_list);
+	ui->gadget.ep0 = &ui->ep0in.ep;
+	INIT_LIST_HEAD(&ui->gadget.ep0->ep_list);
+	ui->gadget.speed = USB_SPEED_UNKNOWN;
+
+	for (n = 1; n < 16; n++) {
+		struct msm_endpoint *ept = ui->ept + n;
+		list_add_tail(&ept->ep.ep_list, &ui->gadget.ep_list);
+		ept->ep.maxpacket = 512;
+	}
+	for (n = 17; n < 32; n++) {
+		struct msm_endpoint *ept = ui->ept + n;
+		list_add_tail(&ept->ep.ep_list, &ui->gadget.ep_list);
+		ept->ep.maxpacket = 512;
+	}
+
+	retval = device_add(&ui->gadget.dev);
+	if (retval)
+		goto fail;
+
+	retval = driver->bind(&ui->gadget);
+	if (retval) {
+		INFO("bind to driver %s --> error %d\n",
+				driver->driver.name, retval);
+		device_del(&ui->gadget.dev);
+		goto fail;
+	}
+
+	/* create sysfs node for remote wakeup */
+	retval = device_create_file(&ui->gadget.dev, &dev_attr_wakeup);
+	if (retval != 0)
+		INFO("failed to create sysfs entry: (wakeup) error: (%d)\n",
+					retval);
+	INFO("msm72k_udc: registered gadget driver '%s'\n",
+			driver->driver.name);
+	usb_start(ui);
+
+	return 0;
+
+fail:
+	ui->driver = NULL;
+	ui->gadget.dev.driver = NULL;
+	return retval;
+}
+EXPORT_SYMBOL(usb_gadget_register_driver);
+
+int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
+{
+	struct usb_info *dev = the_usb_info;
+
+	if (!dev)
+		return -ENODEV;
+	if (!driver || driver != dev->driver || !driver->unbind)
 		return -EINVAL;
 
-	fi = usb_find_function(func->name);
-	if (!fi)
-		return -EINVAL;
+	msm72k_pullup(&dev->gadget, 0);
+	dev->state = USB_STATE_IDLE;
 
+#if 0
 	if (ui->running) {
 		disable_irq(ui->irq);
 		spin_lock_irqsave(&ui->lock, flags);
@@ -4633,24 +4716,39 @@ int usb_function_unregister(struct usb_function *func)
 		msleep(100);
 		enable_irq(ui->irq);
 	}
+#endif
 
-	pr_info("%s: func->name = %s\n", __func__, func->name);
+	device_remove_file(&dev->gadget.dev, &dev_attr_wakeup);
+	driver->disconnect(&dev->gadget);
+	driver->unbind(&dev->gadget);
+	dev->gadget.dev.driver = NULL;
+	dev->driver = NULL;
 
-	ui->composition = NULL;
+	device_del(&dev->gadget.dev);
 
-	if (func->configure)
-		func->configure(0, func->context);
-	if (func->unbind)
-		func->unbind(func->context);
-
-	list_del(&fi->list);
-	for (i = 0; i < ui->num_funcs; i++)
-		if (fi == ui->func[i])
-			ui->func[i] = NULL;
-	kfree(fi);
+	VDEBUG("unregistered gadget driver '%s'\n", driver->driver.name);
 	return 0;
 }
-EXPORT_SYMBOL(usb_function_unregister);
+EXPORT_SYMBOL(usb_gadget_unregister_driver);
 
+
+static struct platform_driver usb_driver = {
+	.probe = msm72k_probe,
+	.driver = { .name = "msm_hsusb", },
+};
+
+static int __init init(void)
+{
+	return platform_driver_register(&usb_driver);
+}
+module_init(init);
+
+static void __exit cleanup(void)
+{
+	platform_driver_unregister(&usb_driver);
+}
+module_exit(cleanup);
+
+MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_AUTHOR("Mike Lockwood, Brian Swetland");
 MODULE_LICENSE("GPL");
-

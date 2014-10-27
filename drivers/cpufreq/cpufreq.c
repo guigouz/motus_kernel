@@ -859,6 +859,8 @@ static int cpufreq_add_dev(struct sys_device *sys_dev)
 
 		/* Check for existing affected CPUs.
 		 * They may not be aware of it due to CPU Hotplug.
+		 * cpufreq_cpu_put is called when the device is removed
+		 * in __cpufreq_remove_dev()
 		 */
 		managed_policy = cpufreq_cpu_get(j);
 		if (unlikely(managed_policy)) {
@@ -885,7 +887,7 @@ static int cpufreq_add_dev(struct sys_device *sys_dev)
 			ret = sysfs_create_link(&sys_dev->kobj,
 						&managed_policy->kobj,
 						"cpufreq");
-			if (!ret)
+			if (ret)
 				cpufreq_cpu_put(managed_policy);
 			/*
 			 * Success. We only needed to be added to the mask.
@@ -925,6 +927,8 @@ static int cpufreq_add_dev(struct sys_device *sys_dev)
 
 	spin_lock_irqsave(&cpufreq_driver_lock, flags);
 	for_each_cpu(j, policy->cpus) {
+		if (!cpu_online(j))
+			continue;
 		per_cpu(cpufreq_cpu_data, j) = policy;
 		per_cpu(policy_cpu, j) = policy->cpu;
 	}
@@ -1245,12 +1249,21 @@ EXPORT_SYMBOL(cpufreq_get);
 
 static int cpufreq_suspend(struct sys_device *sysdev, pm_message_t pmsg)
 {
-	int cpu = sysdev->id;
 	int ret = 0;
+
+#ifdef __powerpc__
+	int cpu = sysdev->id;
 	unsigned int cur_freq = 0;
 	struct cpufreq_policy *cpu_policy;
 
 	dprintk("suspending cpu %u\n", cpu);
+
+	/*
+	 * This whole bogosity is here because Powerbooks are made of fail.
+	 * No sane platform should need any of the code below to be run.
+	 * (it's entirely the wrong thing to do, as driver->get may
+	 *  reenable interrupts on some architectures).
+	 */
 
 	if (!cpu_online(cpu))
 		return 0;
@@ -1310,6 +1323,7 @@ static int cpufreq_suspend(struct sys_device *sysdev, pm_message_t pmsg)
 
 out:
 	cpufreq_cpu_put(cpu_policy);
+#endif	/* __powerpc__ */
 	return ret;
 }
 
@@ -1323,11 +1337,17 @@ out:
  */
 static int cpufreq_resume(struct sys_device *sysdev)
 {
-	int cpu = sysdev->id;
 	int ret = 0;
+
+#ifdef __powerpc__
+	int cpu = sysdev->id;
 	struct cpufreq_policy *cpu_policy;
 
 	dprintk("resuming cpu %u\n", cpu);
+
+	/* As with the ->suspend method, all the code below is
+	 * only necessary because Powerbooks suck.
+	 * See commit 42d4dc3f4e1e for jokes. */
 
 	if (!cpu_online(cpu))
 		return 0;
@@ -1392,6 +1412,7 @@ out:
 	schedule_work(&cpu_policy->update);
 fail:
 	cpufreq_cpu_put(cpu_policy);
+#endif	/* __powerpc__ */
 	return ret;
 }
 
