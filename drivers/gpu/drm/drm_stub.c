@@ -515,7 +515,7 @@ int drm_put_minor(struct drm_minor **minor_p)
  */
 void drm_put_dev(struct drm_device *dev)
 {
-	struct drm_driver *driver = dev->driver;
+	struct drm_driver *driver;
 	struct drm_map_list *r_list, *list_temp;
 
 	DRM_DEBUG("\n");
@@ -524,6 +524,7 @@ void drm_put_dev(struct drm_device *dev)
 		DRM_ERROR("cleanup called no dev\n");
 		return;
 	}
+	driver = dev->driver;
 
 	drm_vblank_cleanup(dev);
 

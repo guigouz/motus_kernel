@@ -1424,6 +1424,9 @@ long do_fork(unsigned long clone_flags,
 			init_completion(&vfork);
 		}
 
+		if (!(clone_flags & CLONE_THREAD))
+			perf_counter_fork(p);
+
 		audit_finish_fork(p);
 		tracehook_report_clone(regs, clone_flags, nr, p);
 

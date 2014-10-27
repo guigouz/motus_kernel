@@ -1118,13 +1118,12 @@ static struct dev_pm_ops msm_serial_dev_pm_ops = {
 };
 
 static struct platform_driver msm_platform_driver = {
+	.remove = __devexit_p(msm_serial_remove),
 	.driver = {
 		.name = "msm_serial",
 		.owner = THIS_MODULE,
 		.pm = &msm_serial_dev_pm_ops,
 	},
-	.probe = msm_serial_probe,
-	.remove = __devexit_p(msm_serial_remove),
 };
 
 static int __init msm_serial_init(void)

@@ -149,9 +149,20 @@ static void do_virtblk_request(struct request_queue *q)
 static int virtblk_ioctl(struct block_device *bdev, fmode_t mode,
 			 unsigned cmd, unsigned long data)
 {
-	return scsi_cmd_ioctl(bdev->bd_disk->queue,
-			      bdev->bd_disk, mode, cmd,
-			      (void __user *)data);
+	struct gendisk *disk = bdev->bd_disk;
+	struct virtio_blk *vblk = disk->private_data;
+	void __user *argp = (void __user *)data;
+
+	if (cmd == HDIO_GET_IDENTITY)
+		return virtblk_identify(disk, argp);
+
+	/*
+	 * Only allow the generic SCSI ioctls if the host can support it.
+	 */
+	if (!virtio_has_feature(vblk->vdev, VIRTIO_BLK_F_SCSI))
+		return -ENOTTY;
+
+	return scsi_cmd_ioctl(disk->queue, disk, mode, cmd, argp);
 }
 
 /* We provide getgeo only to please some old bootloader/partitioning tools */
@@ -295,6 +306,9 @@ static int __devinit virtblk_probe(struct virtio_device *vdev)
 	blk_queue_max_phys_segments(vblk->disk->queue, vblk->sg_elems-2);
 	blk_queue_max_hw_segments(vblk->disk->queue, vblk->sg_elems-2);
 
+	/* No need to bounce any requests */
+	blk_queue_bounce_limit(vblk->disk->queue, BLK_BOUNCE_ANY);
+
 	/* No real sector limit. */
 	blk_queue_max_sectors(vblk->disk->queue, -1U);
 
@@ -358,7 +372,12 @@ static unsigned int features[] = {
 	VIRTIO_BLK_F_GEOMETRY, VIRTIO_BLK_F_RO, VIRTIO_BLK_F_BLK_SIZE,
 };
 
-static struct virtio_driver virtio_blk = {
+/*
+ * virtio_blk causes spurious section mismatch warning by
+ * simultaneously referring to a __devinit and a __devexit function.
+ * Use __refdata to avoid this warning.
+ */
+static struct virtio_driver __refdata virtio_blk = {
 	.feature_table = features,
 	.feature_table_size = ARRAY_SIZE(features),
 	.driver.name =	KBUILD_MODNAME,
