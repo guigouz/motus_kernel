@@ -143,6 +143,7 @@ static int lowmem_shrink(int nr_to_scan, gfp_t gfp_mask)
 			continue;
 		}
 		oom_adj = sig->oom_adj;
+		/*oom_adj = mm->oom_adj;*/
 		if (oom_adj < min_adj) {
 			task_unlock(p);
 			continue;

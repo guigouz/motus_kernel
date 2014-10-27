@@ -16,8 +16,7 @@
 #define VIRTIO_BLK_F_RO		5	/* Disk is read-only */
 #define VIRTIO_BLK_F_BLK_SIZE	6	/* Block size of disk is available*/
 
-struct virtio_blk_config
-{
+struct virtio_blk_config {
 	/* The capacity (in 512-byte sectors). */
 	__u64 capacity;
 	/* The maximum segment size (if VIRTIO_BLK_F_SIZE_MAX) */
@@ -45,8 +44,7 @@ struct virtio_blk_config
 #define VIRTIO_BLK_T_BARRIER	0x80000000
 
 /* This is the first element of the read scatter-gather list. */
-struct virtio_blk_outhdr
-{
+struct virtio_blk_outhdr {
 	/* VIRTIO_BLK_T* */
 	__u32 type;
 	/* io priority. */

@@ -1343,7 +1343,7 @@ static int crypt_iterate_devices(struct dm_target *ti,
 {
 	struct crypt_config *cc = ti->private;
 
-	return fn(ti, cc->dev, cc->start, data);
+	return fn(ti, cc->dev, cc->start, ti->len, data);
 }
 
 static struct target_type crypt_target = {

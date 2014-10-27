@@ -36,7 +36,6 @@
 
 /* Register offsets */
 #define MG_BUFF_OFFSET			0x8000
-#define MG_STORAGE_BUFFER_SIZE		0x200
 #define MG_REG_OFFSET			0xC000
 #define MG_REG_FEATURE			(MG_REG_OFFSET + 2)	/* write case */
 #define MG_REG_ERROR			(MG_REG_OFFSET + 2)	/* read case */
@@ -214,6 +213,16 @@ static unsigned int mg_wait(struct mg_host *host, u32 expect, u32 msec)
 	host->error = MG_ERR_NONE;
 	expire = jiffies + msecs_to_jiffies(msec);
 
+	/* These 2 times dummy status read prevents reading invalid
+	 * status. A very little time (3 times of mflash operating clk)
+	 * is required for busy bit is set. Use dummy read instead of
+	 * busy wait, because mflash's PLL is machine dependent.
+	 */
+	if (prv_data->use_polling) {
+		status = inb((unsigned long)host->dev_base + MG_REG_STATUS);
+		status = inb((unsigned long)host->dev_base + MG_REG_STATUS);
+	}
+
 	status = inb((unsigned long)host->dev_base + MG_REG_STATUS);
 
 	do {
@@ -240,8 +249,6 @@ static unsigned int mg_wait(struct mg_host *host, u32 expect, u32 msec)
 			mg_dump_status("not ready", status, host);
 			return MG_ERR_INV_STAT;
 		}
-		if (prv_data->use_polling)
-			msleep(1);
 
 		status = inb((unsigned long)host->dev_base + MG_REG_STATUS);
 	} while (time_before(cur_jiffies, expire));
@@ -435,9 +442,18 @@ static unsigned int mg_out(struct mg_host *host,
 	return MG_ERR_NONE;
 }
 
+static void mg_read_one(struct mg_host *host, struct request *req)
+{
+	u16 *buff = (u16 *)req->buffer;
+	u32 i;
+
+	for (i = 0; i < MG_SECTOR_SIZE >> 1; i++)
+		*buff++ = inw((unsigned long)host->dev_base + MG_BUFF_OFFSET +
+			      (i << 1));
+}
+
 static void mg_read(struct request *req)
 {
-	u32 remains, j;
 	struct mg_host *host = req->rq_disk->private_data;
 
 	remains = req->nr_sectors;
@@ -449,84 +465,73 @@ static void mg_read(struct request *req)
 	MG_DBG("requested %d sects (from %ld), buffer=0x%p\n",
 			remains, req->sector, req->buffer);
 
-	while (remains) {
-		if (mg_wait(host, MG_REG_STATUS_BIT_DATA_REQ,
-					MG_TMAX_WAIT_RD_DRQ) != MG_ERR_NONE) {
+	do {
+		if (mg_wait(host, ATA_DRQ,
+			    MG_TMAX_WAIT_RD_DRQ) != MG_ERR_NONE) {
 			mg_bad_rw_intr(host);
 			return;
 		}
-		for (j = 0; j < MG_SECTOR_SIZE >> 1; j++) {
-			*(u16 *)req->buffer =
-				inw((unsigned long)host->dev_base +
-						MG_BUFF_OFFSET + (j << 1));
-			req->buffer += 2;
-		}
 
-		req->sector++;
-		req->errors = 0;
-		remains = --req->nr_sectors;
-		--req->current_nr_sectors;
-
-		if (req->current_nr_sectors <= 0) {
-			MG_DBG("remain : %d sects\n", remains);
-			end_request(req, 1);
-			if (remains > 0)
-				req = elv_next_request(host->breq);
-		}
+		mg_read_one(host, req);
 
 		outb(MG_CMD_RD_CONF, (unsigned long)host->dev_base +
 				MG_REG_COMMAND);
 	}
 }
 
+static void mg_write_one(struct mg_host *host, struct request *req)
+{
+	u16 *buff = (u16 *)req->buffer;
+	u32 i;
+
+	for (i = 0; i < MG_SECTOR_SIZE >> 1; i++)
+		outw(*buff++, (unsigned long)host->dev_base + MG_BUFF_OFFSET +
+		     (i << 1));
+}
+
 static void mg_write(struct request *req)
 {
-	u32 remains, j;
 	struct mg_host *host = req->rq_disk->private_data;
+	unsigned int rem = blk_rq_sectors(req);
 
-	remains = req->nr_sectors;
-
-	if (mg_out(host, req->sector, req->nr_sectors, MG_CMD_WR, NULL) !=
-			MG_ERR_NONE) {
+	if (mg_out(host, blk_rq_pos(req), rem,
+		   MG_CMD_WR, NULL) != MG_ERR_NONE) {
 		mg_bad_rw_intr(host);
 		return;
 	}
 
 
 	MG_DBG("requested %d sects (from %ld), buffer=0x%p\n",
-			remains, req->sector, req->buffer);
-	while (remains) {
-		if (mg_wait(host, MG_REG_STATUS_BIT_DATA_REQ,
+	       rem, blk_rq_pos(req), req->buffer);
+
+	if (mg_wait(host, ATA_DRQ,
+		    MG_TMAX_WAIT_WR_DRQ) != MG_ERR_NONE) {
+		mg_bad_rw_intr(host);
+		return;
+	}
+
+	do {
+		mg_write_one(host, req);
+
+		outb(MG_CMD_WR_CONF, (unsigned long)host->dev_base +
+				MG_REG_COMMAND);
+
+		rem--;
+		if (rem > 1 && mg_wait(host, ATA_DRQ,
+					MG_TMAX_WAIT_WR_DRQ) != MG_ERR_NONE) {
+			mg_bad_rw_intr(host);
+			return;
+		} else if (mg_wait(host, MG_STAT_READY,
 					MG_TMAX_WAIT_WR_DRQ) != MG_ERR_NONE) {
 			mg_bad_rw_intr(host);
 			return;
 		}
-		for (j = 0; j < MG_SECTOR_SIZE >> 1; j++) {
-			outw(*(u16 *)req->buffer,
-					(unsigned long)host->dev_base +
-					MG_BUFF_OFFSET + (j << 1));
-			req->buffer += 2;
-		}
-		req->sector++;
-		remains = --req->nr_sectors;
-		--req->current_nr_sectors;
-
-		if (req->current_nr_sectors <= 0) {
-			MG_DBG("remain : %d sects\n", remains);
-			end_request(req, 1);
-			if (remains > 0)
-				req = elv_next_request(host->breq);
-		}
-
-		outb(MG_CMD_WR_CONF, (unsigned long)host->dev_base +
-				MG_REG_COMMAND);
-	}
+	} while (mg_end_request(host, 0, MG_SECTOR_SIZE));
 }
 
 static void mg_read_intr(struct mg_host *host)
 {
 	u32 i;
-	struct request *req;
 
 	/* check status */
 	do {
@@ -544,16 +549,7 @@ static void mg_read_intr(struct mg_host *host)
 	return;
 
 ok_to_read:
-	/* get current segment of request */
-	req = elv_next_request(host->breq);
-
-	/* read 1 sector */
-	for (i = 0; i < MG_SECTOR_SIZE >> 1; i++) {
-		*(u16 *)req->buffer =
-			inw((unsigned long)host->dev_base + MG_BUFF_OFFSET +
-					(i << 1));
-		req->buffer += 2;
-	}
+	mg_read_one(host, req);
 
 	/* manipulate request */
 	MG_DBG("sector %ld, remaining=%ld, buffer=0x%p\n",
@@ -584,12 +580,9 @@ ok_to_read:
 
 static void mg_write_intr(struct mg_host *host)
 {
-	u32 i, j;
-	u16 *buff;
-	struct request *req;
-
-	/* get current segment of request */
-	req = elv_next_request(host->breq);
+	struct request *req = host->req;
+	u32 i;
+	bool rem;
 
 	/* check status */
 	do {
@@ -607,24 +600,9 @@ static void mg_write_intr(struct mg_host *host)
 	return;
 
 ok_to_write:
-	/* manipulate request */
-	req->sector++;
-	i = --req->nr_sectors;
-	--req->current_nr_sectors;
-	req->buffer += MG_SECTOR_SIZE;
-
-	/* let know if current segment or all done */
-	if (!i || (req->bio && req->current_nr_sectors <= 0))
-		end_request(req, 1);
-
-	/* write 1 sector and set handler if remains */
-	if (i > 0) {
-		buff = (u16 *)req->buffer;
-		for (j = 0; j < MG_STORAGE_BUFFER_SIZE >> 1; j++) {
-			outw(*buff, (unsigned long)host->dev_base +
-					MG_BUFF_OFFSET + (j << 1));
-			buff++;
-		}
+	if ((rem = mg_end_request(host, 0, MG_SECTOR_SIZE))) {
+		/* write 1 sector and set handler if remains */
+		mg_write_one(host, req);
 		MG_DBG("sector %ld, remaining=%ld, buffer=0x%p\n",
 				req->sector, req->nr_sectors, req->buffer);
 		host->mg_do_intr = mg_write_intr;
@@ -693,9 +671,6 @@ static unsigned int mg_issue_req(struct request *req,
 		unsigned int sect_num,
 		unsigned int sect_cnt)
 {
-	u16 *buff;
-	u32 i;
-
 	switch (rq_data_dir(req)) {
 	case READ:
 		if (mg_out(host, sect_num, sect_cnt, MG_CMD_RD, &mg_read_intr)
@@ -722,12 +697,7 @@ static unsigned int mg_issue_req(struct request *req,
 			mg_bad_rw_intr(host);
 			return host->error;
 		}
-		buff = (u16 *)req->buffer;
-		for (i = 0; i < MG_SECTOR_SIZE >> 1; i++) {
-			outw(*buff, (unsigned long)host->dev_base +
-					MG_BUFF_OFFSET + (i << 1));
-			buff++;
-		}
+		mg_write_one(host, req);
 		mod_timer(&host->timer, jiffies + 3 * HZ);
 		outb(MG_CMD_WR_CONF, (unsigned long)host->dev_base +
 				MG_REG_COMMAND);
