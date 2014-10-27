@@ -88,6 +88,9 @@ struct key_type cifs_spnego_key_type = {
 /* strlen of ";user=" */
 #define USER_KEY_LEN		6
 
+/* strlen of ";pid=0x" */
+#define PID_KEY_LEN		7
+
 /* get a key struct with a SPNEGO security blob, suitable for session setup */
 struct key *
 cifs_get_spnego_key(struct cifsSesInfo *sesInfo)
@@ -105,7 +108,8 @@ cifs_get_spnego_key(struct cifsSesInfo *sesInfo)
 		   IP_KEY_LEN + MAX_IPV6_ADDR_LEN +
 		   MAX_MECH_STR_LEN +
 		   UID_KEY_LEN + (sizeof(uid_t) * 2) +
-		   USER_KEY_LEN + strlen(sesInfo->userName) + 1;
+		   USER_KEY_LEN + strlen(sesInfo->userName) +
+		   PID_KEY_LEN + (sizeof(pid_t) * 2) + 1;
 
 	spnego_key = ERR_PTR(-ENOMEM);
 	description = kzalloc(desc_len, GFP_KERNEL);
@@ -142,6 +146,9 @@ cifs_get_spnego_key(struct cifsSesInfo *sesInfo)
 
 	dp = description + strlen(description);
 	sprintf(dp, ";user=%s", sesInfo->userName);
+
+	dp = description + strlen(description);
+	sprintf(dp, ";pid=0x%x", current->pid);
 
 	cFYI(1, ("key description = %s", description));
 	spnego_key = request_key(&cifs_spnego_key_type, description, "");
