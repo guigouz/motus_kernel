@@ -259,6 +259,8 @@ void ima_counts_put(struct path *path, int mask)
 	else if (mask & (MAY_READ | MAY_EXEC))
 		iint->readcount--;
 	mutex_unlock(&iint->mutex);
+
+	kref_put(&iint->refcount, iint_free);
 }
 
 /*
@@ -283,6 +285,8 @@ void ima_counts_get(struct file *file)
 	mutex_lock(&iint->mutex);
 	iint->opencount++;
 	mutex_unlock(&iint->mutex);
+
+	kref_put(&iint->refcount, iint_free);
 }
 
 /**
