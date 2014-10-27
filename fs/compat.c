@@ -1485,20 +1485,15 @@ int compat_do_execve(char * filename,
 	if (!bprm)
 		goto out_files;
 
-	retval = -ERESTARTNOINTR;
-	if (mutex_lock_interruptible(&current->cred_guard_mutex))
+	retval = prepare_bprm_creds(bprm);
+	if (retval)
 		goto out_free;
-	current->in_execve = 1;
-
-	retval = -ENOMEM;
-	bprm->cred = prepare_exec_creds();
-	if (!bprm->cred)
-		goto out_unlock;
 
 	retval = check_unsafe_exec(bprm);
 	if (retval < 0)
-		goto out_unlock;
+		goto out_free;
 	clear_in_exec = retval;
+	current->in_execve = 1;
 
 	file = open_exec(filename);
 	retval = PTR_ERR(file);
@@ -1546,7 +1541,7 @@ int compat_do_execve(char * filename,
 
 	/* execve succeeded */
 	current->fs->in_exec = 0;
-	mutex_unlock(&current->cred_exec_mutex);
+	current->in_execve = 0;
 	acct_update_integrals(current);
 	free_bprm(bprm);
 	if (displaced)
@@ -1566,10 +1561,7 @@ out_file:
 out_unmark:
 	if (clear_in_exec)
 		current->fs->in_exec = 0;
-
-out_unlock:
 	current->in_execve = 0;
-	mutex_unlock(&current->cred_exec_mutex);
 
 out_free:
 	free_bprm(bprm);

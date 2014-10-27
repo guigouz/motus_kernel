@@ -188,7 +188,12 @@ static unsigned long pcpu_chunk_addr(struct pcpu_chunk *chunk,
 static bool pcpu_chunk_page_occupied(struct pcpu_chunk *chunk,
 				     int page_idx)
 {
-	return *pcpu_chunk_pagep(chunk, 0, page_idx) != NULL;
+	/*
+	 * Any possible cpu id can be used here, so there's no need to
+	 * worry about preemption or cpu hotplug.
+	 */
+	return *pcpu_chunk_pagep(chunk, raw_smp_processor_id(),
+				 page_idx) != NULL;
 }
 
 /**
@@ -308,42 +313,15 @@ static struct pcpu_chunk *pcpu_chunk_addr_search(void *addr)
 			return pcpu_reserved_chunk;
 	}
 
-	/* nah... search the regular ones */
-	n = *pcpu_chunk_rb_search(addr, &parent);
-	if (!n) {
-		/* no exactly matching chunk, the parent is the closest */
-		n = parent;
-		BUG_ON(!n);
-	}
-	chunk = rb_entry(n, struct pcpu_chunk, rb_node);
-
-	if (addr < chunk->vm->addr) {
-		/* the parent was the next one, look for the previous one */
-		n = rb_prev(n);
-		BUG_ON(!n);
-		chunk = rb_entry(n, struct pcpu_chunk, rb_node);
-	}
-
-	return chunk;
-}
-
-/**
- * pcpu_chunk_addr_insert - insert chunk into address rb tree
- * @new: chunk to insert
- *
- * Insert @new into address rb tree.
- *
- * CONTEXT:
- * pcpu_lock.
- */
-static void pcpu_chunk_addr_insert(struct pcpu_chunk *new)
-{
-	struct rb_node **p, *parent;
-
-	p = pcpu_chunk_rb_search(new->vm->addr, &parent);
-	BUG_ON(*p);
-	rb_link_node(&new->rb_node, parent, p);
-	rb_insert_color(&new->rb_node, &pcpu_addr_root);
+	/*
+	 * The address is relative to unit0 which might be unused and
+	 * thus unmapped.  Offset the address to the unit space of the
+	 * current processor before looking it up in the vmalloc
+	 * space.  Note that any possible cpu id can be used here, so
+	 * there's no need to worry about preemption or cpu hotplug.
+	 */
+	addr += raw_smp_processor_id() * pcpu_unit_size;
+	return pcpu_get_page_chunk(vmalloc_to_page(addr));
 }
 
 /**
