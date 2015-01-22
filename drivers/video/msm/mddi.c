@@ -107,8 +107,6 @@ static struct platform_driver mddi_driver = {
 	.resume = mddi_resume,
 #endif
 #endif
-	.suspend_late = NULL,
-	.resume_early = NULL,
 	.shutdown = NULL,
 	.driver = {
 		   .name = "mddi",

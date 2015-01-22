@@ -4151,6 +4151,29 @@ static void floppy_device_release(struct device *dev)
 {
 }
 
+static int floppy_resume(struct device *dev)
+{
+	int fdc;
+
+	for (fdc = 0; fdc < N_FDC; fdc++)
+		if (FDCS->address != -1)
+			user_reset_fdc(-1, FD_RESET_ALWAYS, 0);
+
+	return 0;
+}
+
+static struct dev_pm_ops floppy_pm_ops = {
+	.resume = floppy_resume,
+	.restore = floppy_resume,
+};
+
+static struct platform_driver floppy_driver = {
+	.driver = {
+		.name = "floppy",
+		.pm = &floppy_pm_ops,
+	},
+};
+
 static struct platform_device floppy_device[N_DRIVE];
 
 static struct kobject *floppy_find(dev_t dev, int *part, void *data)

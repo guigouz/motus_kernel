@@ -78,18 +78,17 @@ static DEFINE_PER_CPU(struct rcu_data, rcu_data);
 static DEFINE_PER_CPU(struct rcu_data, rcu_bh_data);
 
 /*
- * Increment the quiescent state counter.
- * The counter is a bit degenerated: We do not need to know
+ * Note a quiescent state.  Because we do not need to know
  * how many quiescent states passed, just if there was at least
- * one since the start of the grace period. Thus just a flag.
+ * one since the start of the grace period, this just sets a flag.
  */
-void rcu_qsctr_inc(int cpu)
+void rcu_sched_qs(int cpu)
 {
 	struct rcu_data *rdp = &per_cpu(rcu_data, cpu);
 	rdp->passed_quiesc = 1;
 }
 
-void rcu_bh_qsctr_inc(int cpu)
+void rcu_bh_qs(int cpu)
 {
 	struct rcu_data *rdp = &per_cpu(rcu_bh_data, cpu);
 	rdp->passed_quiesc = 1;
@@ -98,6 +97,64 @@ void rcu_bh_qsctr_inc(int cpu)
 static int blimit = 10;
 static int qhimark = 10000;
 static int qlowmark = 100;
+
+/*
+ * Dynticks per-CPU state.
+ */
+struct rcu_dynticks {
+	int dynticks_nesting;	/* Track nesting level, sort of. */
+	int dynticks;		/* Even value for dynticks-idle, else odd. */
+	int dynticks_nmi;	/* Even value for either dynticks-idle or */
+				/*  not in nmi handler, else odd.  So this */
+				/*  remains even for nmi from irq handler. */
+};
+
+#ifdef CONFIG_NO_HZ
+DEFINE_PER_CPU(struct rcu_dynticks, rcu_dynticks) = {
+	.dynticks_nesting = 1,
+	.dynticks = 1,
+};
+
+/**
+ * rcu_irq_enter - inform RCU of entry to hard irq context
+ *
+ * If the CPU was idle with dynamic ticks active, this updates the
+ * rdtp->dynticks to let the RCU handling know that the CPU is active.
+ */
+void rcu_irq_enter(void)
+{
+	struct rcu_dynticks *rdtp = &__get_cpu_var(rcu_dynticks);
+
+	if (rdtp->dynticks_nesting++)
+		return;
+	rdtp->dynticks++;
+	WARN_ON_ONCE(!(rdtp->dynticks & 0x1));
+	smp_mb(); /* CPUs seeing ++ must see later RCU read-side crit sects */
+}
+
+/**
+ * rcu_irq_exit - inform RCU of exit from hard irq context
+ *
+ * If the CPU was idle with dynamic ticks active, update the rdp->dynticks
+ * to put let the RCU handling be aware that the CPU is going back to idle
+ * with no ticks.
+ */
+void rcu_irq_exit(void)
+{
+	struct rcu_dynticks *rdtp = &__get_cpu_var(rcu_dynticks);
+
+	if (--rdtp->dynticks_nesting)
+		return;
+	smp_mb(); /* CPUs seeing ++ must see prior RCU read-side crit sects */
+	rdtp->dynticks++;
+	WARN_ON_ONCE(rdtp->dynticks & 0x1);
+
+	/* If the interrupt queued a callback, get out of dyntick mode. */
+	if (__get_cpu_var(rcu_data).nxtlist ||
+	    __get_cpu_var(rcu_bh_data).nxtlist)
+		set_need_resched();
+}
+#endif /* CONFIG_NO_HZ */
 
 #ifdef CONFIG_SMP
 static void force_quiescent_state(struct rcu_data *rdp,
@@ -711,13 +768,13 @@ void rcu_check_callbacks(int cpu, int user)
 		 * the case where writes from a preempt-disable section
 		 * of code get reordered into schedule() by this CPU's
 		 * write buffer.  The memory barrier makes sure that
-		 * the rcu_qsctr_inc() and rcu_bh_qsctr_inc() are see
+		 * the rcu_sched_qs() and rcu_bh_qs() are see
 		 * by other CPUs to happen after any such write.
 		 */
 
 		smp_mb();  /* See above block comment. */
-		rcu_qsctr_inc(cpu);
-		rcu_bh_qsctr_inc(cpu);
+		rcu_sched_qs(cpu);
+		rcu_bh_qs(cpu);
 
 	} else if (!in_softirq()) {
 
@@ -730,7 +787,7 @@ void rcu_check_callbacks(int cpu, int user)
 		 */
 
 		smp_mb();  /* See above block comment. */
-		rcu_bh_qsctr_inc(cpu);
+		rcu_bh_qs(cpu);
 	}
 	raise_rcu_softirq();
 }
@@ -761,7 +818,10 @@ static void __cpuinit rcu_online_cpu(int cpu)
 	open_softirq(RCU_SOFTIRQ, rcu_process_callbacks);
 }
 
-static int __cpuinit rcu_cpu_notify(struct notifier_block *self,
+/*
+ * Handle CPU online/offline notification events.
+ */
+int __cpuinit rcu_cpu_notify(struct notifier_block *self,
 				unsigned long action, void *hcpu)
 {
 	long cpu = (long)hcpu;

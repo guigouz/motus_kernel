@@ -72,7 +72,22 @@ ring_buffer_event_time_delta(struct ring_buffer_event *event)
 	return event->time_delta;
 }
 
-void ring_buffer_event_discard(struct ring_buffer_event *event);
+/*
+ * ring_buffer_discard_commit will remove an event that has not
+ *   ben committed yet. If this is used, then ring_buffer_unlock_commit
+ *   must not be called on the discarded event. This function
+ *   will try to remove the event from the ring buffer completely
+ *   if another event has not been written after it.
+ *
+ * Example use:
+ *
+ *  if (some_condition)
+ *    ring_buffer_discard_commit(buffer, event);
+ *  else
+ *    ring_buffer_unlock_commit(buffer, event);
+ */
+void ring_buffer_discard_commit(struct ring_buffer *buffer,
+				struct ring_buffer_event *event);
 
 /*
  * size is in bytes for each per CPU buffer.
@@ -111,8 +126,17 @@ unsigned long ring_buffer_size(struct ring_buffer *buffer);
 void ring_buffer_reset_cpu(struct ring_buffer *buffer, int cpu);
 void ring_buffer_reset(struct ring_buffer *buffer);
 
+#ifdef CONFIG_RING_BUFFER_ALLOW_SWAP
 int ring_buffer_swap_cpu(struct ring_buffer *buffer_a,
 			 struct ring_buffer *buffer_b, int cpu);
+#else
+static inline int
+ring_buffer_swap_cpu(struct ring_buffer *buffer_a,
+		     struct ring_buffer *buffer_b, int cpu)
+{
+	return -ENODEV;
+}
+#endif
 
 int ring_buffer_empty(struct ring_buffer *buffer);
 int ring_buffer_empty_cpu(struct ring_buffer *buffer, int cpu);
@@ -126,6 +150,7 @@ unsigned long ring_buffer_entries(struct ring_buffer *buffer);
 unsigned long ring_buffer_overruns(struct ring_buffer *buffer);
 unsigned long ring_buffer_entries_cpu(struct ring_buffer *buffer, int cpu);
 unsigned long ring_buffer_overrun_cpu(struct ring_buffer *buffer, int cpu);
+unsigned long ring_buffer_commit_overrun_cpu(struct ring_buffer *buffer, int cpu);
 
 u64 ring_buffer_time_stamp(struct ring_buffer *buffer, int cpu);
 void ring_buffer_normalize_time_stamp(struct ring_buffer *buffer,

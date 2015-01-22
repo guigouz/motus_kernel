@@ -113,8 +113,8 @@ struct rcu_data {
  * how many quiescent states passed, just if there was at least
  * one since the start of the grace period. Thus just a flag.
  */
-extern void rcu_qsctr_inc(int cpu);
-extern void rcu_bh_qsctr_inc(int cpu);
+extern void rcu_sched_qs(int cpu);
+extern void rcu_bh_qs(int cpu);
 
 extern int rcu_pending(int cpu);
 extern int rcu_needs_cpu(int cpu);
@@ -168,6 +168,8 @@ extern long rcu_batches_completed_bh(void);
 
 #define rcu_enter_nohz()	do { } while (0)
 #define rcu_exit_nohz()		do { } while (0)
+
+static inline void exit_rcu(void) {}
 
 /* A context switch is a grace period for rcuclassic. */
 static inline int rcu_blocking_is_gp(void)

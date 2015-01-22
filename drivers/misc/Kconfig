@@ -397,6 +397,19 @@ config APANIC_PLABEL
 source "drivers/misc/mot_camera_misc/Kconfig"
 source "drivers/misc/mot_camera_misc_msm/Kconfig"
 
+config EP93XX_PWM
+	tristate "EP93xx PWM support"
+	depends on ARCH_EP93XX
+	help
+	  This option enables device driver support for the PWM channels
+	  on the Cirrus EP93xx processors.  The EP9307 chip only has one
+	  PWM channel all the others have two, the second channel is an
+	  alternate function of the EGPIO14 pin.  A sysfs interface is
+	  provided to control the PWM channels.
+
+	  To compile this driver as a module, choose M here: the module will
+	  be called ep93xx_pwm.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/ts27010mux/Kconfig"

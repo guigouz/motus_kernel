@@ -50,15 +50,12 @@ static struct irq_2_iommu *irq_2_iommu(unsigned int irq)
 	return desc->irq_2_iommu;
 }
 
-static struct irq_2_iommu *irq_2_iommu_alloc_cpu(unsigned int irq, int cpu)
+static struct irq_2_iommu *irq_2_iommu_alloc(unsigned int irq)
 {
 	struct irq_desc *desc;
 	struct irq_2_iommu *irq_iommu;
 
-	/*
-	 * alloc irq desc if not allocated already.
-	 */
-	desc = irq_to_desc_alloc_cpu(irq, cpu);
+	desc = irq_to_desc(irq);
 	if (!desc) {
 		printk(KERN_INFO "can not get irq_desc for %d\n", irq);
 		return NULL;
@@ -67,14 +64,9 @@ static struct irq_2_iommu *irq_2_iommu_alloc_cpu(unsigned int irq, int cpu)
 	irq_iommu = desc->irq_2_iommu;
 
 	if (!irq_iommu)
-		desc->irq_2_iommu = get_one_free_irq_2_iommu(cpu);
+		desc->irq_2_iommu = get_one_free_irq_2_iommu(irq_node(irq));
 
 	return desc->irq_2_iommu;
-}
-
-static struct irq_2_iommu *irq_2_iommu_alloc(unsigned int irq)
-{
-	return irq_2_iommu_alloc_cpu(irq, boot_cpu_id);
 }
 
 #else /* !CONFIG_SPARSE_IRQ */

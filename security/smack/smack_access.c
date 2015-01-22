@@ -185,6 +185,93 @@ int smk_curacc(char *obj_label, u32 mode)
 	return rc;
 }
 
+#ifdef CONFIG_AUDIT
+/**
+ * smack_str_from_perm : helper to transalate an int to a
+ * readable string
+ * @string : the string to fill
+ * @access : the int
+ *
+ */
+static inline void smack_str_from_perm(char *string, int access)
+{
+	int i = 0;
+	if (access & MAY_READ)
+		string[i++] = 'r';
+	if (access & MAY_WRITE)
+		string[i++] = 'w';
+	if (access & MAY_EXEC)
+		string[i++] = 'x';
+	if (access & MAY_APPEND)
+		string[i++] = 'a';
+	string[i] = '\0';
+}
+/**
+ * smack_log_callback - SMACK specific information
+ * will be called by generic audit code
+ * @ab : the audit_buffer
+ * @a  : audit_data
+ *
+ */
+static void smack_log_callback(struct audit_buffer *ab, void *a)
+{
+	struct common_audit_data *ad = a;
+	struct smack_audit_data *sad = &ad->smack_audit_data;
+	audit_log_format(ab, "lsm=SMACK fn=%s action=%s",
+			 ad->smack_audit_data.function,
+			 sad->result ? "denied" : "granted");
+	audit_log_format(ab, " subject=");
+	audit_log_untrustedstring(ab, sad->subject);
+	audit_log_format(ab, " object=");
+	audit_log_untrustedstring(ab, sad->object);
+	audit_log_format(ab, " requested=%s", sad->request);
+}
+
+/**
+ *  smack_log - Audit the granting or denial of permissions.
+ *  @subject_label : smack label of the requester
+ *  @object_label  : smack label of the object being accessed
+ *  @request: requested permissions
+ *  @result: result from smk_access
+ *  @a:  auxiliary audit data
+ *
+ * Audit the granting or denial of permissions in accordance
+ * with the policy.
+ */
+void smack_log(char *subject_label, char *object_label, int request,
+	       int result, struct smk_audit_info *ad)
+{
+	char request_buffer[SMK_NUM_ACCESS_TYPE + 1];
+	struct smack_audit_data *sad;
+	struct common_audit_data *a = &ad->a;
+
+	/* check if we have to log the current event */
+	if (result != 0 && (log_policy & SMACK_AUDIT_DENIED) == 0)
+		return;
+	if (result == 0 && (log_policy & SMACK_AUDIT_ACCEPT) == 0)
+		return;
+
+	if (a->smack_audit_data.function == NULL)
+		a->smack_audit_data.function = "unknown";
+
+	/* end preparing the audit data */
+	sad = &a->smack_audit_data;
+	smack_str_from_perm(request_buffer, request);
+	sad->subject = subject_label;
+	sad->object  = object_label;
+	sad->request = request_buffer;
+	sad->result  = result;
+	a->lsm_pre_audit = smack_log_callback;
+
+	common_lsm_audit(a);
+}
+#else /* #ifdef CONFIG_AUDIT */
+void smack_log(char *subject_label, char *object_label, int request,
+               int result, struct smk_audit_info *ad)
+{
+}
+#endif
+
 static DEFINE_MUTEX(smack_known_lock);
 
 /**

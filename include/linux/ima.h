@@ -13,6 +13,9 @@
 #include <linux/fs.h>
 struct linux_binprm;
 
+#define IMA_COUNT_UPDATE 1
+#define IMA_COUNT_LEAVE 0
+
 #ifdef CONFIG_IMA
 extern int ima_bprm_check(struct linux_binprm *bprm);
 extern int ima_inode_alloc(struct inode *inode);

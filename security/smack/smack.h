@@ -237,4 +237,93 @@ static inline char *smk_of_inode(const struct inode *isp)
 	return sip->smk_inode;
 }
 
+/*
+ * logging functions
+ */
+#define SMACK_AUDIT_DENIED 0x1
+#define SMACK_AUDIT_ACCEPT 0x2
+extern int log_policy;
+
+void smack_log(char *subject_label, char *object_label,
+		int request,
+		int result, struct smk_audit_info *auditdata);
+
+#ifdef CONFIG_AUDIT
+
+/*
+ * some inline functions to set up audit data
+ * they do nothing if CONFIG_AUDIT is not set
+ *
+ */
+static inline void smk_ad_init(struct smk_audit_info *a, const char *func,
+			       char type)
+{
+	memset(a, 0, sizeof(*a));
+	a->a.type = type;
+	a->a.smack_audit_data.function = func;
+}
+
+static inline void smk_ad_setfield_u_tsk(struct smk_audit_info *a,
+					 struct task_struct *t)
+{
+	a->a.u.tsk = t;
+}
+static inline void smk_ad_setfield_u_fs_path_dentry(struct smk_audit_info *a,
+						    struct dentry *d)
+{
+	a->a.u.fs.path.dentry = d;
+}
+static inline void smk_ad_setfield_u_fs_path_mnt(struct smk_audit_info *a,
+						 struct vfsmount *m)
+{
+	a->a.u.fs.path.mnt = m;
+}
+static inline void smk_ad_setfield_u_fs_inode(struct smk_audit_info *a,
+					      struct inode *i)
+{
+	a->a.u.fs.inode = i;
+}
+static inline void smk_ad_setfield_u_fs_path(struct smk_audit_info *a,
+					     struct path p)
+{
+	a->a.u.fs.path = p;
+}
+static inline void smk_ad_setfield_u_net_sk(struct smk_audit_info *a,
+					    struct sock *sk)
+{
+	a->a.u.net.sk = sk;
+}
+
+#else /* no AUDIT */
+
+static inline void smk_ad_init(struct smk_audit_info *a, const char *func,
+			       char type)
+{
+}
+static inline void smk_ad_setfield_u_tsk(struct smk_audit_info *a,
+					 struct task_struct *t)
+{
+}
+static inline void smk_ad_setfield_u_fs_path_dentry(struct smk_audit_info *a,
+						    struct dentry *d)
+{
+}
+static inline void smk_ad_setfield_u_fs_path_mnt(struct smk_audit_info *a,
+						 struct vfsmount *m)
+{
+}
+static inline void smk_ad_setfield_u_fs_inode(struct smk_audit_info *a,
+					      struct inode *i)
+{
+}
+static inline void smk_ad_setfield_u_fs_path(struct smk_audit_info *a,
+					     struct path p)
+{
+}
+static inline void smk_ad_setfield_u_net_sk(struct smk_audit_info *a,
+					    struct sock *sk)
+{
+}
+#endif
+
 #endif  /* _SECURITY_SMACK_H */
