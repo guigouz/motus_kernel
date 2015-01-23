@@ -265,7 +265,7 @@ static int usb_lpm_enter(struct usb_hcd *hcd)
 {
 	unsigned long flags;
 	struct device *dev = container_of((void *)hcd, struct device,
-							driver_data);
+							platform_data);
 	struct msmusb_hcd *mhcd = hcd_to_mhcd(hcd);
 
 	spin_lock_irqsave(&mhcd->lock, flags);
@@ -316,7 +316,7 @@ void usb_lpm_exit_w(struct work_struct *work)
 	struct usb_hcd *hcd = mhcd_to_hcd(mhcd);
 
 	struct device *dev = container_of((void *)hcd, struct device,
-							driver_data);
+							platform_data);
 	msm_xusb_enable_clks(mhcd);
 
 

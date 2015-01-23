@@ -86,19 +86,10 @@ static struct platform_device *m520x_devices[] __initdata = {
 
 /***************************************************************************/
 
-#define	INTC0	(MCF_MBAR + MCFICM_INTC0)
-
 static void __init m520x_uart_init_line(int line, int irq)
 {
-	u32 imr;
 	u16 par;
 	u8 par2;
-
-	writeb(0x03, INTC0 + MCFINTC_ICR0 + MCFINT_UART0 + line);
-
-	imr = readl(INTC0 + MCFINTC_IMRL);
-	imr &= ~((1 << (irq - MCFINT_VECBASE)) | 1);
-	writel(imr, INTC0 + MCFINTC_IMRL);
 
 	switch (line) {
 	case 0:
@@ -136,17 +127,7 @@ static void __init m520x_uarts_init(void)
 
 static void __init m520x_fec_init(void)
 {
-	u32 imr;
 	u8 v;
-
-	/* Unmask FEC interrupts at ColdFire interrupt controller */
-	writeb(0x4, MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_ICR0 + 36);
-	writeb(0x4, MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_ICR0 + 40);
-	writeb(0x4, MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_ICR0 + 42);
-
-	imr = readl(MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_IMRH);
-	imr &= ~0x0001FFF0;
-	writel(imr, MCF_IPSBAR + MCFICM_INTC0 + MCFINTC_IMRH);
 
 	/* Set multi-function pins to ethernet mode */
 	v = readb(MCF_IPSBAR + MCF_GPIO_PAR_FEC);
@@ -158,6 +139,7 @@ static void __init m520x_fec_init(void)
 
 /***************************************************************************/
 
+<<<<<<< HEAD
 /*
  *  Program the vector to be an auto-vectored.
  */
@@ -169,6 +151,36 @@ void mcf_autovector(unsigned int vec)
 
 /***************************************************************************/
 
+||||||| merged common ancestors
+/*
+ *  Program the vector to be an auto-vectored.
+ */
+
+void mcf_autovector(unsigned int vec)
+{
+    /* Everything is auto-vectored on the 520x devices */
+}
+
+/***************************************************************************/
+
+static void m520x_cpu_reset(void)
+{
+	local_irq_disable();
+	__raw_writeb(MCF_RCR_SWRESET, MCF_RCR);
+}
+
+/***************************************************************************/
+
+=======
+static void m520x_cpu_reset(void)
+{
+	local_irq_disable();
+	__raw_writeb(MCF_RCR_SWRESET, MCF_RCR);
+}
+
+/***************************************************************************/
+
+>>>>>>> de55a89
 void __init config_BSP(char *commandp, int size)
 {
 	mach_reset = coldfire_reset;
