@@ -1,8 +1,8 @@
 /*
  * omap-pm.h - OMAP power management interface
  *
- * Copyright (C) 2008 Texas Instruments, Inc.
- * Copyright (C) 2008 Nokia Corporation
+ * Copyright (C) 2008-2009 Texas Instruments, Inc.
+ * Copyright (C) 2008-2009 Nokia Corporation
  * Paul Walmsley
  *
  * Interface developed by (in alphabetical order): Karthik Dasu, Jouni
@@ -30,7 +30,7 @@
 struct omap_opp {
 	unsigned long rate;
 	u8 opp_id;
-	u16 vsel;
+	u16 min_vdd;
 };
 
 extern struct omap_opp *mpu_opps;
@@ -58,13 +58,9 @@ extern struct omap_opp *l3_opps;
  * framework starts.  The "_if_" is to avoid name collisions with the
  * PM idle-loop code.
  */
-#ifdef CONFIG_OMAP_PM_NONE
-#define omap_pm_if_early_init(a, b, c) 0
-#else
 int __init omap_pm_if_early_init(struct omap_opp *mpu_opp_table,
 				 struct omap_opp *dsp_opp_table,
 				 struct omap_opp *l3_opp_table);
-#endif
 
 /**
  * omap_pm_if_init - OMAP PM init code called after clock fw init
@@ -72,11 +68,7 @@ int __init omap_pm_if_early_init(struct omap_opp *mpu_opp_table,
  * The main initialization code.  OPP tables are passed in here.  The
  * "_if_" is to avoid name collisions with the PM idle-loop code.
  */
-#ifdef CONFIG_OMAP_PM_NONE
-#define omap_pm_if_init() 0
-#else
 int __init omap_pm_if_init(void);
-#endif
 
 /**
  * omap_pm_if_exit - OMAP PM exit code
@@ -247,23 +239,6 @@ void omap_pm_dsp_set_min_opp(u8 opp_id);
  */
 u8 omap_pm_dsp_get_opp(void);
 
-/**
- * omap_pm_vdd1_get_opp - report the current VDD1 OPP
- *
- * Report the current VDD1 OPP number.
- *
- * Returns the current VDD1 OPP ID, or 0 upon error.
- */
-u8 omap_pm_vdd1_get_opp(void);
-
-/**
- * omap_pm_vdd2_get_opp - report the current VDD2 OPP
- *
- * Report the current VDD2 OPP number.
- *
- * Returns the current VDD2 OPP ID, or 0 upon error.
- */
-u8 omap_pm_vdd2_get_opp(void);
 
 /*
  * CPUFreq-originated constraint
@@ -271,63 +246,6 @@ u8 omap_pm_vdd2_get_opp(void);
  * In the future, this should be handled by custom OPP clocktype
  * functions.
  */
-
-/**
- * omap_pm_get_max_vdd1_opp - get the maximum supported VDD1 OPP number
- *
- * Report the maximum  VDD1 OPP number.
- *
- * Returns the maximum supported VDD1 OPP number.
- */
-u8 omap_pm_get_max_vdd1_opp(void);
-
-
-/**
- * omap_pm_get_min_vdd1_opp - get the minimum supported VDD1 OPP number
- *
- * Report the minimum  VDD1 OPP number.
- *
- * Returns the minimum supported VDD1 OPP number.
- */
-u8 omap_pm_get_min_vdd1_opp(void);
-
-
-/**
- * omap_pm_get_max_vdd2_opp - get the maximum supported VDD2 OPP number
- *
- * Report the maximum  VDD2 OPP number.
- *
- * Returns the maximum supported VDD2 OPP number.
- */
-u8 omap_pm_get_max_vdd2_opp(void);
-
-
-/**
- * omap_pm_get_min_vdd2_opp - get the minimum supported VDD2 OPP number
- *
- * Report the minimum  VDD2 OPP number.
- *
- * Returns the minimum supported VDD2 OPP number.
- */
-u8 omap_pm_get_min_vdd2_opp(void);
-
-/**
- * omap_get_mpu_rate_table - get the mpu OPP table
- *
- * returns mpu rate table.
- *
- * Returns the pointer to rate table
- */
-struct omap_opp *omap_get_mpu_rate_table(void);
-
-/**
- * omap_get_dsp_rate_table - get the dsp OPP table
- *
- * returns dsp rate table.
- *
- * Returns the pointer to rate table
- */
-struct omap_opp *omap_get_dsp_rate_table(void);
 
 /**
  * omap_pm_cpu_get_freq_table - return a cpufreq_frequency_table array ptr
@@ -379,32 +297,5 @@ unsigned long omap_pm_cpu_get_freq(void);
  */
 int omap_pm_get_dev_context_loss_count(struct device *dev);
 
-
-/*
- * Powerdomain usecounting hooks
- */
-
-/**
- * omap_pm_pwrdm_active - indicate that a power domain has become active
- * @pwrdm: struct powerdomain *
- *
- * Notify the OMAP PM layer that the power domain 'pwrdm' has become active,
- * presumably due to a device driver enabling an underlying clock.  This
- * function is intended to be called by the clockdomain code, not by drivers.
- * No return value.
- */
-void omap_pm_pwrdm_active(struct powerdomain *pwrdm);
-
-
-/**
- * omap_pm_pwrdm_inactive - indicate that a power domain has become inactive
- * @pwrdm: struct powerdomain *
- *
- * Notify the OMAP PM layer that the power domain 'pwrdm' has become
- * inactive, presumably due to a device driver disabling an underlying
- * clock.  This function is intended to be called by the clockdomain
- * code, not by drivers.  No return value.
- */
-void omap_pm_pwrdm_inactive(struct powerdomain *pwrdm);
 
 #endif

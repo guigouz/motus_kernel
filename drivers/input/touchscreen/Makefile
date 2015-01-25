@@ -52,3 +52,4 @@ ifeq (y, $(findstring y, $(CONFIG_MACH_CALGARY) $(CONFIG_MACH_MOT)))
 obj-$(CONFIG_TOUCHSCREEN_KEY08) 	+= key08.o
 obj-$(CONFIG_TOUCHSCREEN_KEY08_MULTITOUCH)         += key08_mt.o
 endif
+obj-$(CONFIG_TOUCHSCREEN_PCAP)		+= pcap_ts.o

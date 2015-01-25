@@ -60,6 +60,18 @@ static unsigned int min_sampling_rate;
 #define TRANSITION_LATENCY_LIMIT		(10 * 1000 * 1000)
 
 static void do_dbs_timer(struct work_struct *work);
+static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+				unsigned int event);
+
+#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
+static
+#endif
+struct cpufreq_governor cpufreq_gov_ondemand = {
+       .name                   = "ondemand",
+       .governor               = cpufreq_governor_dbs,
+       .max_transition_latency = TRANSITION_LATENCY_LIMIT,
+       .owner                  = THIS_MODULE,
+};
 
 /* Sampling types */
 enum {DBS_NORMAL_SAMPLE, DBS_SUB_SAMPLE};
@@ -228,20 +240,23 @@ static void ondemand_powersave_bias_init(void)
 }
 
 /************************** sysfs interface ************************/
-static ssize_t show_sampling_rate_max(struct cpufreq_policy *policy, char *buf)
+
+static ssize_t show_sampling_rate_max(struct kobject *kobj,
+				      struct attribute *attr, char *buf)
 {
 	printk_once(KERN_INFO "CPUFREQ: ondemand sampling_rate_max "
 	       "sysfs file is deprecated - used by: %s\n", current->comm);
 	return sprintf(buf, "%u\n", -1U);
 }
 
-static ssize_t show_sampling_rate_min(struct cpufreq_policy *policy, char *buf)
+static ssize_t show_sampling_rate_min(struct kobject *kobj,
+				      struct attribute *attr, char *buf)
 {
 	return sprintf(buf, "%u\n", min_sampling_rate);
 }
 
 #define define_one_ro(_name)		\
-static struct freq_attr _name =		\
+static struct global_attr _name =	\
 __ATTR(_name, 0444, show_##_name, NULL)
 
 define_one_ro(sampling_rate_max);
@@ -250,7 +265,7 @@ define_one_ro(sampling_rate_min);
 /* cpufreq_ondemand Governor Tunables */
 #define show_one(file_name, object)					\
 static ssize_t show_##file_name						\
-(struct cpufreq_policy *unused, char *buf)				\
+(struct kobject *kobj, struct attribute *attr, char *buf)              \
 {									\
 	return sprintf(buf, "%u\n", dbs_tuners_ins.object);		\
 }
@@ -261,8 +276,38 @@ show_one(down_differential, down_differential);
 show_one(ignore_nice_load, ignore_nice);
 show_one(powersave_bias, powersave_bias);
 
-static ssize_t store_sampling_rate(struct cpufreq_policy *unused,
-		const char *buf, size_t count)
+/*** delete after deprecation time ***/
+
+#define DEPRECATION_MSG(file_name)					\
+	printk_once(KERN_INFO "CPUFREQ: Per core ondemand sysfs "	\
+		    "interface is deprecated - " #file_name "\n");
+
+#define show_one_old(file_name)						\
+static ssize_t show_##file_name##_old					\
+(struct cpufreq_policy *unused, char *buf)				\
+{									\
+	printk_once(KERN_INFO "CPUFREQ: Per core ondemand sysfs "	\
+		    "interface is deprecated - " #file_name "\n");	\
+	return show_##file_name(NULL, NULL, buf);			\
+}
+show_one_old(sampling_rate);
+show_one_old(up_threshold);
+show_one_old(ignore_nice_load);
+show_one_old(powersave_bias);
+show_one_old(sampling_rate_min);
+show_one_old(sampling_rate_max);
+
+#define define_one_ro_old(object, _name)       \
+static struct freq_attr object =               \
+__ATTR(_name, 0444, show_##_name##_old, NULL)
+
+define_one_ro_old(sampling_rate_min_old, sampling_rate_min);
+define_one_ro_old(sampling_rate_max_old, sampling_rate_max);
+
+/*** delete after deprecation time ***/
+
+static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
 {
 	unsigned int input;
 	int ret;
@@ -298,8 +343,8 @@ static ssize_t store_susp_rate(struct cpufreq_policy *unused,
 }
 #endif
 
-static ssize_t store_up_threshold(struct cpufreq_policy *unused,
-		const char *buf, size_t count)
+static ssize_t store_up_threshold(struct kobject *a, struct attribute *b,
+				  const char *buf, size_t count)
 {
 	unsigned int input;
 	int ret;
@@ -337,8 +382,8 @@ static ssize_t store_down_differential(struct cpufreq_policy *unused,
 	return count;
 }
 
-static ssize_t store_ignore_nice_load(struct cpufreq_policy *policy,
-		const char *buf, size_t count)
+static ssize_t store_ignore_nice_load(struct kobject *a, struct attribute *b,
+				      const char *buf, size_t count)
 {
 	unsigned int input;
 	int ret;
@@ -374,8 +419,8 @@ static ssize_t store_ignore_nice_load(struct cpufreq_policy *policy,
 	return count;
 }
 
-static ssize_t store_powersave_bias(struct cpufreq_policy *unused,
-		const char *buf, size_t count)
+static ssize_t store_powersave_bias(struct kobject *a, struct attribute *b,
+				    const char *buf, size_t count)
 {
 	unsigned int input;
 	int ret;
@@ -396,7 +441,7 @@ static ssize_t store_powersave_bias(struct cpufreq_policy *unused,
 }
 
 #define define_one_rw(_name) \
-static struct freq_attr _name = \
+static struct global_attr _name = \
 __ATTR(_name, 0644, show_##_name, store_##_name)
 
 define_one_rw(sampling_rate);
@@ -426,6 +471,47 @@ static struct attribute_group dbs_attr_group = {
 	.attrs = dbs_attributes,
 	.name = "ondemand",
 };
+
+/*** delete after deprecation time ***/
+
+#define write_one_old(file_name)					\
+static ssize_t store_##file_name##_old					\
+(struct cpufreq_policy *unused, const char *buf, size_t count)		\
+{									\
+       printk_once(KERN_INFO "CPUFREQ: Per core ondemand sysfs "	\
+		   "interface is deprecated - " #file_name "\n");	\
+       return store_##file_name(NULL, NULL, buf, count);		\
+}
+write_one_old(sampling_rate);
+write_one_old(up_threshold);
+write_one_old(ignore_nice_load);
+write_one_old(powersave_bias);
+
+#define define_one_rw_old(object, _name)       \
+static struct freq_attr object =               \
+__ATTR(_name, 0644, show_##_name##_old, store_##_name##_old)
+
+define_one_rw_old(sampling_rate_old, sampling_rate);
+define_one_rw_old(up_threshold_old, up_threshold);
+define_one_rw_old(ignore_nice_load_old, ignore_nice_load);
+define_one_rw_old(powersave_bias_old, powersave_bias);
+
+static struct attribute *dbs_attributes_old[] = {
+       &sampling_rate_max_old.attr,
+       &sampling_rate_min_old.attr,
+       &sampling_rate_old.attr,
+       &up_threshold_old.attr,
+       &ignore_nice_load_old.attr,
+       &powersave_bias_old.attr,
+       NULL
+};
+
+static struct attribute_group dbs_attr_group_old = {
+       .attrs = dbs_attributes_old,
+       .name = "ondemand",
+};
+
+/*** delete after deprecation time ***/
 
 /************************** sysfs end ************************/
 
@@ -747,7 +833,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 
 		mutex_lock(&dbs_mutex);
 
-		rc = sysfs_create_group(&policy->kobj, &dbs_attr_group);
+		rc = sysfs_create_group(&policy->kobj, &dbs_attr_group_old);
 		if (rc) {
 			mutex_unlock(&dbs_mutex);
 			return rc;
@@ -768,13 +854,20 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		}
 		this_dbs_info->cpu = cpu;
 		ondemand_powersave_bias_init_cpu(cpu);
-		mutex_init(&this_dbs_info->timer_mutex);
 		/*
 		 * Start the timerschedule work, when this governor
 		 * is used for first time
 		 */
 		if (dbs_enable == 1) {
 			unsigned int latency;
+
+			rc = sysfs_create_group(cpufreq_global_kobject,
+						&dbs_attr_group);
+			if (rc) {
+				mutex_unlock(&dbs_mutex);
+				return rc;
+			}
+
 			/* policy latency is in nS. Convert it to uS first */
 			latency = policy->cpuinfo.transition_latency / 1000;
 			if (latency == 0)
@@ -788,6 +881,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		}
 		mutex_unlock(&dbs_mutex);
 
+		mutex_init(&this_dbs_info->timer_mutex);
 		dbs_timer_init(this_dbs_info);
 		break;
 
@@ -795,13 +889,16 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		dbs_timer_exit(this_dbs_info);
 
 		mutex_lock(&dbs_mutex);
-		sysfs_remove_group(&policy->kobj, &dbs_attr_group);
+		sysfs_remove_group(&policy->kobj, &dbs_attr_group_old);
 		mutex_destroy(&this_dbs_info->timer_mutex);
 		dbs_enable--;
 		if (dbs_enable == 0)
 			platform_device_unregister(pd);
 		input_unregister_handler(&dbs_input_handler);
 		mutex_unlock(&dbs_mutex);
+		if (!dbs_enable)
+			sysfs_remove_group(cpufreq_global_kobject,
+					   &dbs_attr_group);
 
 		break;
 
@@ -818,16 +915,6 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 	}
 	return 0;
 }
-
-#ifndef CONFIG_CPU_FREQ_DEFAULT_GOV_ONDEMAND
-static
-#endif
-struct cpufreq_governor cpufreq_gov_ondemand = {
-	.name			= "ondemand",
-	.governor		= cpufreq_governor_dbs,
-	.max_transition_latency = TRANSITION_LATENCY_LIMIT,
-	.owner			= THIS_MODULE,
-};
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 
@@ -847,7 +934,6 @@ struct early_suspend dbs_suspend_info = {
     .level = EARLY_SUSPEND_LEVEL_STOP_DRAWING,
 };
 #endif
-
 
 static int __init cpufreq_gov_dbs_init(void)
 {

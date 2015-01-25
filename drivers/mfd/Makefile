@@ -15,6 +15,8 @@ obj-$(CONFIG_MFD_TC6387XB)	+= tc6387xb.o
 obj-$(CONFIG_MFD_TC6393XB)	+= tc6393xb.o
 
 obj-$(CONFIG_MFD_WM8400)	+= wm8400-core.o
+wm831x-objs			:= wm831x-core.o wm831x-irq.o wm831x-otp.o
+obj-$(CONFIG_MFD_WM831X)	+= wm831x.o
 wm8350-objs			:= wm8350-core.o wm8350-regmap.o wm8350-gpio.o
 obj-$(CONFIG_MFD_WM8350)	+= wm8350.o
 obj-$(CONFIG_MFD_WM8350_I2C)	+= wm8350-i2c.o
@@ -27,6 +29,8 @@ obj-$(CONFIG_TWL4030_POWER)    += twl4030-power.o
 
 obj-$(CONFIG_MARIMBA_CORE)	+= marimba-core.o
 obj-$(CONFIG_MARIMBA_TSADC)	+= marimba-tsadc.o
+
+obj-$(CONFIG_MFD_MC13783)	+= mc13783-core.o
 
 obj-$(CONFIG_MFD_CORE)		+= mfd-core.o
 
@@ -61,3 +65,4 @@ cpcap-objs			:= cpcap-core.o \
 obj-$(CONFIG_MFD_CPCAP)		+= cpcap.o
 obj-$(CONFIG_PMIC8058)		+= pmic8058.o
 obj-$(CONFIG_AB3100_CORE)	+= ab3100-core.o
+obj-$(CONFIG_AB3100_OTP)	+= ab3100-otp.o

@@ -258,7 +258,7 @@ EXPORT_SYMBOL(build_ehash_secret);
 static inline int inet_netns_ok(struct net *net, int protocol)
 {
 	int hash;
-	struct net_protocol *ipprot;
+	const struct net_protocol *ipprot;
 
 	if (net_eq(net, &init_net))
 		return 1;
@@ -1180,7 +1180,7 @@ EXPORT_SYMBOL(inet_sk_rebuild_header);
 static int inet_gso_send_check(struct sk_buff *skb)
 {
 	struct iphdr *iph;
-	struct net_protocol *ops;
+	const struct net_protocol *ops;
 	int proto;
 	int ihl;
 	int err = -EINVAL;
@@ -1216,7 +1216,7 @@ static struct sk_buff *inet_gso_segment(struct sk_buff *skb, int features)
 {
 	struct sk_buff *segs = ERR_PTR(-EINVAL);
 	struct iphdr *iph;
-	struct net_protocol *ops;
+	const struct net_protocol *ops;
 	int proto;
 	int ihl;
 	int id;
@@ -1283,7 +1283,7 @@ out:
 static struct sk_buff **inet_gro_receive(struct sk_buff **head,
 					 struct sk_buff *skb)
 {
-	struct net_protocol *ops;
+	const struct net_protocol *ops;
 	struct sk_buff **pp = NULL;
 	struct sk_buff *p;
 	struct iphdr *iph;
@@ -1360,7 +1360,7 @@ out:
 
 static int inet_gro_complete(struct sk_buff *skb)
 {
-	struct net_protocol *ops;
+	const struct net_protocol *ops;
 	struct iphdr *iph = ip_hdr(skb);
 	int proto = iph->protocol & (MAX_INET_PROTOS - 1);
 	int err = -ENOSYS;
@@ -1445,13 +1445,13 @@ void snmp_mib_free(void *ptr[2])
 EXPORT_SYMBOL_GPL(snmp_mib_free);
 
 #ifdef CONFIG_IP_MULTICAST
-static struct net_protocol igmp_protocol = {
+static const struct net_protocol igmp_protocol = {
 	.handler =	igmp_rcv,
 	.netns_ok =	1,
 };
 #endif
 
-static struct net_protocol tcp_protocol = {
+static const struct net_protocol tcp_protocol = {
 	.handler =	tcp_v4_rcv,
 	.err_handler =	tcp_v4_err,
 	.gso_send_check = tcp_v4_gso_send_check,
@@ -1462,7 +1462,7 @@ static struct net_protocol tcp_protocol = {
 	.netns_ok =	1,
 };
 
-static struct net_protocol udp_protocol = {
+static const struct net_protocol udp_protocol = {
 	.handler =	udp_rcv,
 	.err_handler =	udp_err,
 	.gso_send_check = udp4_ufo_send_check,
@@ -1471,7 +1471,7 @@ static struct net_protocol udp_protocol = {
 	.netns_ok =	1,
 };
 
-static struct net_protocol icmp_protocol = {
+static const struct net_protocol icmp_protocol = {
 	.handler =	icmp_rcv,
 	.no_policy =	1,
 	.netns_ok =	1,

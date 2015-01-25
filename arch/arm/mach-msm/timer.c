@@ -539,7 +539,9 @@ int64_t msm_timer_enter_idle(void)
 	}
 	if (delta <= 0)
 		return 0;
-	return cyc2ns(&clock->clocksource, (alarm - count) >> clock->shift);
+	return clocksource_cyc2ns((alarm - count) >> clock->shift,
+		      clock->clocksource.mult,
+		      clock->clocksource.shift);
 }
 
 void msm_timer_exit_idle(int low_power)
@@ -629,7 +631,7 @@ int64_t msm_timer_get_smem_clock_time(int64_t *period)
 static inline s64 cyc2ns_orig(struct clocksource *cs, cycle_t cycles)
 {
 	u64 ret = (u64)cycles;
-	ret = (ret * cs->mult_orig) >> cs->shift;
+	ret = (ret * cs->mult) >> cs->shift;
 	return ret;
 }
 
