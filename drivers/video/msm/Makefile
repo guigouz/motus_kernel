@@ -48,16 +48,16 @@ obj-$(CONFIG_FB_MSM_EBI2_TMD_QVGA_EPSON_QCIF) += ebi2_tmd20.o
 obj-$(CONFIG_FB_MSM_EBI2_TMD_QVGA_EPSON_QCIF) += ebi2_l2f.o
 
 ifeq ($(CONFIG_FB_MSM_MDDI_AUTO_DETECT),y)
-ifeq (y, $(findstring y, $(CONFIG_KERNEL_MOTOROLA) $(CONFIG_MACH_MOT)))
+ifeq ($(CONFIG_MACH_MOT),y)
 obj-y += mddi_tpo_nv.o
-else #ifeq ($(CONFIG_KERNEL_MOTOROLA),y)
+else #ifeq ($(CONFIG_MACH_MOT),y)
 obj-y += mddi_prism.o
 obj-y += mddi_toshiba.o
 obj-y += mddi_toshiba_vga.o
 obj-y += mddi_toshiba_wvga_pt.o
 obj-y += mddi_toshiba_wvga.o
 obj-y += mddi_sharp.o
-endif #ifeq ($(CONFIG_KERNEL_MOTOROLA),y)
+endif #ifeq ($(CONFIG_MACH_MOT),y)
 else
 obj-$(CONFIG_FB_MSM_MDDI_PRISM_WVGA) += mddi_prism.o
 obj-$(CONFIG_FB_MSM_MDDI_TOSHIBA_COMMON) += mddi_toshiba.o
@@ -84,7 +84,7 @@ obj-$(CONFIG_FB_MSM_TVOUT_PAL) += tv_pal.o
 
 obj-$(CONFIG_FB_MSM_EXTMDDI_SVGA) += mddi_ext_lcd.o
 
-ifeq (y, $(findstring y, $(CONFIG_KERNEL_MOTOROLA) $(CONFIG_MACH_MOT)))
+ifeq ($(CONFIG_MACH_MOT),y)
 EXTRA_CFLAGS += -I$(srctree)/arch/arm/mach-msm
 endif
 

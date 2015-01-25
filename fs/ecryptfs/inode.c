@@ -473,6 +473,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct inode *lower_dir_inode = ecryptfs_inode_to_lower(dir);
 	struct dentry *lower_dir_dentry;
 
+	dget(lower_dentry);
 	lower_dir_dentry = lock_parent(lower_dentry);
 	dget(lower_dentry);
 	atomic_inc(&lower_dentry->d_inode->i_count);
@@ -490,6 +491,7 @@ static int ecryptfs_unlink(struct inode *dir, struct dentry *dentry)
 out_unlock:
 	iput(lower_dentry->d_inode);
 	unlock_dir(lower_dir_dentry);
+	dput(lower_dentry);
 	return rc;
 }
 
@@ -974,6 +976,21 @@ out:
 	return rc;
 }
 
+int ecryptfs_getattr(struct vfsmount *mnt, struct dentry *dentry,
+		     struct kstat *stat)
+{
+	struct kstat lower_stat;
+	int rc;
+
+	rc = vfs_getattr(ecryptfs_dentry_to_lower_mnt(dentry),
+			 ecryptfs_dentry_to_lower(dentry), &lower_stat);
+	if (!rc) {
+		generic_fillattr(dentry->d_inode, stat);
+		stat->blocks = lower_stat.blocks;
+	}
+	return rc;
+}
+
 int
 ecryptfs_setxattr(struct dentry *dentry, const char *name, const void *value,
 		  size_t size, int flags)
@@ -1103,6 +1120,7 @@ const struct inode_operations ecryptfs_dir_iops = {
 const struct inode_operations ecryptfs_main_iops = {
 	.permission = ecryptfs_permission,
 	.setattr = ecryptfs_setattr,
+	.getattr = ecryptfs_getattr,
 	.setxattr = ecryptfs_setxattr,
 	.getxattr = ecryptfs_getxattr,
 	.listxattr = ecryptfs_listxattr,

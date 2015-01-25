@@ -81,6 +81,9 @@
 
 /* OpenDCC (www.opendcc.de) product id */
 #define FTDI_OPENDCC_PID	0xBFD8
+#define FTDI_OPENDCC_SNIFFER_PID	0xBFD9
+#define FTDI_OPENDCC_THROTTLE_PID	0xBFDA
+#define FTDI_OPENDCC_GATEWAY_PID	0xBFDB
 
 /* Sprog II (Andrew Crosland's SprogII DCC interface) */
 #define FTDI_SPROG_II		0xF0C8
@@ -659,6 +662,20 @@
 #define BANDB_USOTL4_PID	0xAC01	/* USOTL4 Isolated RS-485 Converter */
 #define BANDB_USTL4_PID		0xAC02	/* USTL4 RS-485 Converter */
 #define BANDB_USO9ML2_PID	0xAC03	/* USO9ML2 Isolated RS-232 Converter */
+#define BANDB_USOPTL4_PID	0xAC11
+#define BANDB_USPTL4_PID	0xAC12
+#define BANDB_USO9ML2DR_2_PID	0xAC16
+#define BANDB_USO9ML2DR_PID	0xAC17
+#define BANDB_USOPTL4DR2_PID	0xAC18	/* USOPTL4R-2 2-port Isolated RS-232 Converter */
+#define BANDB_USOPTL4DR_PID	0xAC19
+#define BANDB_485USB9F_2W_PID	0xAC25
+#define BANDB_485USB9F_4W_PID	0xAC26
+#define BANDB_232USB9M_PID	0xAC27
+#define BANDB_485USBTB_2W_PID	0xAC33
+#define BANDB_485USBTB_4W_PID	0xAC34
+#define BANDB_TTL5USB9M_PID	0xAC49
+#define BANDB_TTL3USB9M_PID	0xAC50
+#define BANDB_ZZ_PROG1_USB_PID	0xBA02
 
 /*
  * RM Michaelides CANview USB (http://www.rmcan.com)
@@ -930,6 +947,7 @@
  */
 #define ADI_VID 		0x0456
 #define ADI_GNICE_PID 		0xF000
+#define ADI_GNICEPLUS_PID 	0xF001
 
 /*
  * JETI SPECTROMETER SPECBOS 1201
@@ -966,6 +984,12 @@
  * OpenRD Base, Client use VID 0x0403
  */
 #define MARVELL_OPENRD_PID	0x9e90
+
+/*
+ * Hameg HO820 and HO870 interface (using VID 0x0403)
+ */
+#define        HAMEG_HO820_PID         0xed74
+#define        HAMEG_HO870_PID         0xed71
 
 /*
  *   BmRequestType:  1100 0000b

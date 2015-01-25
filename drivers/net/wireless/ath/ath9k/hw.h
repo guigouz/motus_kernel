@@ -106,7 +106,7 @@
 #define AH_TSF_WRITE_TIMEOUT        100    /* (us) */
 #define AH_TIME_QUANTUM             10
 #define AR_KEYTABLE_SIZE            128
-#define POWER_UP_TIME               200000
+#define POWER_UP_TIME               10000
 #define SPUR_RSSI_THRESH            40
 
 #define CAB_TIMEOUT_VAL             10
@@ -218,6 +218,7 @@ struct ath9k_ops_config {
 #define AR_SPUR_FEEQ_BOUND_HT20 10
 	int spurmode;
 	u16 spurchans[AR_EEPROM_MODAL_SPURS][2];
+	u8 max_txtrig_level;
 };
 
 enum ath9k_int {
@@ -407,7 +408,7 @@ struct ath9k_hw_version {
  * Using de Bruijin sequence to to look up 1's index in a 32 bit number
  * debruijn32 = 0000 0111 0111 1100 1011 0101 0011 0001
  */
-#define debruijn32 0x077CB531UL
+#define debruijn32 0x077CB531U
 
 struct ath_gen_timer_configuration {
 	u32 next_addr;
@@ -650,7 +651,7 @@ void ath9k_hw_set_sta_beacon_timers(struct ath_hw *ah,
 				    const struct ath9k_beacon_state *bs);
 bool ath9k_hw_setpower(struct ath_hw *ah,
 		       enum ath9k_power_mode mode);
-void ath9k_hw_configpcipowersave(struct ath_hw *ah, int restore);
+void ath9k_hw_configpcipowersave(struct ath_hw *ah, int restore, int power_off);
 
 /* Interrupt Handling */
 bool ath9k_hw_intrpend(struct ath_hw *ah);

@@ -70,9 +70,7 @@ static int drm_fill_in_pci_dev(struct drm_device *dev,
  * then register the character device and inter module information.
  * Try and register, if we fail to register, backout previous work.
  */
-
-int drm_get_pci_dev(struct pci_dev *pdev, const struct pci_device_id *ent,
-		struct drm_driver *driver)
+drm_dma_handle_t *drm_pci_alloc(struct drm_device * dev, size_t size, size_t align)
 {
 	struct drm_device *dev;
 	int ret;
@@ -86,13 +84,9 @@ int drm_get_pci_dev(struct pci_dev *pdev, const struct pci_device_id *ent,
 	if (align > size)
 		return NULL;
 
-	dev = drm_calloc(1, sizeof(*dev), DRM_MEM_STUB);
-	if (!dev)
-		return -ENOMEM;
-
-	ret = pci_enable_device(pdev);
-	if (ret)
-		goto err_g1;
+	dmah = kmalloc(sizeof(drm_dma_handle_t), GFP_KERNEL);
+	if (!dmah)
+		return NULL;
 
 	pci_set_master(pdev);
 

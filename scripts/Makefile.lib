@@ -217,7 +217,7 @@ cmd_gzip = gzip -f -9 < $< > $@
 # Bzip2
 # ---------------------------------------------------------------------------
 
-# Bzip2 does not include size in file... so we have to fake that
+# Bzip2 and LZMA do not include size in file... so we have to fake that;
 size_append=$(CONFIG_SHELL) $(srctree)/scripts/bin_size
 
 quiet_cmd_bzip2 = BZIP2    $@

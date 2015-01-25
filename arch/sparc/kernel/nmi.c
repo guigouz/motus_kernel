@@ -19,7 +19,7 @@
 #include <linux/delay.h>
 #include <linux/smp.h>
 
-#include <asm/perf_counter.h>
+#include <asm/perf_event.h>
 #include <asm/ptrace.h>
 #include <asm/local.h>
 #include <asm/pcr.h>
@@ -96,7 +96,6 @@ notrace __kprobes void perfctr_irq(int irq, struct pt_regs *regs)
 	int cpu = smp_processor_id();
 
 	clear_softint(1 << irq);
-	pcr_ops->write(PCR_PIC_PRIV);
 
 	local_cpu_data().__nmi_count++;
 
@@ -105,6 +104,8 @@ notrace __kprobes void perfctr_irq(int irq, struct pt_regs *regs)
 	if (notify_die(DIE_NMI, "nmi", regs, 0,
 		       pt_regs_trap_type(regs), SIGINT) == NOTIFY_STOP)
 		touched = 1;
+	else
+		pcr_ops->write(PCR_PIC_PRIV);
 
 	sum = kstat_irqs_cpu(0, cpu);
 	if (__get_cpu_var(nmi_touch)) {
@@ -265,7 +266,7 @@ int __init nmi_init(void)
 		}
 	}
 	if (!err)
-		init_hw_perf_counters();
+		init_hw_perf_events();
 
 	return err;
 }

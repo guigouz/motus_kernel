@@ -348,7 +348,7 @@ static void uvc_ctrl_set_zoom(struct uvc_control_mapping *mapping,
 	__s32 value, __u8 *data)
 {
 	data[0] = value == 0 ? 0 : (value > 0) ? 1 : 0xff;
-	data[2] = min(abs(value), 0xff);
+	data[2] = min((int)abs(value), 0xff);
 }
 
 static struct uvc_control_mapping uvc_ctrl_mappings[] = {
@@ -1405,7 +1405,7 @@ uvc_ctrl_prune_entity(struct uvc_device *dev, struct uvc_entity *entity)
 	size = entity->processing.bControlSize;
 
 	for (i = 0; i < ARRAY_SIZE(blacklist); ++i) {
-		if (!usb_match_id(dev->intf, &blacklist[i].id))
+		if (!usb_match_one_id(dev->intf, &blacklist[i].id))
 			continue;
 
 		if (blacklist[i].index >= 8 * size ||

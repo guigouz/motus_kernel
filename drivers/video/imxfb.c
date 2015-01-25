@@ -593,7 +593,8 @@ static int imxfb_activate_var(struct fb_var_screeninfo *var, struct fb_info *inf
  */
 static int imxfb_suspend(struct platform_device *dev, pm_message_t state)
 {
-	struct imxfb_info *fbi = platform_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(dev);
+	struct imxfb_info *fbi = info->par;
 
 	pr_debug("%s\n", __func__);
 
@@ -603,7 +604,8 @@ static int imxfb_suspend(struct platform_device *dev, pm_message_t state)
 
 static int imxfb_resume(struct platform_device *dev)
 {
-	struct imxfb_info *fbi = platform_get_drvdata(dev);
+	struct fb_info *info = platform_get_drvdata(dev);
+	struct imxfb_info *fbi = info->par;
 
 	pr_debug("%s\n", __func__);
 
@@ -710,7 +712,7 @@ static int __init imxfb_probe(struct platform_device *pdev)
 
 	fbi->clk = clk_get(&pdev->dev, NULL);
 	if (IS_ERR(fbi->clk)) {
-		ret = PTR_ERR(fbi->clk);;
+		ret = PTR_ERR(fbi->clk);
 		dev_err(&pdev->dev, "unable to get clock: %d\n", ret);
 		goto failed_getclock;
 	}

@@ -172,7 +172,7 @@
 /* 160 */	CALL(sys_sched_get_priority_min)
 		CALL(sys_sched_rr_get_interval)
 		CALL(sys_nanosleep)
-		CALL(sys_arm_mremap)
+		CALL(sys_mremap)
 		CALL(sys_setresuid16)
 /* 165 */	CALL(sys_getresuid16)
 		CALL(sys_ni_syscall)		/* vm86 */
@@ -373,7 +373,7 @@
 		CALL(sys_preadv)
 		CALL(sys_pwritev)
 		CALL(sys_rt_tgsigqueueinfo)
-		CALL(sys_perf_counter_open)
+		CALL(sys_perf_event_open)
 #ifndef syscalls_counted
 .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
 #define syscalls_counted

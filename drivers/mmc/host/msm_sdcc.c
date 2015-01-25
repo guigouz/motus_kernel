@@ -42,7 +42,7 @@
 #include <asm/mach/mmc.h>
 #include <mach/msm_iomap.h>
 #include <mach/dma.h>
-#if !defined(CONFIG_KERNEL_MOTOROLA) || !defined(CONFIG_MACH_MOT)
+#if !defined(CONFIG_MACH_MOT)
 #include <mach/htc_pwrsink.h>
 #else
 #include <linux/earlysuspend.h>
@@ -774,9 +774,9 @@ msmsdcc_irq(int irq, void *dev_id)
 	return IRQ_RETVAL(ret);
 }
 
-#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#if defined(CONFIG_MACH_MOT)
 static void msmsdcc_check_status(unsigned long data);
-#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+#endif /* defined(CONFIG_MACH_MOT) */
 
 static void
 msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
@@ -789,10 +789,10 @@ msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
         WARN_ON(host->pwr == 0);
 
 	spin_lock_irqsave(&host->lock, flags);
-#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#if defined(CONFIG_MACH_MOT)
         if ((mmc->caps & MMC_CAP_NEEDS_POLL) && (host->eject))
                 msmsdcc_check_status((unsigned long) host);
-#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+#endif /* defined(CONFIG_MACH_MOT) */
 
 	host->stats.reqs++;
 
@@ -881,7 +881,7 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	switch (ios->power_mode) {
 	case MMC_POWER_OFF:
-#if !defined(CONFIG_KERNEL_MOTOROLA) || !defined(CONFIG_MACH_MOT)
+#if !defined(CONFIG_MACH_MOT)
 		htc_pwrsink_set(PWRSINK_SDCARD, 0);
 #endif
 		break;
@@ -889,7 +889,7 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		pwr |= MCI_PWR_UP;
 		break;
 	case MMC_POWER_ON:
-#if !defined(CONFIG_KERNEL_MOTOROLA) || !defined(CONFIG_MACH_MOT)
+#if !defined(CONFIG_MACH_MOT)
 		htc_pwrsink_set(PWRSINK_SDCARD, 100);
 #endif
 		pwr |= MCI_PWR_ON;
@@ -1087,32 +1087,6 @@ do_power_cycle_work(struct work_struct *work)
 }
 #endif
 
-#if defined(CONFIG_KERNEL_MOTOROLA)
-static void
-do_power_cycle_work(struct work_struct *work)
-{
-	struct msmsdcc_host *host =
-		container_of(work, struct msmsdcc_host, power_cycle_task);
-	struct mmc_host *mmc = host->mmc;
-	pm_message_t state;
-	printk("%s: potential esd failure\n", __func__);
-
-	state.event = 0xFFFF;
-
-	/* we only power cycle to deal with esd issues on the sd card */
-	if((host->pdev_id != 1) || !host->plat->status(mmc_dev(mmc)))
-		return;
-
-	if (mmc) {
-		printk("%s: power cycling card\n", __func__);
-		mmc_suspend_host(mmc, state);
-		/* gotta give time for the unmount */
-		ssleep(3);
-		mmc_resume_host(mmc);
-	}
-}
-#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
-
 static ssize_t
 show_polling(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1274,13 +1248,13 @@ msmsdcc_probe(struct platform_device *pdev)
 	INIT_WORK(&host->resume_task, do_resume_work);
 #endif
 
-#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#if defined(CONFIG_MACH_MOT)
 	/* create a wq to deal with potential esd issues on the sd card */
 	INIT_WORK(&host->power_cycle_task, do_power_cycle_work);
 
 	if(pdev->id == 1)
 		power_cycle_work = create_singlethread_workqueue("msmsdcc_power_cycle");
-#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+#endif /* defined(CONFIG_MACH_MOT) */
 
 	/*
 	 * Setup DMA
@@ -1579,12 +1553,12 @@ msmsdcc_resume(struct platform_device *dev)
 #define msmsdcc_resume NULL
 #endif
 
-#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#if defined(CONFIG_MACH_MOT)
 void report_sd_failure(struct mmc_host *mmc) {
 	struct msmsdcc_host *host = mmc_priv(mmc);
 	queue_work(power_cycle_work, &host->power_cycle_task);
 }
-#endif /* defined(CONFIG_KERNEL_MOTOROLA) */
+#endif /* defined(CONFIG_MACH_MOT) */
 
 static struct platform_driver msmsdcc_driver = {
 	.driver		= {

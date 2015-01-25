@@ -1022,7 +1022,7 @@ static int get_transition_latency(struct powernow_k8_data *data)
 		 * set it to 1 to avoid problems in the future.
 		 * For all others it's a BIOS bug.
 		 */
-		if (!boot_cpu_data.x86 == 0x11)
+		if (boot_cpu_data.x86 != 0x11)
 			printk(KERN_ERR FW_WARN PFX "Invalid zero transition "
 				"latency\n");
 		max_latency = 1;
@@ -1351,6 +1351,7 @@ static int __devexit powernowk8_cpu_exit(struct cpufreq_policy *pol)
 
 	kfree(data->powernow_table);
 	kfree(data);
+	per_cpu(powernow_data, pol->cpu) = NULL;
 
 	return 0;
 }
@@ -1370,7 +1371,7 @@ static unsigned int powernowk8_get(unsigned int cpu)
 	int err;
 
 	if (!data)
-		return -EINVAL;
+		return 0;
 
 	smp_call_function_single(cpu, query_values_on_cpu, &err, true);
 	if (err)

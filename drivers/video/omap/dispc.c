@@ -24,9 +24,9 @@
 #include <linux/vmalloc.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/omapfb.h>
 
 #include <mach/sram.h>
+#include <mach/omapfb.h>
 #include <mach/board.h>
 
 #include "dispc.h"
@@ -523,7 +523,8 @@ static int omap_dispc_set_scale(int plane,
 	if ((unsigned)plane > OMAPFB_PLANE_NUM)
 		return -ENODEV;
 
-	if (out_width != orig_width || out_height != orig_height)
+	if (plane == OMAPFB_PLANE_GFX &&
+	    (out_width != orig_width || out_height != orig_height))
 		return -EINVAL;
 
 	enable_lcd_clocks(1);
@@ -893,7 +894,8 @@ static irqreturn_t omap_dispc_irq_handler(int irq, void *dev)
 	for (i = 0; i < MAX_IRQ_HANDLERS; i++) {
 		if (unlikely(dispc.irq_handlers[i].callback &&
 			     (stat & dispc.irq_handlers[i].irq_mask)))
-		dispc.irq_handlers[i].callback(dispc.irq_handlers[i].data);
+			dispc.irq_handlers[i].callback(
+						dispc.irq_handlers[i].data);
 	}
 
 	dispc_write_reg(DISPC_IRQSTATUS, stat);
@@ -1033,7 +1035,7 @@ static void mmap_user_close(struct vm_area_struct *vma)
 	atomic_dec(&dispc.map_count[plane]);
 }
 
-static struct vm_operations_struct mmap_user_ops = {
+static const struct vm_operations_struct mmap_user_ops = {
 	.open = mmap_user_open,
 	.close = mmap_user_close,
 };

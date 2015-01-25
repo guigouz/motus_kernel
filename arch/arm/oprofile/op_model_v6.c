@@ -35,6 +35,9 @@ static int irqs[] = {
 #elif defined(CONFIG_ARCH_MSM_ARM11)
 	INT_ARM11_PMU,
 #endif
+#ifdef CONFIG_ARCH_BCMRING
+	IRQ_PMUIRQ, /* for BCMRING, ARM PMU interrupt is 43 */
+#endif
 };
 
 static void armv6_pmu_stop(void)

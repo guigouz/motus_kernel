@@ -1496,14 +1496,14 @@ static int ip_vs_zero_all(void)
 
 
 static int
-proc_do_defense_mode(ctl_table *table, int write, struct file * filp,
+proc_do_defense_mode(ctl_table *table, int write,
 		     void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int *valp = table->data;
 	int val = *valp;
 	int rc;
 
-	rc = proc_dointvec(table, write, filp, buffer, lenp, ppos);
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
 	if (write && (*valp != val)) {
 		if ((*valp < 0) || (*valp > 3)) {
 			/* Restore the correct value */
@@ -1517,7 +1517,7 @@ proc_do_defense_mode(ctl_table *table, int write, struct file * filp,
 
 
 static int
-proc_do_sync_threshold(ctl_table *table, int write, struct file *filp,
+proc_do_sync_threshold(ctl_table *table, int write,
 		       void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	int *valp = table->data;
@@ -1527,7 +1527,7 @@ proc_do_sync_threshold(ctl_table *table, int write, struct file *filp,
 	/* backup the value first */
 	memcpy(val, valp, sizeof(val));
 
-	rc = proc_dointvec(table, write, filp, buffer, lenp, ppos);
+	rc = proc_dointvec(table, write, buffer, lenp, ppos);
 	if (write && (valp[0] < 0 || valp[1] < 0 || valp[0] >= valp[1])) {
 		/* Restore the correct value */
 		memcpy(valp, val, sizeof(val));
@@ -2714,6 +2714,8 @@ static int ip_vs_genl_parse_service(struct ip_vs_service_user_kern *usvc,
 	if (!(nla_af && (nla_fwmark || (nla_port && nla_protocol && nla_addr))))
 		return -EINVAL;
 
+	memset(usvc, 0, sizeof(*usvc));
+
 	usvc->af = nla_get_u16(nla_af);
 #ifdef CONFIG_IP_VS_IPV6
 	if (usvc->af != AF_INET && usvc->af != AF_INET6)
@@ -2900,6 +2902,8 @@ static int ip_vs_genl_parse_dest(struct ip_vs_dest_user_kern *udest,
 
 	if (!(nla_addr && nla_port))
 		return -EINVAL;
+
+	memset(udest, 0, sizeof(*udest));
 
 	nla_memcpy(&udest->addr, nla_addr, sizeof(udest->addr));
 	udest->port = nla_get_u16(nla_port);

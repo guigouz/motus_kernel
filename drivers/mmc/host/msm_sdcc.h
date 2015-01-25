@@ -256,7 +256,7 @@ struct msmsdcc_host {
 #ifdef CONFIG_MMC_MSM7X00A_RESUME_IN_WQ
 	struct work_struct	resume_task;
 #endif
-#if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
+#if defined(CONFIG_MACH_MOT)
 	struct work_struct 	power_cycle_task;
 #endif
 };

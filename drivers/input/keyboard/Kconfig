@@ -24,6 +24,16 @@ config KEYBOARD_AAED2000
 	  To compile this driver as a module, choose M here: the
 	  module will be called aaed2000_kbd.
 
+config KEYBOARD_ADP5588
+	tristate "ADP5588 I2C QWERTY Keypad and IO Expander"
+	depends on I2C
+	help
+	  Say Y here if you want to use a ADP5588 attached to your
+	  system I2C bus.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called adp5588-keys.
+
 config KEYBOARD_AMIGA
 	tristate "Amiga keyboard"
 	depends on AMIGA
@@ -103,6 +113,16 @@ config KEYBOARD_ATKBD_RDI_KEYCODES
 	  If you say Y here, and use an external keyboard, then each key in the
 	  right-hand column will be interpreted as the key shown in the
 	  left-hand column.
+
+config QT2160
+	tristate "Atmel AT42QT2160 Touch Sensor Chip"
+	depends on I2C && EXPERIMENTAL
+	help
+	  If you say yes here you get support for Atmel AT42QT2160 Touch
+	  Sensor chip as a keyboard input.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called qt2160.
 
 config KEYBOARD_BFIN
 	tristate "Blackfin BF54x keypad support"
@@ -251,6 +271,17 @@ config KEYBOARD_MAPLE
 	  To compile this driver as a module, choose M here: the
 	  module will be called maple_keyb.
 
+config KEYBOARD_MAX7359
+	tristate "Maxim MAX7359 Key Switch Controller"
+	depends on I2C
+	help
+	  If you say yes here you get support for the Maxim MAX7359 Key
+	  Switch Controller chip. This providers microprocessors with
+	  management of up to 64 key switches
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called max7359_keypad.
+
 config KEYBOARD_NEWTON
 	tristate "Newton keyboard"
 	select SERIO
@@ -260,40 +291,14 @@ config KEYBOARD_NEWTON
 	  To compile this driver as a module, choose M here: the
 	  module will be called newtonkbd.
 
-config KEYBOARD_TWL4030
-	tristate "TI TWL4030/TWL5030/TPS659x0 keypad support"
-	depends on TWL4030_CORE
+config KEYBOARD_OPENCORES
+	tristate "OpenCores Keyboard Controller"
 	help
-	  Say Y here if your board use the keypad controller on
-	  TWL4030 family chips.  It's safe to say enable this
-	  even on boards that don't use the keypad controller.
+	  Say Y here if you want to use the OpenCores Keyboard Controller
+	  http://www.opencores.org/project,keyboardcontroller
 
-	  To compile this driver as a module, choose M here: the
-	  module will be called twl4030_keypad.
-
-config OMAP_PS2
-	tristate "TI OMAP Innovator 1510 PS/2 keyboard & mouse support"
-	depends on ARCH_OMAP15XX && MACH_OMAP_INNOVATOR
-	help
-	  Say Y here if you want to use the OMAP Innovator 1510 PS/2
-	  keyboard and mouse.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called innovator_ps2.
-
-config KEYBOARD_TSC2301
-	tristate "TSC2301 keypad support"
-	depends on SPI_TSC2301
-	help
-	  Say Y here for if you are using the keypad features of TSC2301.
-
-config KEYBOARD_LM8323
-	tristate "LM8323 keypad chip"
-	depends on I2C
-	depends on LEDS
-	help
-	  If you say yes here you get support for the National Semiconductor
-	  LM8323 keypad controller.
+	  To compile this driver as a module, choose M here; the
+	  module will be called opencores-kbd.
 
 config KEYBOARD_PXA27x
 	tristate "PXA27x/PXA3xx keypad support"

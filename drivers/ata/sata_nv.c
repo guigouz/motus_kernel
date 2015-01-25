@@ -1566,9 +1566,31 @@ static int nv_noclassify_hardreset(struct ata_link *link, unsigned int *class,
 	bool online;
 	int rc;
 
-	rc = sata_link_hardreset(link, sata_deb_timing_hotplug, deadline,
-				 &online, NULL);
-	return online ? -EAGAIN : rc;
+	/* Do hardreset iff it's post-boot probing, please read the
+	 * comment above port ops for details.
+	 */
+	if (!(link->ap->pflags & ATA_PFLAG_LOADING) &&
+	    !ata_dev_enabled(link->device))
+		sata_link_hardreset(link, sata_deb_timing_hotplug, deadline,
+				    NULL, NULL);
+	else {
+		const unsigned long *timing = sata_ehc_deb_timing(ehc);
+		int rc;
+
+		if (!(ehc->i.flags & ATA_EHI_QUIET))
+			ata_link_printk(link, KERN_INFO, "nv: skipping "
+					"hardreset on occupied port\n");
+
+		/* make sure the link is online */
+		rc = sata_link_resume(link, timing, deadline);
+		/* whine about phy resume failure but proceed */
+		if (rc && rc != -EOPNOTSUPP)
+			ata_link_printk(link, KERN_WARNING, "failed to resume "
+					"link (errno=%d)\n", rc);
+	}
+
+	/* device signature acquisition is unreliable */
+	return -EAGAIN;
 }
 
 static void nv_nf2_freeze(struct ata_port *ap)

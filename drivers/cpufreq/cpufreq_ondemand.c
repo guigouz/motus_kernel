@@ -154,9 +154,9 @@ static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
 
 	idle_time = cputime64_sub(cur_wall_time, busy_time);
 	if (wall)
-		*wall = cur_wall_time;
+		*wall = (cputime64_t)jiffies_to_usecs(cur_wall_time);
 
-	return idle_time;
+	return (cputime64_t)jiffies_to_usecs(idle_time);
 }
 
 static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
@@ -323,7 +323,7 @@ static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
-static ssize_t store_susp_rate(struct cpufreq_policy *unused,
+static ssize_t store_susp_rate(struct kobject *a, struct attribute *b,
 		const char *buf, size_t count)
 {
 	unsigned int input;
@@ -362,7 +362,7 @@ static ssize_t store_up_threshold(struct kobject *a, struct attribute *b,
 	return count;
 }
 
-static ssize_t store_down_differential(struct cpufreq_policy *unused,
+static ssize_t store_down_differential(struct kobject *a, struct attribute *b,
 		const char *buf, size_t count)
 {
 	unsigned int input;

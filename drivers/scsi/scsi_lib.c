@@ -774,8 +774,16 @@ void scsi_io_completion(struct scsi_cmnd *cmd, unsigned int good_bytes)
 				error = -EIO;
 		}
 		if (scsi_bidi_cmnd(cmd)) {
-			/* will also release_buffers */
-			scsi_end_bidi_request(cmd);
+			/*
+			 * Bidi commands Must be complete as a whole,
+			 * both sides at once.
+			 */
+			req->next_rq->resid_len = scsi_in(cmd)->resid;
+
+			scsi_release_buffers(cmd);
+			blk_end_request_all(req, 0);
+
+			scsi_next_command(cmd);
 			return;
 		}
 		req->data_len = scsi_get_resid(cmd);

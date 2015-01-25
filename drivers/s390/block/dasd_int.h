@@ -108,6 +108,16 @@ do { \
 			    d_data); \
 } while(0)
 
+#define DBF_EVENT_DEVID(d_level, d_cdev, d_str, d_data...)	\
+do { \
+	struct ccw_dev_id __dev_id;			\
+	ccw_device_get_id(d_cdev, &__dev_id);		\
+	debug_sprintf_event(dasd_debug_area,		\
+			    d_level,					\
+			    "0.%x.%04x " d_str "\n",			\
+			    __dev_id.ssid, __dev_id.devno, d_data);	\
+} while (0)
+
 #define DBF_EXC(d_level, d_str, d_data...)\
 do { \
 	debug_sprintf_exception(dasd_debug_area, \
@@ -540,7 +550,7 @@ dasd_check_blocksize(int bsize)
 extern debug_info_t *dasd_debug_area;
 extern struct dasd_profile_info_t dasd_global_profile;
 extern unsigned int dasd_profile_level;
-extern struct block_device_operations dasd_device_operations;
+extern const struct block_device_operations dasd_device_operations;
 
 extern struct kmem_cache *dasd_page_cache;
 
