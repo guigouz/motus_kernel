@@ -114,7 +114,8 @@
 #define  MX2_UCR3_RXDMUXSEL	 (1<<2)  /* RXD Muxed Input Select, on mx2/mx3 */
 #define  UCR3_INVT  	 (1<<1)  /* Inverted Infrared transmission */
 #define  UCR3_BPEN  	 (1<<0)  /* Preset registers enable */
-#define  UCR4_CTSTL_32   (32<<10) /* CTS trigger level (32 chars) */
+#define  UCR4_CTSTL_SHF  10      /* CTS trigger level shift */
+#define  UCR4_CTSTL_MASK 0x3F    /* CTS trigger is 6 bits wide */
 #define  UCR4_INVR  	 (1<<9)  /* Inverted infrared reception */
 #define  UCR4_ENIRI 	 (1<<8)  /* Serial infrared interrupt enable */
 #define  UCR4_WKEN  	 (1<<7)  /* Wake interrupt enable */
@@ -300,12 +301,13 @@ static void imx_start_tx(struct uart_port *port)
 static irqreturn_t imx_rtsint(int irq, void *dev_id)
 {
 	struct imx_port *sport = dev_id;
-	unsigned int val = readl(sport->port.membase + USR1) & USR1_RTSS;
+	unsigned int val;
 	unsigned long flags;
 
 	spin_lock_irqsave(&sport->port.lock, flags);
 
 	writel(USR1_RTSD, sport->port.membase + USR1);
+	val = readl(sport->port.membase + USR1) & USR1_RTSS;
 	uart_handle_cts_change(&sport->port, !!val);
 	wake_up_interruptible(&sport->port.state->port.delta_msr_wait);
 
@@ -515,6 +517,9 @@ static int imx_setup_ufcr(struct imx_port *sport, unsigned int mode)
 	return 0;
 }
 
+/* half the RX buffer size */
+#define CTSTL 16
+
 static int imx_startup(struct uart_port *port)
 {
 	struct imx_port *sport = (struct imx_port *)port;
@@ -527,6 +532,14 @@ static int imx_startup(struct uart_port *port)
 	 * requesting IRQs
 	 */
 	temp = readl(sport->port.membase + UCR4);
+
+	if (USE_IRDA(sport))
+		temp |= UCR4_IRSC;
+
+	/* set the trigger level for CTS */
+	temp &= ~(UCR4_CTSTL_MASK<<  UCR4_CTSTL_SHF);
+	temp |= CTSTL<<  UCR4_CTSTL_SHF;
+
 	writel(temp & ~UCR4_DREN, sport->port.membase + UCR4);
 
 	/*
@@ -1131,7 +1144,12 @@ static int serial_imx_probe(struct platform_device *pdev)
 	if(pdata && (pdata->flags & IMXUART_HAVE_RTSCTS))
 		sport->have_rtscts = 1;
 
-	if (pdata->init) {
+#ifdef CONFIG_IRDA
+	if (pdata && (pdata->flags & IMXUART_IRDA))
+		sport->use_irda = 1;
+#endif
+
+	if (pdata && pdata->init) {
 		ret = pdata->init(pdev);
 		if (ret)
 			goto clkput;
@@ -1141,6 +1159,9 @@ static int serial_imx_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, &sport->port);
 
 	return 0;
+deinit:
+	if (pdata && pdata->exit)
+		pdata->exit(pdev);
 clkput:
 	clk_put(sport->clk);
 	clk_disable(sport->clk);
@@ -1168,7 +1189,7 @@ static int serial_imx_remove(struct platform_device *pdev)
 
 	clk_disable(sport->clk);
 
-	if (pdata->exit)
+	if (pdata && pdata->exit)
 		pdata->exit(pdev);
 
 	iounmap(sport->port.membase);
