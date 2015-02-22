@@ -1830,7 +1830,6 @@ cleanup:
 	kfree(psinfo);
 	kfree(notes);
 	kfree(fpu);
-	kfree(shdr4extnum);
 #ifdef ELF_CORE_COPY_XFPREGS
 	kfree(xfpu);
 #endif

@@ -50,11 +50,11 @@ struct ring_buffer_event {
  *				  size = 4 + length (bytes)
  */
 enum ring_buffer_type {
+	RINGBUF_TYPE_DATA_TYPE_LEN_MAX = 28,
 	RINGBUF_TYPE_PADDING,
 	RINGBUF_TYPE_TIME_EXTEND,
 	/* FIXME: RINGBUF_TYPE_TIME_STAMP not implemented */
 	RINGBUF_TYPE_TIME_STAMP,
-	RINGBUF_TYPE_DATA,
 };
 
 unsigned ring_buffer_event_length(struct ring_buffer_event *event);
@@ -93,7 +93,19 @@ void ring_buffer_discard_commit(struct ring_buffer *buffer,
  * size is in bytes for each per CPU buffer.
  */
 struct ring_buffer *
-ring_buffer_alloc(unsigned long size, unsigned flags);
+__ring_buffer_alloc(unsigned long size, unsigned flags, struct lock_class_key *key);
+
+/*
+ * Because the ring buffer is generic, if other users of the ring buffer get
+ * traced by ftrace, it can produce lockdep warnings. We need to keep each
+ * ring buffer's lock class separate.
+ */
+#define ring_buffer_alloc(size, flags)                  \
+({                                                      \
+	static struct lock_class_key __key;             \
+	__ring_buffer_alloc((size), (flags), &__key);   \
+})
+
 void ring_buffer_free(struct ring_buffer *buffer);
 
 int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size);
