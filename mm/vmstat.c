@@ -734,8 +734,7 @@ static void zoneinfo_show_print(struct seq_file *m, pg_data_t *pgdat,
 		   high_wmark_pages(zone),
 		   zone->pages_scanned,
 		   zone->spanned_pages,
-		   zone->present_pages,
-		   zone->mem_notify_status);
+		   zone->present_pages);
 
 	for (i = 0; i < NR_VM_ZONE_STAT_ITEMS; i++)
 		seq_printf(m, "\n    %-12s %lu", vmstat_text[i],
