@@ -135,6 +135,10 @@ cpu_v6_name:
 	.asciz	"ARMv6-compatible processor"
 	.align
 
+cpu_pj4_name:
+	.asciz	"Marvell PJ4 processor"
+	.align
+
 	__INIT
 
 /*
