@@ -518,24 +518,11 @@ static struct resource resources_nand[] = {
 	},
 };
 
-static struct resource resources_otg[] = {
-	{
-		.start	= 0xA0800000,
-		.end	= 0xA0800000 + SZ_1K - 1,
-		.flags	= IORESOURCE_MEM,
-	},
-	{
-		.start	= INT_USB_HS,
-		.end	= INT_USB_HS,
-		.flags	= IORESOURCE_IRQ,
-	},
-};
-
 struct platform_device msm_device_otg = {
 	.name		= "msm_otg",
 	.id		= -1,
-	.num_resources	= ARRAY_SIZE(resources_otg),
-	.resource	= resources_otg,
+	.num_resources	= ARRAY_SIZE(resources_hsusb_otg),
+	.resource	= resources_hsusb_otg,
 	.dev		= {
 		.coherent_dma_mask	= 0xffffffffULL,
 	},

@@ -2411,17 +2411,17 @@ static struct platform_driver usb_driver = {
 		    .pm = &msm72k_udc_dev_pm_ops, },
 };
 
-static int __init init(void)
+static int __init msm72k_udc_init(void)
 {
 	return platform_driver_register(&usb_driver);
 }
-module_init(init);
+module_init(msm72k_udc_init);
 
-static void __exit cleanup(void)
+static void __exit msm72k_udc_cleanup(void)
 {
 	platform_driver_unregister(&usb_driver);
 }
-module_exit(cleanup);
+module_exit(msm72k_udc_cleanup);
 
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_AUTHOR("Mike Lockwood, Brian Swetland");

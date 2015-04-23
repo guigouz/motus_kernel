@@ -1393,11 +1393,14 @@ static struct platform_device *devices[] __initdata = {
 	&hw3d_device,
 	&msm_device_i2c_gpio,
 	&msm_device_i2c,
-#if defined(CONFIG_USB_FUNCTION)
+#ifdef CONFIG_USB_FUNCTION
 	&msm_device_hsusb_peripheral,
 #endif
-#if defined(CONFIG_USB_GADGET_MSM_72K)
+#ifdef CONFIG_USB_GADGET_MSM_72K
 	&msm_device_gadget_peripheral,
+#endif
+#ifdef CONFIG_USB_MSM_OTG_72K
+	&msm_device_otg,
 #endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 	&usb_mass_storage_device,
