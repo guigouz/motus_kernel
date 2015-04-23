@@ -57,8 +57,12 @@ struct msm_otg {
 	struct clk		*pclk;
 	int			irq;
 	void __iomem		*regs;
+#define ID              0
+#define B_SESS_VLD      1
 	u8			in_lpm;
 	struct wake_lock	wlock;
+
+	atomic_t 		chg_type;
 
 	int 			(*rpc_connect)(int);
 	int 			(*phy_reset)(void);

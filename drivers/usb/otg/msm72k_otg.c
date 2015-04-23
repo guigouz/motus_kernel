@@ -150,87 +150,82 @@ static void disable_sess_valid(struct msm_otg *dev)
 	writel(readl(USB_OTGSC) & ~OTGSC_BSVIE, USB_OTGSC);
 }
 
-int release_wlocks;
-struct dentry *debugfs_dent;
-struct dentry *rel_wlocks_file;
-#if defined(CONFIG_DEBUG_FS)
-static ssize_t debug_read_release_wlocks(struct file *file, char __user *ubuf,
-				 size_t count, loff_t *ppos)
-{
-	char kbuf[100];
-	size_t c = 0;
-
-	memset(kbuf, 0, 100);
-
-	c = scnprintf(kbuf, 100, "%d", release_wlocks);
-
-	if (copy_to_user(ubuf, kbuf, c))
-		return -EFAULT;
-
-	return c;
-}
-static ssize_t debug_write_release_wlocks(struct file *file,
-		const char __user *buf, size_t count, loff_t *ppos)
-{
-	char kbuf[100];
-	long temp;
-
-	memset(kbuf, 0, 100);
-
-	if (copy_from_user(kbuf, buf, count > 99 ? 99 : count))
-		return -EFAULT;
-
-	if (strict_strtol(kbuf, 10, &temp))
-		return -EINVAL;
-
-	if (temp)
-		release_wlocks = 1;
-	else
-		release_wlocks = 0;
-
-	return count;
-}
-
-static int debug_open(struct inode *inode, struct file *file)
+#if 0 /*defined(CONFIG_DEBUG_FS)*/
+static int otg_open(struct inode *inode, struct file *file)
 {
 	file->private_data = inode->i_private;
 	return 0;
 }
+static ssize_t otg_mode_write(struct file *file, const char __user *buf,
+				size_t count, loff_t *ppos)
+{
+	struct msm_otg *dev = file->private_data;
+	int ret = count;
+	int work = 0;
+	unsigned long flags;
 
-const struct file_operations debug_wlocks_ops = {
-	.open = debug_open,
-	.read = debug_read_release_wlocks,
-	.write = debug_write_release_wlocks,
+	spin_lock_irqsave(&dev->lock, flags);
+	if (!memcmp(buf, "none", count - 1)) {
+		clear_bit(B_SESS_VLD, &dev->inputs);
+		set_bit(ID, &dev->inputs);
+		work = 1;
+	} else if (!memcmp(buf, "peripheral", count - 1)) {
+		set_bit(B_SESS_VLD, &dev->inputs);
+		set_bit(ID, &dev->inputs);
+		work = 1;
+	} else if (!memcmp(buf, "host", count - 1)) {
+		clear_bit(B_SESS_VLD, &dev->inputs);
+		clear_bit(ID, &dev->inputs);
+		set_bit(A_BUS_REQ, &dev->inputs);
+		work = 1;
+	} else {
+		pr_info("%s: unknown mode specified\n", __func__);
+		ret = -EINVAL;
+	}
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	if (work) {
+		wake_lock(&dev->wlock);
+		queue_work(dev->wq, &dev->sm_work);
+	}
+
+	return ret;
+}
+const struct file_operations otgfs_fops = {
+	.open	= otg_open,
+	.write	= otg_mode_write,
 };
 
-static void msm_otg_debugfs_init(struct msm_otg *dev)
+struct dentry *otg_debug_root;
+struct dentry *otg_debug_mode;
+#endif
+
+static int msm_otg_debugfs_init(struct msm_otg *dev)
 {
-	debugfs_dent = debugfs_create_dir("otg", 0);
+#if 0 /*defined(CONFIG_DEBUG_FS)*/
+	otg_debug_root = debugfs_create_dir("otg", NULL);
+	if (!otg_debug_root)
+		return -ENOENT;
 
-	if (IS_ERR(debugfs_dent) || !debugfs_dent)
-		return;
-
-	rel_wlocks_file = debugfs_create_file("release_wlocks", 0666,
-				debugfs_dent, dev, &debug_wlocks_ops);
-
-	return;
+	otg_debug_mode = debugfs_create_file("mode", 0222,
+						otg_debug_root, dev,
+						&otgfs_fops);
+	if (!otg_debug_mode) {
+		debugfs_remove(otg_debug_root);
+		otg_debug_root = NULL;
+		return -ENOENT;
+	}
+#endif
+	return 0;
 }
 
 static void msm_otg_debugfs_cleanup(void)
 {
-	if (rel_wlocks_file && !IS_ERR(rel_wlocks_file))
-		debugfs_remove(rel_wlocks_file);
-
-	if (debugfs_dent && !IS_ERR(debugfs_dent))
-		debugfs_remove(debugfs_dent);
-}
-
-#else
-
-static void msm_otg_debugfs_init(struct msm_otg *dev) { }
-static void msm_otg_debugfs_cleanup() { }
-
+#if 0 /*defined(CONFIG_DEBUG_FS)*/
+       debugfs_remove(otg_debug_mode);
+       debugfs_remove(otg_debug_root);
 #endif
+}
 
 static void msm_otg_start_peripheral(struct otg_transceiver *xceiv, int on)
 {
@@ -250,6 +245,8 @@ static void msm_otg_start_host(struct otg_transceiver *xceiv, int on)
 
 	/* TBD: call host specific start function */
 }
+
+extern int release_wlocks;
 
 static int msm_otg_suspend(struct msm_otg *dev)
 {

@@ -125,6 +125,10 @@
 
 #define USB_ENDPOINT_HALT		0	/* IN/OUT will STALL */
 
+/* OTG 2.0 spec 6.2 and 6.3 sections */
+#define OTG_STATUS_SELECTOR	0xF000
+#define THOST_REQ_POLL	1500 /* 1000 - 2000 msec */
+#define HOST_REQUEST_FLAG	0
 
 /**
  * struct usb_ctrlrequest - SETUP data for a USB device control request

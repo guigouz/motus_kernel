@@ -57,15 +57,18 @@ struct usb_composition {
 #if defined(CONFIG_KERNEL_MOTOROLA) || defined(CONFIG_MACH_MOT)
         char *config;
 #endif /* defined(CONFIG_KERNEL_MOTOROLA) */
-	
+
 };
 #endif
 
+#ifdef CONFIG_USB_GADGET_MSM_72K
 enum chg_type {
-	CHG_TYPE_HOSTPC,
-	CHG_TYPE_WALL_CHARGER,
-	CHG_TYPE_INVALID
+	USB_CHG_TYPE__SDP,
+	USB_CHG_TYPE__CARKIT,
+	USB_CHG_TYPE__WALLCHARGER,
+	USB_CHG_TYPE__INVALID
 };
+#endif
 
 struct msm_hsusb_gadget_platform_data {
 	/* for notification when USB is connected or disconnected */
@@ -73,6 +76,8 @@ struct msm_hsusb_gadget_platform_data {
 
 	int *phy_init_seq;
 	void (*phy_reset)(void);
+
+	int self_powered;
 
 	/*charging apis*/
 	int  (*chg_init)(int);

@@ -619,7 +619,6 @@ static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
     USB stuff
     ---------------------------------------------------------------- 
  */
-#ifdef CONFIG_USB_FUNCTION
 static void hsusb_gpio_init(void)
 {
 	if (gpio_request(111, "ulpi_data_0"))
@@ -705,6 +704,7 @@ static int usb_config_gpio(int config)
 	return 0;
 }
 
+#if defined(CONFIG_USB_FUNCTION)
 /* bit shifts for USB functions */
 static struct usb_function_map usb_functions_map[] = {
 	{"diag",		0},
@@ -770,10 +770,8 @@ static struct usb_composition usb_func_composition[] = {
         .config         = "Motorola Config 47",
     },
 };
-#endif /* CONFIG_USB_FUNCTION */
 
 static struct msm_hsusb_platform_data msm_hsusb_pdata = {
-#ifdef CONFIG_USB_FUNCTION
 	.version	= 0x0100,
 	.phy_info	= USB_PHY_EXTERNAL,
 	.vendor_id	= 0x22b8,
@@ -788,8 +786,22 @@ static struct msm_hsusb_platform_data msm_hsusb_pdata = {
 	.ulpi_data_1_pin	= 112,
 	.ulpi_data_3_pin	= 114,
 	.config_gpio		= usb_config_gpio,
-#endif
 };
+
+#endif /* CONFIG_USB_FUNCTION */
+
+#if defined(CONFIG_USB_GADGET_MSM_72K)
+#include <mach/rpc_hsusb.h>
+
+static void msm_hsusb_gadget_phy_reset(void)
+{
+	msm_hsusb_phy_reset();
+}
+
+static struct msm_hsusb_gadget_platform_data msm_gadget_pdata = {
+	.phy_reset = msm_hsusb_gadget_phy_reset,
+};
+#endif
 
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 static struct usb_mass_storage_platform_data mass_storage_pdata = {
@@ -1384,6 +1396,9 @@ static struct platform_device *devices[] __initdata = {
 #if defined(CONFIG_USB_FUNCTION)
 	&msm_device_hsusb_peripheral,
 #endif
+#if defined(CONFIG_USB_GADGET_MSM_72K)
+	&msm_device_gadget_peripheral,
+#endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 	&usb_mass_storage_device,
 #endif
@@ -1464,7 +1479,9 @@ void morrison_setup(void)
     }
 
     if(!model_set) {
+#ifdef CONFIG_USB_FUNCTION
         msm_hsusb_pdata.product_name = "MB200";
+#endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
         mass_storage_pdata.product = "MB200";
 #endif
@@ -1515,7 +1532,9 @@ void motus_setup(void)
     }
 
     if(!model_set) {
+#ifdef CONFIG_USB_FUNCTION
         msm_hsusb_pdata.product_name = "MB300";
+#endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
         mass_storage_pdata.product = "MB300";
 #endif
@@ -1560,7 +1579,9 @@ void zeppelin_setup(void)
     mot_adp5588_device.name = "adp5588_zeppelin";
 
     if(!model_set) {
+#ifdef CONFIG_USB_FUNCTION
         msm_hsusb_pdata.product_name = "Zeppelin";    
+#endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
         mass_storage_pdata.product = "Zeppelin";
 #endif
@@ -1697,10 +1718,15 @@ static void __init mot_init(void)
 	vendor1 = smem_alloc(SMEM_ID_VENDOR1, sizeof(smem_mot_vendor1_type));
 	secure_hw = vendor1 ? vendor1->security_on : 1;
 
+#ifdef CONFIG_USB_FUNCTION
 	msm_hsusb_pdata.soc_version = socinfo_get_version();
+	msm_device_hsusb_peripheral.dev.platform_data = &msm_hsusb_pdata;
+#endif
 	msm_acpu_clock_init(&mot_clock_data);
 	msm_device_uart_dm1.dev.platform_data = &msm_uart_dm1_pdata;
-	msm_device_hsusb_peripheral.dev.platform_data = &msm_hsusb_pdata;
+#ifdef CONFIG_USB_GADGET_MSM_72K
+	msm_device_gadget_peripheral.dev.platform_data = &msm_gadget_pdata;
+#endif
 
 	/* Get vreg & reset for the display */
 	vreg_slide = vreg_get(0, "gp2");
@@ -1753,7 +1779,7 @@ static void __init mot_init(void)
      */
 	mot_7x01_init_mmc();
 	mot_7x01_init_wlan();
-#ifdef CONFIG_USB_FUNCTION
+#if defined(CONFIG_USB_FUNCTION) || defined(CONFIG_USB_GADGET_MSM_72K)
 	hsusb_gpio_init();
 #endif
 	bt_power_init();
@@ -1763,7 +1789,7 @@ static void __init mot_init(void)
 	msm_pm_set_platform_data(msm_pm_data);
 
 	get_mot_battery_info(&batt_info);
-#ifdef CONFIG_USB_FUNCTION
+#if defined(CONFIG_USB_FUNCTION)
 	if (batt_info.factory_cable || mfg_mode) {
         if(machine_is_morrison())
             msm_hsusb_pdata.product_id = 0x2d65;
@@ -1998,7 +2024,9 @@ static int __init board_model_setup(char *model)
 	else
 		return -1;
 
+#ifdef CONFIG_USB_FUNCTION
 	msm_hsusb_pdata.product_name = str;
+#endif
 #ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 	mass_storage_pdata.product = str;
 #endif
