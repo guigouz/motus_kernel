@@ -76,7 +76,6 @@ extern int cap_task_prctl(int option, unsigned long arg2, unsigned long arg3,
 extern int cap_task_setscheduler(struct task_struct *p, int policy, struct sched_param *lp);
 extern int cap_task_setioprio(struct task_struct *p, int ioprio);
 extern int cap_task_setnice(struct task_struct *p, int nice);
-extern int cap_syslog(int type);
 extern int cap_vm_enough_memory(struct mm_struct *mm, long pages);
 
 struct msghdr;
@@ -2017,7 +2016,7 @@ static inline int security_quota_on(struct dentry *dentry)
 
 static inline int security_syslog(int type)
 {
-	return cap_syslog(type);
+	return 0;
 }
 
 static inline int security_settime(const struct timespec *ts,

@@ -43,7 +43,6 @@ static int cap_binder_transfer_file(struct task_struct *from, struct task_struct
 }
 
 static int cap_syslog(int type)
->>>>>>> 59bc192... Add permission checking for binder IPC.
 {
 	return 0;
 }
