@@ -2077,19 +2077,11 @@ static inline void check_class_changed(struct rq *rq, struct task_struct *p,
  */
 void kthread_bind(struct task_struct *p, unsigned int cpu)
 {
-#ifdef CONFIG_MACH_MOT
-	if (p->state != TASK_UNINTERRUPTIBLE) {
-		WARN_ON(1);
-		return;
-	}
-	wait_task_inactive(p, 0);
-#else
 	/* Must have done schedule() in kthread() before we set_task_cpu */
 	if (!wait_task_inactive(p, TASK_UNINTERRUPTIBLE)) {
 		WARN_ON(1);
 		return;
 	}
-#endif
 
 	p->cpus_allowed = cpumask_of_cpu(cpu);
 	p->rt.nr_cpus_allowed = 1;
@@ -2572,7 +2564,7 @@ out:
 
 int wake_up_process(struct task_struct *p)
 {
-	WARN_ON(task_is_stopped_or_traced(p));
+	/*WARN_ON(task_is_stopped_or_traced(p));*/
 	return try_to_wake_up(p, TASK_NORMAL, 0);
 }
 EXPORT_SYMBOL(wake_up_process);
