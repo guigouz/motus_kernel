@@ -18,6 +18,7 @@
  * GNU General Public License for more details.
  *
  */
+#include <linux/clk.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
@@ -44,6 +45,7 @@
 
 #include <asm/mach/mmc.h>
 #include <mach/vreg.h>
+#include <mach/clk.h>
 #include <mach/mpp.h>
 #include <mach/irqs.h>
 #include <mach/gpio.h>
@@ -53,7 +55,6 @@
 #include <mach/irqs-7xxx.h>
 #include <mach/msm_hsusb.h>
 #include <mach/msm_battery.h>
-#include <mach/vreg.h>
 #include "proc_comm.h"
 #include <mach/msm_rpcrouter.h>
 #include <mach/msm_fb.h>
@@ -1061,9 +1062,29 @@ static int mot_sdcc_wifi_status_notify_register(void (*notify_callback)(int card
     return 0;
 }
 
+static void mot_sdcc_clk_reset(struct clk *clk)
+{
+	int ret;
+
+	ret = clk_reset(clk, CLK_RESET_ASSERT);
+	if (ret)
+		pr_err("sdcc clock assert failed at %lu Hz with err %d\n",
+			clk_get_rate(clk), ret);
+
+	ret = clk_reset(clk, CLK_RESET_DEASSERT);
+	if (ret)
+		pr_err("sdcc clock deassert failed at %lu Hz with err %d\n",
+			clk_get_rate(clk), ret);
+}
+
 static struct mmc_platform_data mot_7x01_sdcc1_data = {
 	.ocr_mask	= MMC_VDD_28_29,
 	.translate_vdd	= msm_sdcc1_setup_power,
+	.mmc_bus_width	= MMC_CAP_4_BIT_DATA,
+	.msmsdcc_fmin	= 144000,
+	.msmsdcc_fmid	= 25000000,
+	.msmsdcc_fmax	= 49152000,
+	.clk_reset	= mot_sdcc_clk_reset,
 #ifdef CONFIG_MMC_MSM_CARD_HW_DETECTION
 	.status         = mot_7x01_sdcc_slot1_status,
 #endif
@@ -1073,6 +1094,11 @@ static struct mmc_platform_data mot_7x01_sdcc1_data = {
 static struct mmc_platform_data mot_7x01_sdcc2_data = {
 	.ocr_mask	= MMC_VDD_28_29,
 	.translate_vdd  = msm_sdcc2_setup_power,
+	.mmc_bus_width	= MMC_CAP_4_BIT_DATA,
+	.msmsdcc_fmin	= 144000,
+	.msmsdcc_fmid	= 25000000,
+	.msmsdcc_fmax	= 49152000,
+	.clk_reset	= mot_sdcc_clk_reset,
 #ifdef CONFIG_MMC_MSM_CARD_HW_DETECTION
 	.status         = mot_7x01_sdcc_slot2_status,
 	.register_status_notify    = mot_sdcc_wifi_status_notify_register,

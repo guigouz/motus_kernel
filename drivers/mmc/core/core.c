@@ -23,7 +23,6 @@
 #include <linux/log2.h>
 #include <linux/regulator/consumer.h>
 #include <linux/wakelock.h>
-#include <linux/regulator/consumer.h>
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
@@ -533,9 +532,12 @@ void mmc_host_deeper_disable(struct work_struct *work)
 
 	/* If the host is claimed then we do not want to disable it anymore */
 	if (!mmc_try_claim_host(host))
-		return;
+		goto out;
 	mmc_host_do_disable(host, 1);
 	mmc_do_release_host(host);
+
+out:
+       wake_unlock(&mmc_delayed_work_wake_lock);
 }
 
 /**
@@ -898,9 +900,9 @@ static void mmc_power_up(struct mmc_host *host)
 	if (host->f_min > 400000) {
 		pr_warning("%s: Minimum clock frequency too high for "
 				"identification mode\n", mmc_hostname(host));
-		host->ios.clock = host->f_min;
-	} else
 		host->ios.clock = 400000;
+	} else
+		host->ios.clock = host->f_min;
 
 	host->ios.power_mode = MMC_POWER_ON;
 	mmc_set_ios(host);
@@ -1088,6 +1090,12 @@ void mmc_rescan(struct work_struct *work)
 	if ((host->bus_ops != NULL) && host->bus_ops->detect && !host->bus_dead)
 		host->bus_ops->detect(host);
 
+	/* If the card was removed the bus will be marked
+	 * as dead - extend the wakelock so userspace
+	 * can respond */
+	if (host->bus_dead)
+		extend_wakelock = 1;
+
 	mmc_bus_put(host);
 
 
@@ -1124,6 +1132,7 @@ void mmc_rescan(struct work_struct *work)
 	if (!err) {
 		if (mmc_attach_sdio(host, ocr))
 			mmc_power_off(host);
+		extend_wakelock = 1;
 		goto out;
 	}
 
@@ -1134,6 +1143,7 @@ void mmc_rescan(struct work_struct *work)
 	if (!err) {
 		if (mmc_attach_sd(host, ocr))
 			mmc_power_off(host);
+		extend_wakelock = 1;
 		goto out;
 	}
 
@@ -1144,6 +1154,7 @@ void mmc_rescan(struct work_struct *work)
 	if (!err) {
 		if (mmc_attach_mmc(host, ocr))
 			mmc_power_off(host);
+		extend_wakelock = 1;
 		goto out;
 	}
 
@@ -1335,14 +1346,19 @@ int mmc_resume_host(struct mmc_host *host)
 	}
 	mmc_bus_put(host);
 
+	/*
+	 * We add a slight delay here so that resume can progress
+	 * in parallel.
+	 */
+	mmc_detect_change(host, 1);
 	return err;
 }
 EXPORT_SYMBOL(mmc_resume_host);
 
 /* Do the card removal on suspend if card is assumed removeable
  * Do that in pm notifier while userspace isn't yet frozen, so we will be able
-   to sync the card.
-*/
+ * to sync the card.
+ */
 int mmc_pm_notify(struct notifier_block *notify_block,
 					unsigned long mode, void *unused)
 {

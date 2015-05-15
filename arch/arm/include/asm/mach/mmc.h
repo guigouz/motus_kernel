@@ -15,6 +15,8 @@ struct embedded_sdio_data {
         int num_funcs;
 };
 
+struct clk;
+
 struct mmc_platform_data {
 	unsigned int ocr_mask;			/* available voltages */
 	u32 (*translate_vdd)(struct device *, unsigned int);
@@ -27,9 +29,12 @@ struct mmc_platform_data {
         unsigned long mmc_bus_width;
         int (*wpswitch) (struct device *);
 	int dummy52_required;
+#if defined(CONFIG_MMC_MSM)
 	unsigned int msmsdcc_fmin;
 	unsigned int msmsdcc_fmid;
 	unsigned int msmsdcc_fmax;
+	void (*clk_reset)(struct clk *);
+#endif
 	bool nonremovable;
 };
 

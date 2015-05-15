@@ -90,6 +90,18 @@ int clk_enable(struct clk *clk)
 }
 EXPORT_SYMBOL(clk_enable);
 
+int clk_reset(struct clk *clk, enum clk_reset_action action)
+{
+	int ret = -EPERM;
+
+	if (clk->ops->reset != NULL)
+		ret = clk->ops->reset(clk->id, action);
+	if (ret == -EPERM && clk_ops_pcom.reset != NULL)
+		ret = clk_ops_pcom.reset(clk->id, action);
+
+	return ret;
+}
+
 void clk_disable(struct clk *clk)
 {
 	unsigned long flags;
