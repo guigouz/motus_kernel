@@ -532,20 +532,17 @@ asmlinkage int arm_syscall(int no, struct pt_regs *regs)
 
 	case NR(set_tls):
 		thread->tp_value = regs->ARM_r0;
-		if (tls_emu)
-			return 0;
 		if (has_tls_reg) {
 			asm ("mcr p15, 0, %0, c13, c0, 3"
 				: : "r" (regs->ARM_r0));
-		} /* else */ {
-			/*
-			 * User space must never try to access this directly.
-			 * Expect your app to break eventually if you do so.
-			 * The user helper at 0xffff0fe0 must be used instead.
-			 * (see entry-armv.S for details)
-			 */
-			*((unsigned int *)0xffff0ff0) = regs->ARM_r0;
 		}
+		/*
+		 * User space must never try to access this directly.
+		 * Expect your app to break eventually if you do so.
+		 * The user helper at 0xffff0fe0 must be used instead.
+		 * (see entry-armv.S for details)
+		 */
+		*((unsigned int *)0xffff0ff0) = regs->ARM_r0;
 		return 0;
 
 #ifdef CONFIG_NEEDS_SYSCALL_FOR_CMPXCHG
