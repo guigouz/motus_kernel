@@ -22,7 +22,11 @@ endif
 	endif
 endif
 
+ifndef CONFIG_ARCH_MSM_ARM11
 obj-y += acpuclock.o
+else
+obj-y += acpuclock-arm11_oc.o
+endif
 obj-$(CONFIG_ARCH_MSM_KRAIT) += acpuclock-krait.o
 obj-$(CONFIG_ARCH_MSM7X27) += acpuclock-7627.o clock-pll.o
 obj-$(CONFIG_ARCH_MSM_SCORPION) += pmu.o
@@ -168,6 +172,7 @@ obj-$(CONFIG_PM) += pm-boot.o
 obj-$(CONFIG_MSM_PM8X60) += pm-8x60.o pm-data.o
 obj-$(CONFIG_MSM_IDLE_STATS) += pm-stats.o
 obj-$(CONFIG_MSM_PM2) += pm2.o
+obj-$(CONFIG_MSM_PM) += pm.o
 obj-$(CONFIG_MSM_NOPM) += no-pm.o
 
 obj-$(CONFIG_MSM_PCIE) += pcie.o pcie_irq.o
@@ -175,10 +180,18 @@ obj-$(CONFIG_MSM_PCIE) += pcie.o pcie_irq.o
 obj-$(CONFIG_MSM_SPM_V1) += spm.o
 obj-$(CONFIG_MSM_SPM_V2) += spm-v2.o spm_devices.o
 
+obj-$(CONFIG_ARCH_MSM_ARM11) += vboost.o
+
 obj-$(CONFIG_MSM_DMA_TEST) += dma_test.o
 obj-$(CONFIG_SURF_FFA_GPIO_KEYPAD) += keypad-surf-ffa.o
 
-obj-$(CONFIG_ARCH_MSM7X01A) += board-halibut.o devices-msm7x01a.o clock-pcom-lookup.o
+obj-$(CONFIG_ARCH_MSM7X01A) += devices-msm7x00.o clock-pcom-lookup.o
+obj-$(CONFIG_MACH_HALIBUT) += board-halibut.o
+obj-$(CONFIG_MACH_MOT) += board-mot-7x01a.o board-mot-akm.o board-mot-battery.o board-mot-keypad.o board-mot-misc.o board-mot-switch.o board-mot-vibrator.o
+ifdef CONFIG_MACH_MOT
+obj-$(CONFIG_PUPD) += powerup_info.o
+endif
+
 obj-$(CONFIG_MACH_TROUT) += board-trout.o board-trout-gpio.o
 obj-$(CONFIG_MACH_TROUT) += board-trout-keypad.o board-trout-panel.o
 obj-$(CONFIG_MACH_TROUT) += htc_akm_cal.o htc_wifi_nvs.o htc_acoustic.o
