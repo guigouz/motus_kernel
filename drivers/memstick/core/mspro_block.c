@@ -735,7 +735,7 @@ static int mspro_block_complete_req(struct memstick_dev *card, int error)
 
 		if (error || (card->current_mrq.tpc == MSPRO_CMD_STOP)) {
 			if (msb->data_dir == READ) {
-				for (cnt = 0; cnt < msb->current_seg; cnt++)
+				for (cnt = 0; cnt < msb->current_seg; cnt++) {
 					t_len += msb->req_sg[cnt].length
 						 / msb->page_size;
 
@@ -743,6 +743,7 @@ static int mspro_block_complete_req(struct memstick_dev *card, int error)
 						t_len += msb->current_page - 1;
 
 					t_len *= msb->page_size;
+				}
 			}
 		} else
 			t_len = msb->block_req->nr_sectors << 9;
