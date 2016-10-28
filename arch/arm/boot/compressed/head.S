@@ -600,6 +600,8 @@ __common_mmu_cache_on:
 
 #define PROC_ENTRY_SIZE (4*5)
 
+#define PROC_ENTRY_SIZE (4*5)
+
 /*
  * Here follow the relocatable cache support functions for the
  * various processors.  This is a generic hook for locating an
@@ -796,6 +798,16 @@ proc_types:
  THUMB(		nop				)
 
 		.size	proc_types, . - proc_types
+
+		/*
+		 * If you get a "non-constant expression in ".if" statement"
+		 * error from the assembler on this line, check that you have
+		 * not accidentally written a "b" instruction where you should
+		 * have written W(b).
+		 */
+		.if (. - proc_types) % PROC_ENTRY_SIZE != 0
+		.error "The size of one or more proc_types entries is wrong."
+		.endif
 
 		/*
 		 * If you get a "non-constant expression in ".if" statement"
