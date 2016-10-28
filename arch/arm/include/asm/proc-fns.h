@@ -209,13 +209,14 @@
 #   define CPU_NAME cpu_feroceon
 #  endif
 # endif
-# ifdef CONFIG_CPU_V6
-#  ifdef CPU_NAME
-#   undef  MULTI_CPU
-#   define MULTI_CPU
-#  else
-#   define CPU_NAME cpu_v6
-#  endif
+#endif
+
+#if defined(CONFIG_CPU_V6) || defined(CONFIG_CPU_V6K)
+# ifdef CPU_NAME
+#  undef  MULTI_CPU
+#  define MULTI_CPU
+# else
+#  define CPU_NAME cpu_v6
 # endif
 # ifdef CONFIG_CPU_V7
 #  ifdef CPU_NAME

@@ -21,6 +21,14 @@ config ARM
 	select HAVE_KERNEL_GZIP
 	select HAVE_KERNEL_BZIP2
 	select HAVE_KERNEL_LZMA
+	select HAVE_IRQ_WORK
+	select HAVE_PERF_EVENTS
+	select PERF_USE_VMALLOC
+	select HAVE_REGS_AND_STACK_ACCESS_API
+	select HAVE_HW_BREAKPOINT if (PERF_EVENTS && (CPU_V6 || CPU_V6K || CPU_V7))
+	select HAVE_C_RECORDMCOUNT
+	select HAVE_GENERIC_HARDIRQS
+	select HAVE_SPARSE_IRQ
 	help
 	  The ARM series is a line of low-power-consumption RISC chip designs
 	  licensed by ARM Ltd and targeted at embedded applications and
@@ -873,6 +881,17 @@ config XSCALE_PMU
 	depends on CPU_XSCALE && !XSCALE_PMU_TIMER
 	default y
 
+config CPU_HAS_PMU
+	depends on (CPU_V6 || CPU_V6K || CPU_V7 || XSCALE_PMU) && \
+		   (!ARCH_OMAP3 || OMAP3_EMU)
+	default y
+	bool
+
+config MULTI_IRQ_HANDLER
+	bool
+	help
+	  Allow each machine to specify it's own IRQ handler at run time.
+
 if !MMU
 source "arch/arm/Kconfig-nommu"
 endif
@@ -881,7 +900,7 @@ comment "errata"
 
 config ARM_ERRATA_411920
 	bool "ARM errata: Invalidation of the Instruction Cache operation can fail"
-	depends on CPU_V6 && !SMP
+	depends on CPU_V6 || CPU_V6K
 	help
 	  Invalidation of the Instruction Cache operation can
 	  fail. This erratum is present in 1136 (before r1p4), 1156 and 1176.
@@ -1100,8 +1119,8 @@ config HZ
 	default 100
 
 config THUMB2_KERNEL
-	bool "Compile the kernel in Thumb-2 mode"
-	depends on CPU_V7 && EXPERIMENTAL
+	bool "Compile the kernel in Thumb-2 mode (EXPERIMENTAL)"
+	depends on CPU_V7 && !CPU_V6 && !CPU_V6K && EXPERIMENTAL
 	select AEABI
 	select ARM_ASM_UNIFIED
 	help
@@ -1550,7 +1569,7 @@ config FPE_FASTFPE
 
 config VFP
 	bool "VFP-format floating point maths"
-	depends on CPU_V6 || CPU_ARM926T || CPU_V7 || CPU_FEROCEON
+	depends on CPU_V6 || CPU_V6K || CPU_ARM926T || CPU_V7 || CPU_FEROCEON
 	help
 	  Say Y to include VFP support code in the kernel. This is needed
 	  if your hardware includes a VFP unit.

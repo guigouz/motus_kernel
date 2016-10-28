@@ -400,16 +400,18 @@ config CPU_V6
 	select CPU_TLB_V6 if MMU
 
 # ARMv6k
-config CPU_32v6K
-	bool "Support ARM V6K processor extensions" if !SMP
-	depends on CPU_V6
-	default y if SMP && !ARCH_MX3
-	help
-	  Say Y here if your ARMv6 processor supports the 'K' extension.
-	  This enables the kernel to use some instructions not present
-	  on previous processors, and as such a kernel build with this
-	  enabled will not boot on processors with do not support these
-	  instructions.
+config CPU_V6K
+	bool "Support ARM V6K processor" if ARCH_INTEGRATOR || MACH_REALVIEW_EB || MACH_REALVIEW_PBX || ARCH_DOVE
+	select CPU_32v6
+	select CPU_32v6K if !ARCH_OMAP2
+	select CPU_ABRT_EV6
+	select CPU_PABRT_V6
+	select CPU_CACHE_V6
+	select CPU_CACHE_VIPT
+	select CPU_CP15_MMU
+	select CPU_HAS_ASID if MMU
+	select CPU_COPY_V6 if MMU
+	select CPU_TLB_V6 if MMU
 
 # ARMv7
 config CPU_V7
@@ -450,6 +452,17 @@ config CPU_32v5
 config CPU_32v6
 	bool
 	select TLS_REG_EMUL if !CPU_32v6K && !MMU
+
+config CPU_32v6K
+	bool "Support ARM V6K processor extensions" if !SMP
+	depends on CPU_V6 || CPU_V6K || CPU_V7
+	default y if SMP && !(ARCH_MX3 || ARCH_OMAP2)
+	help
+	  Say Y here if your ARMv6 processor supports the 'K' extension.
+	  This enables the kernel to use some instructions not present
+	  on previous processors, and as such a kernel build with this
+	  enabled will not boot on processors with do not support these
+	  instructions.
 
 config CPU_32v7
 	bool
@@ -617,7 +630,7 @@ comment "Processor Features"
 
 config ARM_THUMB
 	bool "Support Thumb user binaries"
-	depends on CPU_ARM720T || CPU_ARM740T || CPU_ARM920T || CPU_ARM922T || CPU_ARM925T || CPU_ARM926T || CPU_ARM940T || CPU_ARM946E || CPU_ARM1020 || CPU_ARM1020E || CPU_ARM1022 || CPU_ARM1026 || CPU_XSCALE || CPU_XSC3 || CPU_MOHAWK || CPU_V6 || CPU_V7 || CPU_FEROCEON
+	depends on CPU_ARM720T || CPU_ARM740T || CPU_ARM920T || CPU_ARM922T || CPU_ARM925T || CPU_ARM926T || CPU_ARM940T || CPU_ARM946E || CPU_ARM1020 || CPU_ARM1020E || CPU_ARM1022 || CPU_ARM1026 || CPU_XSCALE || CPU_XSC3 || CPU_MOHAWK || CPU_V6 || CPU_V6K || CPU_V7 || CPU_FEROCEON
 	default y
 	help
 	  Say Y if you want to include kernel support for running user space
@@ -648,7 +661,7 @@ config CPU_BIG_ENDIAN
 config CPU_ENDIAN_BE8
 	bool
 	depends on CPU_BIG_ENDIAN
-	default CPU_V6 || CPU_V7
+	default CPU_V6 || CPU_V6K || CPU_V7
 	help
 	  Support for the BE-8 (big-endian) mode on ARMv6 and ARMv7 processors.
 
@@ -722,7 +735,7 @@ config CPU_CACHE_ROUND_ROBIN
 
 config CPU_BPREDICT_DISABLE
 	bool "Disable branch prediction"
-	depends on CPU_ARM1020 || CPU_V6 || CPU_MOHAWK || CPU_XSC3 || CPU_V7 || CPU_FA526
+	depends on CPU_ARM1020 || CPU_V6 || CPU_V6K || CPU_MOHAWK || CPU_XSC3 || CPU_V7 || CPU_FA526
 	help
 	  Say Y here to disable branch prediction.  If unsure, say N.
 
@@ -739,6 +752,25 @@ config NEEDS_SYSCALL_FOR_CMPXCHG
 	  SMP on a pre-ARMv6 processor?  Well OK then.
 	  Forget about fast user space cmpxchg support.
 	  It is just not possible.
+
+config DMA_CACHE_RWFO
+	bool "Enable read/write for ownership DMA cache maintenance"
+	depends on (CPU_V6 || CPU_V6K) && SMP
+	default y
+	help
+	  The Snoop Control Unit on ARM11MPCore does not detect the
+	  cache maintenance operations and the dma_{map,unmap}_area()
+	  functions may leave stale cache entries on other CPUs. By
+	  enabling this option, Read or Write For Ownership in the ARMv6
+	  DMA cache maintenance functions is performed. These LDR/STR
+	  instructions change the cache line state to shared or modified
+	  so that the cache operation has the desired effect.
+
+	  Note that the workaround is only valid on processors that do
+	  not perform speculative loads into the D-cache. For such
+	  processors, if cache maintenance operations are not broadcast
+	  in hardware, other workarounds are needed (e.g. cache
+	  maintenance broadcasting in software via FIQ).
 
 config OUTER_CACHE
 	bool
@@ -769,6 +801,23 @@ config CACHE_L2X0
 	help
 	  This option enables the L2x0 PrimeCell.
 
+config CACHE_PL310
+	bool
+	depends on CACHE_L2X0
+	default y if CPU_V7 && !(CPU_V6 || CPU_V6K)
+	help
+	  This option enables optimisations for the PL310 cache
+	  controller.
+
+config CACHE_TAUROS2
+	bool "Enable the Tauros2 L2 cache controller"
+	depends on (ARCH_DOVE || ARCH_MMP || CPU_PJ4)
+	default y
+	select OUTER_CACHE
+	help
+	  This option enables the Tauros2 L2 cache controller (as
+	  found on PJ1/PJ4).
+
 config CACHE_XSC3L2
 	bool "Enable the L2 cache on XScale3"
 	depends on CPU_XSC3
@@ -781,3 +830,30 @@ config ARM_L1_CACHE_SHIFT
 	int
 	default 6 if ARCH_OMAP3
 	default 5
+
+config ARM_DMA_MEM_BUFFERABLE
+	bool "Use non-cacheable memory for DMA" if (CPU_V6 || CPU_V6K) && !CPU_V7
+	depends on !(MACH_REALVIEW_PB1176 || REALVIEW_EB_ARM11MP || \
+		     MACH_REALVIEW_PB11MP)
+	default y if CPU_V6 || CPU_V6K || CPU_V7
+	help
+	  Historically, the kernel has used strongly ordered mappings to
+	  provide DMA coherent memory.  With the advent of ARMv7, mapping
+	  memory with differing types results in unpredictable behaviour,
+	  so on these CPUs, this option is forced on.
+
+	  Multiple mappings with differing attributes is also unpredictable
+	  on ARMv6 CPUs, but since they do not have aggressive speculative
+	  prefetch, no harm appears to occur.
+
+	  However, drivers may be missing the necessary barriers for ARMv6,
+	  and therefore turning this on may result in unpredictable driver
+	  behaviour.  Therefore, we offer this as an option.
+
+	  You are recommended say 'Y' here and debug any affected drivers.
+
+config ARCH_HAS_BARRIERS
+	bool
+	help
+	  This option allows the use of custom mandatory barriers
+	  included via the mach/barriers.h file.
