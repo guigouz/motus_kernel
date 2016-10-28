@@ -15,6 +15,17 @@ OBJS		+= mmcif-sh7372.o
 endif
 endif
 
+OBJS		=
+
+# Ensure that mmcif loader code appears early in the image
+# to minimise that number of bocks that have to be read in
+# order to load it.
+ifeq ($(CONFIG_ZBOOT_ROM_MMCIF),y)
+ifeq ($(CONFIG_ARCH_SH7372),y)
+OBJS		+= mmcif-sh7372.o
+endif
+endif
+
 AFLAGS_head.o += -DTEXT_OFFSET=$(TEXT_OFFSET)
 HEAD	= head.o
 OBJS	+= misc.o decompress.o
@@ -39,6 +50,10 @@ endif
 
 ifeq ($(CONFIG_ARCH_SA1100),y)
 OBJS		+= head-sa1100.o
+endif
+
+ifeq ($(CONFIG_ARCH_VT8500),y)
+OBJS		+= head-vt8500.o
 endif
 
 ifeq ($(CONFIG_ARCH_VT8500),y)
