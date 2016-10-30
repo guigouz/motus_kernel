@@ -314,6 +314,104 @@ restart:	adr	r0, LC0
 dtb_check_done:
 #endif
 
+		mov	r5, #0			@ init dtb size to 0
+#ifdef CONFIG_ARM_APPENDED_DTB
+/*
+ *   r0  = delta
+ *   r2  = BSS start
+ *   r3  = BSS end
+ *   r4  = final kernel address
+ *   r5  = appended dtb size (still unknown)
+ *   r6  = _edata
+ *   r7  = architecture ID
+ *   r8  = atags/device tree pointer
+ *   r9  = size of decompressed image
+ *   r10 = end of this image, including  bss/stack/malloc space if non XIP
+ *   r11 = GOT start
+ *   r12 = GOT end
+ *   sp  = stack pointer
+ *
+ * if there are device trees (dtb) appended to zImage, advance r10 so that the
+ * dtb data will get relocated along with the kernel if necessary.
+ */
+
+		ldr	lr, [r6, #0]
+#ifndef __ARMEB__
+		ldr	r1, =0xedfe0dd0		@ sig is 0xd00dfeed big endian
+#else
+		ldr	r1, =0xd00dfeed
+#endif
+		cmp	lr, r1
+		bne	dtb_check_done		@ not found
+
+#ifdef CONFIG_ARM_ATAG_DTB_COMPAT
+		/*
+		 * OK... Let's do some funky business here.
+		 * If we do have a DTB appended to zImage, and we do have
+		 * an ATAG list around, we want the later to be translated
+		 * and folded into the former here.  To be on the safe side,
+		 * let's temporarily move  the stack away into the malloc
+		 * area.  No GOT fixup has occurred yet, but none of the
+		 * code we're about to call uses any global variable.
+		*/
+		add	sp, sp, #0x10000
+		stmfd	sp!, {r0-r3, ip, lr}
+		mov	r0, r8
+		mov	r1, r6
+		sub	r2, sp, r6
+		bl	atags_to_fdt
+
+		/*
+		 * If returned value is 1, there is no ATAG at the location
+		 * pointed by r8.  Try the typical 0x100 offset from start
+		 * of RAM and hope for the best.
+		 */
+		cmp	r0, #1
+		sub	r0, r4, #TEXT_OFFSET
+		add	r0, r0, #0x100
+		mov	r1, r6
+		sub	r2, sp, r6
+		blne	atags_to_fdt
+
+		ldmfd	sp!, {r0-r3, ip, lr}
+		sub	sp, sp, #0x10000
+#endif
+
+		mov	r8, r6			@ use the appended device tree
+
+		/*
+		 * Make sure that the DTB doesn't end up in the final
+		 * kernel's .bss area. To do so, we adjust the decompressed
+		 * kernel size to compensate if that .bss size is larger
+		 * than the relocated code.
+		 */
+		ldr	r5, =_kernel_bss_size
+		adr	r1, wont_overwrite
+		sub	r1, r6, r1
+		subs	r1, r5, r1
+		addhi	r9, r9, r1
+
+		/* Get the dtb's size */
+		ldr	r5, [r6, #4]
+#ifndef __ARMEB__
+		/* convert r5 (dtb size) to little endian */
+		eor	r1, r5, r5, ror #16
+		bic	r1, r1, #0x00ff0000
+		mov	r5, r5, ror #8
+		eor	r5, r5, r1, lsr #8
+#endif
+
+		/* preserve 64-bit alignment */
+		add	r5, r5, #7
+		bic	r5, r5, #7
+
+		/* relocate some pointers past the appended dtb */
+		add	r6, r6, r5
+		add	r10, r10, r5
+		add	sp, sp, r5
+dtb_check_done:
+#endif
+
 /*
  * Check to see if we will overwrite ourselves.
  *   r4  = final kernel address
