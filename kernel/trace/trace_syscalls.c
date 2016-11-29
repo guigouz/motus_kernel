@@ -193,8 +193,8 @@ int syscall_enter_define_fields(struct ftrace_event_call *call)
 		return ret;
 
 	for (i = 0; i < meta->nb_args; i++) {
-		ret = trace_define_field(call, (char *)meta->types[i],
-					 (char *)meta->args[i], offset,
+		ret = trace_define_field(call, meta->types[i],
+					 meta->args[i], offset,
 					 sizeof(unsigned long), 0,
 					 FILTER_OTHER);
 		offset += sizeof(unsigned long);
@@ -332,7 +332,7 @@ int reg_event_syscall_exit(struct ftrace_event_call *call)
 	int num;
 	char *name;
 
-	name = (char *)call->data;
+	name = call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return -ENOSYS;
@@ -355,7 +355,7 @@ void unreg_event_syscall_exit(struct ftrace_event_call *call)
 	int num;
 	char *name;
 
-	name = (char *)call->data;
+	name = call->data;
 	num = syscall_name_to_nr(name);
 	if (num < 0 || num >= NR_syscalls)
 		return;

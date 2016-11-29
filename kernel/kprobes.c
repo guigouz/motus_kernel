@@ -90,6 +90,7 @@ static spinlock_t *kretprobe_table_lock_ptr(unsigned long hash)
  */
 static struct kprobe_blackpoint kprobe_blacklist[] = {
 	{"preempt_schedule",},
+	{"native_get_debugreg",},
 	{NULL}    /* Terminator */
 };
 
@@ -1139,6 +1140,13 @@ static void __kprobes kill_kprobe(struct kprobe *p)
 	 * the original probed function (which will be freed soon) any more.
 	 */
 	arch_remove_kprobe(p);
+}
+
+void __kprobes dump_kprobe(struct kprobe *kp)
+{
+	printk(KERN_WARNING "Dumping kprobe:\n");
+	printk(KERN_WARNING "Name: %s\nAddress: %p\nOffset: %x\n",
+	       kp->symbol_name, kp->addr, kp->offset);
 }
 
 /* Module notifier call back, checking kprobes on the module */

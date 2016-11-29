@@ -21,11 +21,6 @@
 #include <string.h>
 #include <assert.h>
 
-#ifdef __x86_64__
-#define CONFIG_X86_64
-#else
-#define CONFIG_X86_32
-#endif
 #define unlikely(cond) (cond)
 
 #include <asm/insn.h>
@@ -45,7 +40,7 @@ const char *prog;
 static void usage(void)
 {
 	fprintf(stderr, "Usage: objdump -d a.out | awk -f distill.awk |"
-		" ./test_get_len\n");
+		" %s [y|n](64bit flag)\n", prog);
 	exit(1);
 }
 
@@ -63,10 +58,14 @@ int main(int argc, char **argv)
 	unsigned char insn_buf[16];
 	struct insn insn;
 	int insns = 0;
+	int x86_64 = 0;
 
 	prog = argv[0];
-	if (argc > 1)
+	if (argc > 2)
 		usage();
+
+	if (argc == 2 && argv[1][0] == 'y')
+		x86_64 = 1;
 
 	while (fgets(line, BUFSIZE, stdin)) {
 		char copy[BUFSIZE], *s, *tab1, *tab2;
@@ -93,11 +92,7 @@ int main(int argc, char **argv)
 				break;
 		}
 		/* Decode an instruction */
-#ifdef __x86_64__
-		insn_init(&insn, insn_buf, 1);
-#else
-		insn_init(&insn, insn_buf, 0);
-#endif
+		insn_init(&insn, insn_buf, x86_64);
 		insn_get_length(&insn);
 		if (insn.length != nb) {
 			fprintf(stderr, "Error: %s", line);
