@@ -124,4 +124,7 @@ config HAVE_DMA_API_DEBUG
 config HAVE_DEFAULT_NO_SPIN_MUTEXES
 	bool
 
+config HAVE_HW_BREAKPOINT
+	bool
+
 source "kernel/gcov/Kconfig"
