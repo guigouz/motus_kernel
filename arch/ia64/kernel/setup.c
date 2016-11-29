@@ -566,19 +566,18 @@ setup_arch (char **cmdline_p)
 	early_acpi_boot_init();
 # ifdef CONFIG_ACPI_NUMA
 	acpi_numa_init();
-#ifdef CONFIG_ACPI_HOTPLUG_CPU
+#  ifdef CONFIG_ACPI_HOTPLUG_CPU
 	prefill_possible_map();
-#endif
+#  endif
 	per_cpu_scan_finalize((cpus_weight(early_cpu_possible_map) == 0 ?
 		32 : cpus_weight(early_cpu_possible_map)),
 		additional_cpus > 0 ? additional_cpus : 0);
 # endif
-#else
-# ifdef CONFIG_SMP
-	smp_build_cpu_map();	/* happens, e.g., with the Ski simulator */
-# endif
 #endif /* CONFIG_APCI_BOOT */
 
+#ifdef CONFIG_SMP
+	smp_build_cpu_map();
+#endif
 	find_memory();
 
 	/* process SAL system table: */
@@ -854,18 +853,6 @@ identify_cpu (struct cpuinfo_ia64 *c)
 	c->unimpl_va_mask = ~((7L<<61) | ((1L << (impl_va_msb + 1)) - 1));
 	c->unimpl_pa_mask = ~((1L<<63) | ((1L << phys_addr_size) - 1));
 }
-
-/*
- * In UP configuration, setup_per_cpu_areas() is defined in
- * include/linux/percpu.h
- */
-#ifdef CONFIG_SMP
-void __init
-setup_per_cpu_areas (void)
-{
-	/* start_kernel() requires this... */
-}
-#endif
 
 /*
  * Do the following calculations:
