@@ -52,11 +52,28 @@
 #define REISERFS_IOC32_GETVERSION	FS_IOC32_GETVERSION
 #define REISERFS_IOC32_SETVERSION	FS_IOC32_SETVERSION
 
-/* Locking primitives */
-/* Right now we are still falling back to (un)lock_kernel, but eventually that
-   would evolve into real per-fs locks */
-#define reiserfs_write_lock( sb ) lock_kernel()
-#define reiserfs_write_unlock( sb ) unlock_kernel()
+/*
+ * Locking primitives. The write lock is a per superblock
+ * special mutex that has properties close to the Big Kernel Lock
+ * which was used in the previous locking scheme.
+ */
+void reiserfs_write_lock(struct super_block *s);
+void reiserfs_write_unlock(struct super_block *s);
+int reiserfs_write_lock_once(struct super_block *s);
+void reiserfs_write_unlock_once(struct super_block *s, int lock_depth);
+
+/*
+ * When we schedule, we usually want to also release the write lock,
+ * according to the previous bkl based locking scheme of reiserfs.
+ */
+static inline void reiserfs_cond_resched(struct super_block *s)
+{
+	if (need_resched()) {
+		reiserfs_write_unlock(s);
+		schedule();
+		reiserfs_write_lock(s);
+	}
+}
 
 struct fid;
 
@@ -1329,7 +1346,11 @@ static inline loff_t max_reiserfs_offset(struct inode *inode)
 #define get_generation(s) atomic_read (&fs_generation(s))
 #define FILESYSTEM_CHANGED_TB(tb)  (get_generation((tb)->tb_sb) != (tb)->fs_gen)
 #define __fs_changed(gen,s) (gen != get_generation (s))
-#define fs_changed(gen,s) ({cond_resched(); __fs_changed(gen, s);})
+#define fs_changed(gen,s)		\
+({					\
+	reiserfs_cond_resched(s);	\
+	__fs_changed(gen, s);		\
+})
 
 /***************************************************************************/
 /*                  FIXATE NODES                                           */

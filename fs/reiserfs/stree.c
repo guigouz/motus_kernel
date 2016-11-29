@@ -529,6 +529,14 @@ static void search_by_key_reada(struct super_block *s,
 	for (i = 0; i < num; i++) {
 		bh[i] = sb_getblk(s, b[i]);
 	}
+	/*
+	 * We are going to read some blocks on which we
+	 * have a reference. It's safe, though we might be
+	 * reading blocks concurrently changed if we release
+	 * the lock. But it's still fine because we check later
+	 * if the tree changed
+	 */
+	reiserfs_write_unlock(s);
 	for (j = 0; j < i; j++) {
 		/*
 		 * note, this needs attention if we are getting rid of the BKL
@@ -626,10 +634,14 @@ int search_by_key(struct super_block *sb, const struct cpu_key *key,	/* Key to s
 		if ((bh = last_element->pe_buffer =
 		     sb_getblk(sb, block_number))) {
 			if (!buffer_uptodate(bh) && reada_count > 1)
+				/* will unlock the write lock */
 				search_by_key_reada(sb, reada_bh,
 						    reada_blocks, reada_count);
+			else
+				reiserfs_write_unlock(sb);
 			ll_rw_block(READ, 1, &bh);
 			wait_on_buffer(bh);
+			reiserfs_write_lock(sb);
 			if (!buffer_uptodate(bh))
 				goto io_error;
 		} else {
@@ -1024,7 +1036,9 @@ static char prepare_for_delete_or_cut(struct reiserfs_transaction_handle *th, st
 			reiserfs_free_block(th, inode, block, 1);
 		    }
 
+		    reiserfs_write_unlock(sb);
 		    cond_resched();
+		    reiserfs_write_lock(sb);
 
 		    if (item_moved (&s_ih, path))  {
 			need_re_search = 1;
