@@ -109,17 +109,12 @@ struct syscall_trace_exit {
 #define KSYM_SELFTEST_ENTRY "ksym_selftest_dummy"
 extern int process_new_ksym_entry(char *ksymname, int op, unsigned long addr);
 
-struct trace_ksym {
+struct ksym_trace_entry {
 	struct trace_entry	ent;
-	struct hw_breakpoint	*ksym_hbp;
-	unsigned long		ksym_addr;
 	unsigned long		ip;
-#ifdef CONFIG_PROFILE_KSYM_TRACER
-	unsigned long		counter;
-#endif
-	struct hlist_node	ksym_hlist;
+	unsigned char		type;
 	char			ksym_name[KSYM_NAME_LEN];
-	char			p_name[TASK_COMM_LEN];
+	char			cmd[TASK_COMM_LEN];
 };
 
 /*
@@ -230,19 +225,12 @@ extern void __ftrace_bad_type(void);
 			  TRACE_KMEM_ALLOC);	\
 		IF_ASSIGN(var, ent, struct kmemtrace_free_entry,	\
 			  TRACE_KMEM_FREE);	\
-<<<<<<< HEAD
-||||||| parent of 0722db0... hw-breakpoints: ftrace plugin for kernel symbol tracing using HW Breakpoint interfaces
-		IF_ASSIGN(var, ent, struct syscall_trace_enter,		\
-			  TRACE_SYSCALL_ENTER);				\
-		IF_ASSIGN(var, ent, struct syscall_trace_exit,		\
-			  TRACE_SYSCALL_EXIT);				\
-=======
 		IF_ASSIGN(var, ent, struct syscall_trace_enter,		\
 			  TRACE_SYSCALL_ENTER);				\
 		IF_ASSIGN(var, ent, struct syscall_trace_exit,		\
 			  TRACE_SYSCALL_EXIT);				\
 		IF_ASSIGN(var, ent, struct trace_ksym, TRACE_KSYM);	\
->>>>>>> 0722db0... hw-breakpoints: ftrace plugin for kernel symbol tracing using HW Breakpoint interfaces
+		IF_ASSIGN(var, ent, struct ksym_trace_entry, TRACE_KSYM);\
 		__ftrace_bad_type();					\
 	} while (0)
 
