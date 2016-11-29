@@ -28,7 +28,7 @@
 #include <linux/string.h>
 #include <linux/ctype.h>
 #include <linux/ptrace.h>
-#include <linux/perf_counter.h>
+#include <linux/perf_event.h>
 
 #include "trace.h"
 #include "trace_output.h"
@@ -848,6 +848,7 @@ static __kprobes int kprobe_trace_func(struct kprobe *kp, struct pt_regs *regs)
 	struct trace_probe *tp = container_of(kp, struct trace_probe, rp.kp);
 	struct kprobe_trace_entry *entry;
 	struct ring_buffer_event *event;
+	struct ring_buffer *buffer;
 	int size, i, pc;
 	unsigned long irq_flags;
 	struct ftrace_event_call *call = &tp->call;
@@ -859,7 +860,7 @@ static __kprobes int kprobe_trace_func(struct kprobe *kp, struct pt_regs *regs)
 
 	size = SIZEOF_KPROBE_TRACE_ENTRY(tp->nr_args);
 
-	event = trace_current_buffer_lock_reserve(call->id, size,
+	event = trace_current_buffer_lock_reserve(&buffer, call->id, size,
 						  irq_flags, pc);
 	if (!event)
 		return 0;
@@ -870,8 +871,8 @@ static __kprobes int kprobe_trace_func(struct kprobe *kp, struct pt_regs *regs)
 	for (i = 0; i < tp->nr_args; i++)
 		entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
 
-	if (!filter_current_check_discard(call, entry, event))
-		trace_nowake_buffer_unlock_commit(event, irq_flags, pc);
+	if (!filter_current_check_discard(buffer, call, entry, event))
+		trace_nowake_buffer_unlock_commit(buffer, event, irq_flags, pc);
 	return 0;
 }
 
@@ -882,6 +883,7 @@ static __kprobes int kretprobe_trace_func(struct kretprobe_instance *ri,
 	struct trace_probe *tp = container_of(ri->rp, struct trace_probe, rp);
 	struct kretprobe_trace_entry *entry;
 	struct ring_buffer_event *event;
+	struct ring_buffer *buffer;
 	int size, i, pc;
 	unsigned long irq_flags;
 	struct ftrace_event_call *call = &tp->call;
@@ -891,7 +893,7 @@ static __kprobes int kretprobe_trace_func(struct kretprobe_instance *ri,
 
 	size = SIZEOF_KRETPROBE_TRACE_ENTRY(tp->nr_args);
 
-	event = trace_current_buffer_lock_reserve(call->id, size,
+	event = trace_current_buffer_lock_reserve(&buffer, call->id, size,
 						  irq_flags, pc);
 	if (!event)
 		return 0;
@@ -903,8 +905,8 @@ static __kprobes int kretprobe_trace_func(struct kretprobe_instance *ri,
 	for (i = 0; i < tp->nr_args; i++)
 		entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
 
-	if (!filter_current_check_discard(call, entry, event))
-		trace_nowake_buffer_unlock_commit(event, irq_flags, pc);
+	if (!filter_current_check_discard(buffer, call, entry, event))
+		trace_nowake_buffer_unlock_commit(buffer, event, irq_flags, pc);
 
 	return 0;
 }
@@ -1013,7 +1015,7 @@ static void probe_event_disable(struct ftrace_event_call *call)
 static int probe_event_raw_init(struct ftrace_event_call *event_call)
 {
 	INIT_LIST_HEAD(&event_call->fields);
-	init_preds(event_call);
+
 	return 0;
 }
 
@@ -1147,35 +1149,49 @@ static __kprobes int kprobe_profile_func(struct kprobe *kp,
 	struct trace_probe *tp = container_of(kp, struct trace_probe, rp.kp);
 	struct ftrace_event_call *call = &tp->call;
 	struct kprobe_trace_entry *entry;
-	int size, __size, i, pc;
+	struct trace_entry *ent;
+	int size, __size, i, pc, __cpu;
 	unsigned long irq_flags;
+	char *raw_data;
 
-	local_save_flags(irq_flags);
 	pc = preempt_count();
-
 	__size = SIZEOF_KPROBE_TRACE_ENTRY(tp->nr_args);
 	size = ALIGN(__size + sizeof(u32), sizeof(u64));
 	size -= sizeof(u32);
+	if (WARN_ONCE(size > FTRACE_MAX_PROFILE_SIZE,
+		     "profile buffer not large enough"))
+		return 0;
 
-	do {
-		char raw_data[size];
-		struct trace_entry *ent;
-		/*
-		 * Zero dead bytes from alignment to avoid stack leak
-		 * to userspace
-		 */
-		*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
-		entry = (struct kprobe_trace_entry *)raw_data;
-		ent = &entry->ent;
+	/*
+	 * Protect the non nmi buffer
+	 * This also protects the rcu read side
+	 */
+	local_irq_save(irq_flags);
+	__cpu = smp_processor_id();
 
-		tracing_generic_entry_update(ent, irq_flags, pc);
-		ent->type = call->id;
-		entry->nargs = tp->nr_args;
-		entry->ip = (unsigned long)kp->addr;
-		for (i = 0; i < tp->nr_args; i++)
-			entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
-		perf_tpcounter_event(call->id, entry->ip, 1, entry, size);
-	} while (0);
+	if (in_nmi())
+		raw_data = rcu_dereference(trace_profile_buf_nmi);
+	else
+		raw_data = rcu_dereference(trace_profile_buf);
+
+	if (!raw_data)
+		goto end;
+
+	raw_data = per_cpu_ptr(raw_data, __cpu);
+	/* Zero dead bytes from alignment to avoid buffer leak to userspace */
+	*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
+	entry = (struct kprobe_trace_entry *)raw_data;
+	ent = &entry->ent;
+
+	tracing_generic_entry_update(ent, irq_flags, pc);
+	ent->type = call->id;
+	entry->nargs = tp->nr_args;
+	entry->ip = (unsigned long)kp->addr;
+	for (i = 0; i < tp->nr_args; i++)
+		entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
+	perf_tp_event(call->id, entry->ip, 1, entry, size);
+end:
+	local_irq_restore(irq_flags);
 	return 0;
 }
 
@@ -1186,33 +1202,50 @@ static __kprobes int kretprobe_profile_func(struct kretprobe_instance *ri,
 	struct trace_probe *tp = container_of(ri->rp, struct trace_probe, rp);
 	struct ftrace_event_call *call = &tp->call;
 	struct kretprobe_trace_entry *entry;
-	int size, __size, i, pc;
+	struct trace_entry *ent;
+	int size, __size, i, pc, __cpu;
 	unsigned long irq_flags;
+	char *raw_data;
 
-	local_save_flags(irq_flags);
 	pc = preempt_count();
-
 	__size = SIZEOF_KRETPROBE_TRACE_ENTRY(tp->nr_args);
 	size = ALIGN(__size + sizeof(u32), sizeof(u64));
 	size -= sizeof(u32);
+	if (WARN_ONCE(size > FTRACE_MAX_PROFILE_SIZE,
+		     "profile buffer not large enough"))
+		return 0;
 
-	do {
-		char raw_data[size];
-		struct trace_entry *ent;
+	/*
+	 * Protect the non nmi buffer
+	 * This also protects the rcu read side
+	 */
+	local_irq_save(irq_flags);
+	__cpu = smp_processor_id();
 
-		*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
-		entry = (struct kretprobe_trace_entry *)raw_data;
-		ent = &entry->ent;
+	if (in_nmi())
+		raw_data = rcu_dereference(trace_profile_buf_nmi);
+	else
+		raw_data = rcu_dereference(trace_profile_buf);
 
-		tracing_generic_entry_update(ent, irq_flags, pc);
-		ent->type = call->id;
-		entry->nargs = tp->nr_args;
-		entry->func = (unsigned long)tp->rp.kp.addr;
-		entry->ret_ip = (unsigned long)ri->ret_addr;
-		for (i = 0; i < tp->nr_args; i++)
-			entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
-		perf_tpcounter_event(call->id, entry->ret_ip, 1, entry, size);
-	} while (0);
+	if (!raw_data)
+		goto end;
+
+	raw_data = per_cpu_ptr(raw_data, __cpu);
+	/* Zero dead bytes from alignment to avoid buffer leak to userspace */
+	*(u64 *)(&raw_data[size - sizeof(u64)]) = 0ULL;
+	entry = (struct kretprobe_trace_entry *)raw_data;
+	ent = &entry->ent;
+
+	tracing_generic_entry_update(ent, irq_flags, pc);
+	ent->type = call->id;
+	entry->nargs = tp->nr_args;
+	entry->func = (unsigned long)tp->rp.kp.addr;
+	entry->ret_ip = (unsigned long)ri->ret_addr;
+	for (i = 0; i < tp->nr_args; i++)
+		entry->args[i] = call_fetch(&tp->args[i].fetch, regs);
+	perf_tp_event(call->id, entry->ret_ip, 1, entry, size);
+end:
+	local_irq_restore(irq_flags);
 	return 0;
 }
 
@@ -1220,10 +1253,8 @@ static int probe_profile_enable(struct ftrace_event_call *call)
 {
 	struct trace_probe *tp = (struct trace_probe *)call->data;
 
-	if (atomic_inc_return(&call->profile_count))
-		return 0;
-
 	tp->flags |= TP_FLAG_PROFILE;
+
 	if (probe_is_return(tp))
 		return enable_kretprobe(&tp->rp);
 	else
@@ -1234,10 +1265,9 @@ static void probe_profile_disable(struct ftrace_event_call *call)
 {
 	struct trace_probe *tp = (struct trace_probe *)call->data;
 
-	if (atomic_add_negative(-1, &call->profile_count))
-		tp->flags &= ~TP_FLAG_PROFILE;
+	tp->flags &= ~TP_FLAG_PROFILE;
 
-	if (!(tp->flags & (TP_FLAG_TRACE | TP_FLAG_PROFILE))) {
+	if (!(tp->flags & TP_FLAG_TRACE)) {
 		if (probe_is_return(tp))
 			disable_kretprobe(&tp->rp);
 		else
