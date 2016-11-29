@@ -29,7 +29,6 @@ static char		const *input_name = "perf.data";
 
 static int		force;
 static int		input;
-static int		show_mask = SHOW_KERNEL | SHOW_USER | SHOW_HV;
 
 static int		full_paths;
 
@@ -80,48 +79,16 @@ static void hist_hit(struct hist_entry *he, u64 ip)
 			sym->hist[offset]);
 }
 
-static int
-hist_entry__add(struct thread *thread, struct map *map,
-		struct symbol *sym, u64 ip, char level)
+static int hist_entry__add(struct thread *thread, struct map *map,
+			   struct symbol *sym, u64 ip, u64 count, char level)
 {
-	struct rb_node **p = &hist.rb_node;
-	struct rb_node *parent = NULL;
-	struct hist_entry *he;
-	struct hist_entry entry = {
-		.thread	= thread,
-		.map	= map,
-		.sym	= sym,
-		.ip	= ip,
-		.level	= level,
-		.count	= 1,
-	};
-	int cmp;
-
-	while (*p != NULL) {
-		parent = *p;
-		he = rb_entry(parent, struct hist_entry, rb_node);
-
-		cmp = hist_entry__cmp(&entry, he);
-
-		if (!cmp) {
-			hist_hit(he, ip);
-
-			return 0;
-		}
-
-		if (cmp < 0)
-			p = &(*p)->rb_left;
-		else
-			p = &(*p)->rb_right;
-	}
-
-	he = malloc(sizeof(*he));
-	if (!he)
+	bool hit;
+	struct hist_entry *he = __hist_entry__add(thread, map, sym, NULL, ip,
+						  count, level, &hit);
+	if (he == NULL)
 		return -ENOMEM;
-	*he = entry;
-	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, &hist);
-
+	if (hit)
+		hist_hit(he, ip);
 	return 0;
 }
 
@@ -129,7 +96,6 @@ static int
 process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	char level;
-	int show = 0;
 	struct thread *thread;
 	u64 ip = event->ip.ip;
 	struct map *map = NULL;
@@ -153,13 +119,11 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 	}
 
 	if (event->header.misc & PERF_RECORD_MISC_KERNEL) {
-		show = SHOW_KERNEL;
 		level = 'k';
 		sym = kernel_maps__find_symbol(ip, &map);
 		dump_printf(" ...... dso: %s\n",
 			    map ? map->dso->long_name : "<not found>");
 	} else if (event->header.misc & PERF_RECORD_MISC_USER) {
-		show = SHOW_USER;
 		level = '.';
 		map = thread__find_map(thread, ip);
 		if (map != NULL) {
@@ -185,17 +149,14 @@ got_map:
 		dump_printf(" ...... dso: %s\n",
 			    map ? map->dso->long_name : "<not found>");
 	} else {
-		show = SHOW_HV;
 		level = 'H';
 		dump_printf(" ...... dso: [hypervisor]\n");
 	}
 
-	if (show & show_mask) {
-		if (hist_entry__add(thread, map, sym, ip, level)) {
-			fprintf(stderr,
-		"problem incrementing symbol count, skipping event\n");
-			return -1;
-		}
+	if (hist_entry__add(thread, map, sym, ip, 1, level)) {
+		fprintf(stderr, "problem incrementing symbol count, "
+				"skipping event\n");
+		return -1;
 	}
 	total++;
 

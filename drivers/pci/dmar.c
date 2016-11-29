@@ -339,6 +339,26 @@ found:
 }
 #endif
 
+static int __init
+dmar_parse_one_rhsa(struct acpi_dmar_header *header)
+{
+	struct acpi_dmar_rhsa *rhsa;
+	struct dmar_drhd_unit *drhd;
+
+	rhsa = (struct acpi_dmar_rhsa *)header;
+	for_each_drhd_unit(drhd)
+		if (drhd->reg_base_addr == rhsa->base_address) {
+			int node = acpi_map_pxm_to_node(rhsa->proximity_domain);
+
+			if (!node_online(node))
+				node = -1;
+			drhd->iommu->node = node;
+		return 0;
+	}
+
+	return -ENODEV;
+}
+
 static void __init
 dmar_table_print_dmar_entry(struct acpi_dmar_header *header)
 {
@@ -458,7 +478,7 @@ parse_dmar_table(void)
 #endif
 			break;
 		case ACPI_DMAR_HARDWARE_AFFINITY:
-			/* We don't do anything with RHSA (yet?) */
+			ret = dmar_parse_one_rhsa(entry_header);
 			break;
 		default:
 			printk(KERN_WARNING PREFIX
@@ -751,6 +771,8 @@ int alloc_iommu(struct dmar_drhd_unit *drhd)
 #endif
 	iommu->agaw = agaw;
 	iommu->msagaw = msagaw;
+
+	iommu->node = -1;
 
 	/* the registers might be more than one page */
 	map_size = max_t(int, ecap_max_iotlb_offset(iommu->ecap),
@@ -1093,6 +1115,7 @@ static void __dmar_enable_qi(struct intel_iommu *iommu)
 int dmar_enable_qi(struct intel_iommu *iommu)
 {
 	struct q_inval *qi;
+	struct page *desc_page;
 
 	if (!ecap_qis(iommu->ecap))
 		return -ENOENT;
@@ -1109,12 +1132,15 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 
 	qi = iommu->qi;
 
-	qi->desc = (void *)(get_zeroed_page(GFP_ATOMIC));
-	if (!qi->desc) {
+
+	desc_page = alloc_pages_node(iommu->node, GFP_ATOMIC | __GFP_ZERO, 0);
+	if (!desc_page) {
 		kfree(qi);
 		iommu->qi = 0;
 		return -ENOMEM;
 	}
+
+	qi->desc = page_address(desc_page);
 
 	qi->desc_status = kmalloc(QI_LENGTH * sizeof(int), GFP_ATOMIC);
 	if (!qi->desc_status) {
