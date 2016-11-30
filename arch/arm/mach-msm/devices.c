@@ -693,7 +693,6 @@ int __init msm_add_sdcc(unsigned int controller, struct mmc_platform_data *plat,
 			unsigned int stat_irq, unsigned long stat_irq_flags)
 {
 	struct platform_device	*pdev;
-	struct resource *res;
 
 	if (controller < 1 || controller > 4)
 		return -EINVAL;
