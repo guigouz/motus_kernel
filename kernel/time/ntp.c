@@ -187,55 +187,9 @@ void ntp_clear(void)
  *
  * Also handles leap second processing, and returns leap offset
  */
-int second_overflow(unsigned long secs)
+void second_overflow(void)
 {
-	int leap = 0;
 	s64 delta;
-
-	/*
-	 * Leap second processing. If in leap-insert state at the end of the
-	 * day, the system clock is set back one second; if in leap-delete
-	 * state, the system clock is set ahead one second.
-	 */
-	switch (time_state) {
-	case TIME_OK:
-		if (time_status & STA_INS)
-			time_state = TIME_INS;
-		else if (time_status & STA_DEL)
-			time_state = TIME_DEL;
-		break;
-	case TIME_INS:
-		if (!(time_status & STA_INS))
-			time_state = TIME_OK;
-		else if (secs % 86400 == 0) {
-			leap = -1;
-			time_state = TIME_OOP;
-			time_tai++;
-			printk(KERN_NOTICE
-				"Clock: inserting leap second 23:59:60 UTC\n");
-		}
-		break;
-	case TIME_DEL:
-		if (!(time_status & STA_DEL))
-			time_state = TIME_OK;
-		else if ((secs + 1) % 86400 == 0) {
-			leap = 1;
-			time_tai--;
-			time_state = TIME_WAIT;
-			printk(KERN_NOTICE
-				"Clock: deleting leap second 23:59:59 UTC\n");
-		}
-		break;
-	case TIME_OOP:
-		time_state = TIME_WAIT;
-		break;
-
-	case TIME_WAIT:
-		if (!(time_status & (STA_INS | STA_DEL)))
-			time_state = TIME_OK;
-		break;
-	}
-
 
 	/* Bump the maxerror field */
 	time_maxerror += MAXFREQ / NSEC_PER_USEC;
@@ -255,25 +209,23 @@ int second_overflow(unsigned long secs)
 	tick_length	+= delta;
 
 	if (!time_adjust)
-		goto out;
+		return;
 
 	if (time_adjust > MAX_TICKADJ) {
 		time_adjust -= MAX_TICKADJ;
 		tick_length += MAX_TICKADJ_SCALED;
-		goto out;
+		return;
 	}
 
 	if (time_adjust < -MAX_TICKADJ) {
 		time_adjust += MAX_TICKADJ;
 		tick_length -= MAX_TICKADJ_SCALED;
-		goto out;
+		return;
 	}
 
 	tick_length += (s64)(time_adjust * NSEC_PER_USEC / NTP_INTERVAL_FREQ)
 							 << NTP_SCALE_SHIFT;
 	time_adjust = 0;
-out:
-	return leap;
 }
 
 #ifdef CONFIG_GENERIC_CMOS_UPDATE

@@ -172,28 +172,6 @@ static ktime_t offs_boot;
  */
 struct timespec raw_time;
 
-/* must hold write on xtime_lock */
-static void update_rt_offset(void)
-{
-	struct timespec tmp, *wtm = &wall_to_monotonic;
-
-	set_normalized_timespec(&tmp, -wtm->tv_sec, -wtm->tv_nsec);
-	offs_real = timespec_to_ktime(tmp);
-}
-
-/* must hold write on xtime_lock */
-static void timekeeping_update(bool clearntp)
-{
-	if (clearntp) {
-		timekeeper.ntp_error = 0;
-		ntp_clear();
-	}
-	update_rt_offset();
-	update_vsyscall(&xtime, timekeeper.clock, timekeeper.mult);
-}
-
-
-
 /* flag for if timekeeping is suspended */
 int __read_mostly timekeeping_suspended;
 
@@ -640,7 +618,6 @@ static int timekeeping_resume(struct sys_device *dev)
 	timekeeper.clock->cycle_last = timekeeper.clock->read(timekeeper.clock);
 	timekeeper.ntp_error = 0;
 	timekeeping_suspended = 0;
-	timekeeping_update(false);
 	write_sequnlock_irqrestore(&xtime_lock, flags);
 
 	touch_softlockup_watchdog();
@@ -840,10 +817,6 @@ void update_wall_time(void)
 #else
 	offset = timekeeper.cycle_interval;
 #endif
-	/* Check if there's really nothing to do */
-	if (offset < timekeeper.cycle_interval)
-		goto out;
-
 	timekeeper.xtime_nsec = (s64)xtime.tv_nsec << timekeeper.shift;
 
 	/*
