@@ -503,12 +503,11 @@ union iwl_ht_rate_supp {
 #define CFG_HT_MPDU_DENSITY_4USEC   (0x5)
 #define CFG_HT_MPDU_DENSITY_DEF CFG_HT_MPDU_DENSITY_4USEC
 
-struct iwl_ht_info {
+struct iwl_ht_config {
 	/* self configuration data */
 	bool is_ht;
 	bool is_40mhz;
-	u8 sm_ps;
-	struct ieee80211_mcs_info mcs;
+	bool single_chain_sufficient;
 	/* BSS related data */
 	u8 extension_chan_offset;
 	u8 ht_protection;
@@ -1078,7 +1077,7 @@ struct iwl_priv {
 	struct iwl_chain_noise_data chain_noise_data;
 	__le16 sensitivity_tbl[HD_TABLE_SIZE];
 
-	struct iwl_ht_info current_ht_config;
+	struct iwl_ht_config current_ht_config;
 	u8 last_phy_res[100];
 
 	/* Rate scaling data */
