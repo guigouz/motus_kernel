@@ -294,10 +294,7 @@ __lookup_request_ge(struct ceph_osd_client *osdc,
 
 
 /*
- * The messaging layer will reconnect to the osd as needed.  If the
- * session has dropped, the OSD will have dropped the session state,
- * and we'll get notified by the messaging layer.  If that happens, we
- * need to resubmit all requests for that osd.
+ * If the osd connection drops, we need to resubmit all requests.
  */
 static void osd_reset(struct ceph_connection *con)
 {
@@ -469,10 +466,15 @@ static void __unregister_request(struct ceph_osd_client *osdc,
 	rb_erase(&req->r_node, &osdc->requests);
 	osdc->num_requests--;
 
-	list_del_init(&req->r_osd_item);
-	if (list_empty(&req->r_osd->o_requests))
-		remove_osd(osdc, req->r_osd);
-	req->r_osd = NULL;
+	if (req->r_osd) {
+		/* make sure the original request isn't in flight. */
+		ceph_con_revoke(&req->r_osd->o_con, req->r_request);
+
+		list_del_init(&req->r_osd_item);
+		if (list_empty(&req->r_osd->o_requests))
+			remove_osd(osdc, req->r_osd);
+		req->r_osd = NULL;
+	}
 
 	ceph_osdc_put_request(req);
 
@@ -811,10 +813,13 @@ static void kick_requests(struct ceph_osd_client *osdc,
 
 		if (req->r_resend) {
 			dout(" r_resend set on tid %llu\n", req->r_tid);
+			__cancel_request(req);
 			goto kick;
 		}
-		if (req->r_osd && kickosd == req->r_osd)
+		if (req->r_osd && kickosd == req->r_osd) {
+			__cancel_request(req);
 			goto kick;
+		}
 
 		err = __map_osds(osdc, req);
 		if (err == 0)
@@ -837,7 +842,8 @@ static void kick_requests(struct ceph_osd_client *osdc,
 		}
 
 kick:
-		dout("kicking tid %llu osd%d\n", req->r_tid, req->r_osd->o_osd);
+		dout("kicking %p tid %llu osd%d\n", req, req->r_tid,
+		     req->r_osd->o_osd);
 		req->r_flags |= CEPH_OSD_FLAG_RETRY;
 		err = __send_request(osdc, req);
 		if (err) {
@@ -1016,7 +1022,7 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 			    struct ceph_osd_request *req,
 			    bool nofail)
 {
-	int rc;
+	int rc = 0;
 
 	req->r_request->pages = req->r_pages;
 	req->r_request->nr_pages = req->r_num_pages;
@@ -1025,15 +1031,22 @@ int ceph_osdc_start_request(struct ceph_osd_client *osdc,
 
 	down_read(&osdc->map_sem);
 	mutex_lock(&osdc->request_mutex);
-	rc = __send_request(osdc, req);
-	if (rc) {
-		if (nofail) {
-			dout("osdc_start_request failed send, marking %lld\n",
-			     req->r_tid);
-			req->r_resend = true;
-			rc = 0;
-		} else {
-			__unregister_request(osdc, req);
+	/*
+	 * a racing kick_requests() may have sent the message for us
+	 * while we dropped request_mutex above, so only send now if
+	 * the request still han't been touched yet.
+	 */
+	if (req->r_sent == 0) {
+		rc = __send_request(osdc, req);
+		if (rc) {
+			if (nofail) {
+				dout("osdc_start_request failed send, "
+				     " marking %lld\n", req->r_tid);
+				req->r_resend = true;
+				rc = 0;
+			} else {
+				__unregister_request(osdc, req);
+			}
 		}
 	}
 	mutex_unlock(&osdc->request_mutex);
@@ -1288,7 +1301,7 @@ const static struct ceph_connection_operations osd_con_ops = {
 	.put = put_osd_con,
 	.dispatch = dispatch,
 	.alloc_msg = alloc_msg,
-	.peer_reset = osd_reset,
+	.fault = osd_reset,
 	.alloc_middle = ceph_alloc_middle,
 	.prepare_pages = prepare_pages,
 };
