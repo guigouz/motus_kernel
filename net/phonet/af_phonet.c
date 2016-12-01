@@ -192,9 +192,8 @@ static int pn_send(struct sk_buff *skb, struct net_device *dev,
 	skb->priority = 0;
 	skb->dev = dev;
 
-	if (pn_addr(src) == pn_addr(dst)) {
+	if (skb->pkt_type == PACKET_LOOPBACK) {
 		skb_reset_mac_header(skb);
-		skb->pkt_type = PACKET_LOOPBACK;
 		skb_orphan(skb);
 		if (irq)
 			netif_rx(skb);
@@ -224,6 +223,9 @@ static int pn_raw_send(const void *data, int len, struct net_device *dev,
 	if (skb == NULL)
 		return -ENOMEM;
 
+	if (phonet_address_lookup(dev_net(dev), pn_addr(dst)) == 0)
+		skb->pkt_type = PACKET_LOOPBACK;
+
 	skb_reserve(skb, MAX_PHONET_HEADER);
 	__skb_put(skb, len);
 	skb_copy_to_linear_data(skb, data, len);
@@ -237,6 +239,7 @@ static int pn_raw_send(const void *data, int len, struct net_device *dev,
 int pn_skb_send(struct sock *sk, struct sk_buff *skb,
 		const struct sockaddr_pn *target)
 {
+	struct net *net = sock_net(sk);
 	struct net_device *dev;
 	struct pn_sock *pn = pn_sk(sk);
 	int err;
@@ -245,9 +248,13 @@ int pn_skb_send(struct sock *sk, struct sk_buff *skb,
 
 	err = -EHOSTUNREACH;
 	if (sk->sk_bound_dev_if)
-		dev = dev_get_by_index(sock_net(sk), sk->sk_bound_dev_if);
-	else
-		dev = phonet_device_get(sock_net(sk));
+		dev = dev_get_by_index(net, sk->sk_bound_dev_if);
+	else if (phonet_address_lookup(net, daddr) == 0) {
+		dev = phonet_device_get(net);
+		skb->pkt_type = PACKET_LOOPBACK;
+	} else
+		dev = phonet_route_output(net, daddr);
+
 	if (!dev || !(dev->flags & IFF_UP))
 		goto drop;
 
@@ -391,6 +398,38 @@ static int phonet_rcv(struct sk_buff *skb, struct net_device *dev,
 			send_obj_unreachable(skb);
 			send_reset_indications(skb);
 		}
+	} else if (unlikely(skb->pkt_type == PACKET_LOOPBACK))
+		goto out; /* Race between address deletion and loopback */
+	else {
+		/* Phonet packet routing */
+		struct net_device *out_dev;
+
+		out_dev = phonet_route_output(net, pn_sockaddr_get_addr(&sa));
+		if (!out_dev) {
+			LIMIT_NETDEBUG(KERN_WARNING"No Phonet route to %02X\n",
+					pn_sockaddr_get_addr(&sa));
+			goto out;
+		}
+
+		__skb_push(skb, sizeof(struct phonethdr));
+		skb->dev = out_dev;
+		if (out_dev == dev) {
+			LIMIT_NETDEBUG(KERN_ERR"Phonet loop to %02X on %s\n",
+					pn_sockaddr_get_addr(&sa), dev->name);
+			goto out_dev;
+		}
+		/* Some drivers (e.g. TUN) do not allocate HW header space */
+		if (skb_cow_head(skb, out_dev->hard_header_len))
+			goto out_dev;
+
+		if (dev_hard_header(skb, out_dev, ETH_P_PHONET, NULL, NULL,
+					skb->len) < 0)
+			goto out_dev;
+		dev_queue_xmit(skb);
+		dev_put(out_dev);
+		return NET_RX_SUCCESS;
+out_dev:
+		dev_put(out_dev);
 	}
 
 out:
