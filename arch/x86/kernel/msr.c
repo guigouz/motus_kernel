@@ -174,24 +174,17 @@ static int msr_open(struct inode *inode, struct file *file)
 {
 	unsigned int cpu = iminor(file->f_path.dentry->d_inode);
 	struct cpuinfo_x86 *c = &cpu_data(cpu);
-	int ret = 0;
 
-	if (!capable(CAP_SYS_RAWIO))
-		return -EPERM;
-
-	lock_kernel();
 	cpu = iminor(file->f_path.dentry->d_inode);
 
-	if (cpu >= nr_cpu_ids || !cpu_online(cpu)) {
-		ret = -ENXIO;	/* No such CPU */
-		goto out;
-	}
+	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
+		return -ENXIO;	/* No such CPU */
+
 	c = &cpu_data(cpu);
 	if (!cpu_has(c, X86_FEATURE_MSR))
-		ret = -EIO;	/* MSR not supported */
-out:
-	unlock_kernel();
-	return ret;
+		return -EIO;	/* MSR not supported */
+
+	return 0;
 }
 
 /*
@@ -244,7 +237,7 @@ static struct notifier_block __refdata msr_class_cpu_notifier = {
 	.notifier_call = msr_class_cpu_callback,
 };
 
-static char *msr_devnode(struct device *dev, mode_t *mode)
+static char *msr_nodename(struct device *dev)
 {
 	return kasprintf(GFP_KERNEL, "cpu/%u/msr", MINOR(dev->devt));
 }
@@ -254,7 +247,7 @@ static int __init msr_init(void)
 	int i, err = 0;
 	i = 0;
 
-	if (__register_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr", &msr_fops)) {
+	if (register_chrdev(MSR_MAJOR, "cpu/msr", &msr_fops)) {
 		printk(KERN_ERR "msr: unable to get major %d for msr\n",
 		       MSR_MAJOR);
 		err = -EBUSY;
@@ -265,7 +258,7 @@ static int __init msr_init(void)
 		err = PTR_ERR(msr_class);
 		goto out_chrdev;
 	}
-	msr_class->devnode = msr_devnode;
+	msr_class->nodename = msr_nodename;
 	for_each_online_cpu(i) {
 		err = msr_device_create(i);
 		if (err != 0)
@@ -282,7 +275,7 @@ out_class:
 		msr_device_destroy(i);
 	class_destroy(msr_class);
 out_chrdev:
-	__unregister_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr");
+	unregister_chrdev(MSR_MAJOR, "cpu/msr");
 out:
 	return err;
 }
@@ -293,7 +286,7 @@ static void __exit msr_exit(void)
 	for_each_online_cpu(cpu)
 		msr_device_destroy(cpu);
 	class_destroy(msr_class);
-	__unregister_chrdev(MSR_MAJOR, 0, NR_CPUS, "cpu/msr");
+	unregister_chrdev(MSR_MAJOR, "cpu/msr");
 	unregister_hotcpu_notifier(&msr_class_cpu_notifier);
 }
 
