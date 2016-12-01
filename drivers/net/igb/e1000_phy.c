@@ -39,6 +39,9 @@ static s32  igb_wait_autoneg(struct e1000_hw *hw);
 /* Cable length tables */
 static const u16 e1000_m88_cable_length_table[] =
 	{ 0, 50, 80, 110, 140, 140, E1000_CABLE_LENGTH_UNDEFINED };
+#define M88E1000_CABLE_LENGTH_TABLE_SIZE \
+                (sizeof(e1000_m88_cable_length_table) / \
+                 sizeof(e1000_m88_cable_length_table[0]))
 
 static const u16 e1000_igp_2_cable_length_table[] =
     { 0, 0, 0, 0, 0, 0, 0, 0, 3, 5, 8, 11, 13, 16, 18, 21,
@@ -109,7 +112,10 @@ out:
  **/
 static s32 igb_phy_reset_dsp(struct e1000_hw *hw)
 {
-	s32 ret_val;
+	s32 ret_val = 0;
+
+	if (!(hw->phy.ops.write_reg))
+		goto out;
 
 	ret_val = hw->phy.ops.write_reg(hw, M88E1000_PHY_GEN_CONTROL, 0xC1);
 	if (ret_val)
@@ -236,6 +242,103 @@ static s32 igb_write_phy_reg_mdic(struct e1000_hw *hw, u32 offset, u16 data)
 
 out:
 	return ret_val;
+}
+
+/**
+ *  igb_read_phy_reg_i2c - Read PHY register using i2c
+ *  @hw: pointer to the HW structure
+ *  @offset: register offset to be read
+ *  @data: pointer to the read data
+ *
+ *  Reads the PHY register at offset using the i2c interface and stores the
+ *  retrieved information in data.
+ **/
+s32 igb_read_phy_reg_i2c(struct e1000_hw *hw, u32 offset, u16 *data)
+{
+	struct e1000_phy_info *phy = &hw->phy;
+	u32 i, i2ccmd = 0;
+
+
+	/*
+	 * Set up Op-code, Phy Address, and register address in the I2CCMD
+	 * register.  The MAC will take care of interfacing with the
+	 * PHY to retrieve the desired data.
+	 */
+	i2ccmd = ((offset << E1000_I2CCMD_REG_ADDR_SHIFT) |
+	          (phy->addr << E1000_I2CCMD_PHY_ADDR_SHIFT) |
+	          (E1000_I2CCMD_OPCODE_READ));
+
+	wr32(E1000_I2CCMD, i2ccmd);
+
+	/* Poll the ready bit to see if the I2C read completed */
+	for (i = 0; i < E1000_I2CCMD_PHY_TIMEOUT; i++) {
+		udelay(50);
+		i2ccmd = rd32(E1000_I2CCMD);
+		if (i2ccmd & E1000_I2CCMD_READY)
+			break;
+	}
+	if (!(i2ccmd & E1000_I2CCMD_READY)) {
+		hw_dbg("I2CCMD Read did not complete\n");
+		return -E1000_ERR_PHY;
+	}
+	if (i2ccmd & E1000_I2CCMD_ERROR) {
+		hw_dbg("I2CCMD Error bit set\n");
+		return -E1000_ERR_PHY;
+	}
+
+	/* Need to byte-swap the 16-bit value. */
+	*data = ((i2ccmd >> 8) & 0x00FF) | ((i2ccmd << 8) & 0xFF00);
+
+	return 0;
+}
+
+/**
+ *  igb_write_phy_reg_i2c - Write PHY register using i2c
+ *  @hw: pointer to the HW structure
+ *  @offset: register offset to write to
+ *  @data: data to write at register offset
+ *
+ *  Writes the data to PHY register at the offset using the i2c interface.
+ **/
+s32 igb_write_phy_reg_i2c(struct e1000_hw *hw, u32 offset, u16 data)
+{
+	struct e1000_phy_info *phy = &hw->phy;
+	u32 i, i2ccmd = 0;
+	u16 phy_data_swapped;
+
+
+	/* Swap the data bytes for the I2C interface */
+	phy_data_swapped = ((data >> 8) & 0x00FF) | ((data << 8) & 0xFF00);
+
+	/*
+	 * Set up Op-code, Phy Address, and register address in the I2CCMD
+	 * register.  The MAC will take care of interfacing with the
+	 * PHY to retrieve the desired data.
+	 */
+	i2ccmd = ((offset << E1000_I2CCMD_REG_ADDR_SHIFT) |
+	          (phy->addr << E1000_I2CCMD_PHY_ADDR_SHIFT) |
+	          E1000_I2CCMD_OPCODE_WRITE |
+	          phy_data_swapped);
+
+	wr32(E1000_I2CCMD, i2ccmd);
+
+	/* Poll the ready bit to see if the I2C read completed */
+	for (i = 0; i < E1000_I2CCMD_PHY_TIMEOUT; i++) {
+		udelay(50);
+		i2ccmd = rd32(E1000_I2CCMD);
+		if (i2ccmd & E1000_I2CCMD_READY)
+			break;
+	}
+	if (!(i2ccmd & E1000_I2CCMD_READY)) {
+		hw_dbg("I2CCMD Write did not complete\n");
+		return -E1000_ERR_PHY;
+	}
+	if (i2ccmd & E1000_I2CCMD_ERROR) {
+		hw_dbg("I2CCMD Error bit set\n");
+		return -E1000_ERR_PHY;
+	}
+
+	return 0;
 }
 
 /**
@@ -572,7 +675,7 @@ out:
  *  and restart the negotiation process between the link partner.  If
  *  autoneg_wait_to_complete, then wait for autoneg to complete before exiting.
  **/
-s32 igb_copper_link_autoneg(struct e1000_hw *hw)
+static s32 igb_copper_link_autoneg(struct e1000_hw *hw)
 {
 	struct e1000_phy_info *phy = &hw->phy;
 	s32 ret_val;
@@ -796,6 +899,65 @@ out:
 }
 
 /**
+ *  igb_setup_copper_link - Configure copper link settings
+ *  @hw: pointer to the HW structure
+ *
+ *  Calls the appropriate function to configure the link for auto-neg or forced
+ *  speed and duplex.  Then we check for link, once link is established calls
+ *  to configure collision distance and flow control are called.  If link is
+ *  not established, we return -E1000_ERR_PHY (-2).
+ **/
+s32 igb_setup_copper_link(struct e1000_hw *hw)
+{
+	s32 ret_val;
+	bool link;
+
+
+	if (hw->mac.autoneg) {
+		/*
+		 * Setup autoneg and flow control advertisement and perform
+		 * autonegotiation.
+		 */
+		ret_val = igb_copper_link_autoneg(hw);
+		if (ret_val)
+			goto out;
+	} else {
+		/*
+		 * PHY will be set to 10H, 10F, 100H or 100F
+		 * depending on user settings.
+		 */
+		hw_dbg("Forcing Speed and Duplex\n");
+		ret_val = hw->phy.ops.force_speed_duplex(hw);
+		if (ret_val) {
+			hw_dbg("Error Forcing Speed and Duplex\n");
+			goto out;
+		}
+	}
+
+	/*
+	 * Check link status. Wait up to 100 microseconds for link to become
+	 * valid.
+	 */
+	ret_val = igb_phy_has_link(hw,
+	                           COPPER_LINK_UP_LIMIT,
+	                           10,
+	                           &link);
+	if (ret_val)
+		goto out;
+
+	if (link) {
+		hw_dbg("Valid link established!!!\n");
+		igb_config_collision_dist(hw);
+		ret_val = igb_config_fc_after_link_up(hw);
+	} else {
+		hw_dbg("Unable to establish link!!!\n");
+	}
+
+out:
+	return ret_val;
+}
+
+/**
  *  igb_phy_force_speed_duplex_igp - Force speed/duplex for igp PHY
  *  @hw: pointer to the HW structure
  *
@@ -903,22 +1065,19 @@ s32 igb_phy_force_speed_duplex_m88(struct e1000_hw *hw)
 
 	igb_phy_force_speed_duplex_setup(hw, &phy_data);
 
-	/* Reset the phy to commit changes. */
-	phy_data |= MII_CR_RESET;
-
 	ret_val = phy->ops.write_reg(hw, PHY_CONTROL, phy_data);
 	if (ret_val)
 		goto out;
 
-	udelay(1);
+	/* Reset the phy to commit changes. */
+	ret_val = igb_phy_sw_reset(hw);
+	if (ret_val)
+		goto out;
 
 	if (phy->autoneg_wait_to_complete) {
 		hw_dbg("Waiting for forced speed/duplex link on M88 phy.\n");
 
-		ret_val = igb_phy_has_link(hw,
-						     PHY_FORCE_LIMIT,
-						     100000,
-						     &link);
+		ret_val = igb_phy_has_link(hw, PHY_FORCE_LIMIT, 100000, &link);
 		if (ret_val)
 			goto out;
 
@@ -928,8 +1087,8 @@ s32 igb_phy_force_speed_duplex_m88(struct e1000_hw *hw)
 			 * Reset the DSP and cross our fingers.
 			 */
 			ret_val = phy->ops.write_reg(hw,
-						      M88E1000_PHY_PAGE_SELECT,
-						      0x001d);
+						     M88E1000_PHY_PAGE_SELECT,
+						     0x001d);
 			if (ret_val)
 				goto out;
 			ret_val = igb_phy_reset_dsp(hw);
@@ -939,7 +1098,7 @@ s32 igb_phy_force_speed_duplex_m88(struct e1000_hw *hw)
 
 		/* Try once more */
 		ret_val = igb_phy_has_link(hw, PHY_FORCE_LIMIT,
-					     100000, &link);
+					   100000, &link);
 		if (ret_val)
 			goto out;
 	}
@@ -1051,8 +1210,11 @@ static void igb_phy_force_speed_duplex_setup(struct e1000_hw *hw,
 s32 igb_set_d3_lplu_state(struct e1000_hw *hw, bool active)
 {
 	struct e1000_phy_info *phy = &hw->phy;
-	s32 ret_val;
+	s32 ret_val = 0;
 	u16 data;
+
+	if (!(hw->phy.ops.read_reg))
+		goto out;
 
 	ret_val = phy->ops.read_reg(hw, IGP02E1000_PHY_POWER_MGMT, &data);
 	if (ret_val)
@@ -1288,8 +1450,14 @@ s32 igb_phy_has_link(struct e1000_hw *hw, u32 iterations,
 		 * it across the board.
 		 */
 		ret_val = hw->phy.ops.read_reg(hw, PHY_STATUS, &phy_status);
-		if (ret_val)
-			break;
+		if (ret_val) {
+			/*
+			 * If the first read fails, another entity may have
+			 * ownership of the resources, wait and try again to
+			 * see if they have relinquished the resources yet.
+			 */
+			udelay(usec_interval);
+		}
 		ret_val = hw->phy.ops.read_reg(hw, PHY_STATUS, &phy_status);
 		if (ret_val)
 			break;
@@ -1333,8 +1501,13 @@ s32 igb_get_cable_length_m88(struct e1000_hw *hw)
 
 	index = (phy_data & M88E1000_PSSR_CABLE_LENGTH) >>
 		M88E1000_PSSR_CABLE_LENGTH_SHIFT;
+	if (index >= M88E1000_CABLE_LENGTH_TABLE_SIZE - 1) {
+		ret_val = -E1000_ERR_PHY;
+		goto out;
+	}
+
 	phy->min_cable_length = e1000_m88_cable_length_table[index];
-	phy->max_cable_length = e1000_m88_cable_length_table[index+1];
+	phy->max_cable_length = e1000_m88_cable_length_table[index + 1];
 
 	phy->cable_length = (phy->min_cable_length + phy->max_cable_length) / 2;
 

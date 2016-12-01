@@ -51,6 +51,7 @@ struct e1000_hw;
 #define E1000_REVISION_2 2
 #define E1000_REVISION_4 4
 
+#define E1000_FUNC_0     0
 #define E1000_FUNC_1     1
 
 #define E1000_ALT_MAC_ADDRESS_OFFSET_LAN1   3
@@ -73,7 +74,6 @@ enum e1000_nvm_type {
 	e1000_nvm_unknown = 0,
 	e1000_nvm_none,
 	e1000_nvm_eeprom_spi,
-	e1000_nvm_eeprom_microwire,
 	e1000_nvm_flash_hw,
 	e1000_nvm_flash_sw
 };
@@ -82,8 +82,6 @@ enum e1000_nvm_override {
 	e1000_nvm_override_none = 0,
 	e1000_nvm_override_spi_small,
 	e1000_nvm_override_spi_large,
-	e1000_nvm_override_microwire_small,
-	e1000_nvm_override_microwire_large
 };
 
 enum e1000_phy_type {
@@ -342,6 +340,7 @@ struct e1000_mac_info {
 	u16 ifs_ratio;
 	u16 ifs_step_size;
 	u16 mta_reg_count;
+	u16 uta_reg_count;
 
 	/* Maximum size of the MTA register table in all supported adapters */
 	#define MAX_MTA_REG 128

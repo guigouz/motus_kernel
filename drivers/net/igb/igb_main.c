@@ -107,6 +107,7 @@ static netdev_tx_t igb_xmit_frame_adv(struct sk_buff *skb,
 static struct net_device_stats *igb_get_stats(struct net_device *);
 static int igb_change_mtu(struct net_device *, int);
 static int igb_set_mac(struct net_device *, void *);
+static void igb_set_uta(struct igb_adapter *adapter);
 static irqreturn_t igb_intr(int irq, void *);
 static irqreturn_t igb_intr_msi(int irq, void *);
 static irqreturn_t igb_msix_other(int irq, void *);
@@ -128,10 +129,10 @@ static void igb_vlan_rx_register(struct net_device *, struct vlan_group *);
 static void igb_vlan_rx_add_vid(struct net_device *, u16);
 static void igb_vlan_rx_kill_vid(struct net_device *, u16);
 static void igb_restore_vlan(struct igb_adapter *);
+static void igb_rar_set_qsel(struct igb_adapter *, u8 *, u32 , u8);
 static void igb_ping_all_vfs(struct igb_adapter *);
 static void igb_msg_task(struct igb_adapter *);
 static int igb_rcv_msg_from_vf(struct igb_adapter *, u32);
-static inline void igb_set_rah_pool(struct e1000_hw *, int , int);
 static void igb_vmm_control(struct igb_adapter *);
 static int igb_set_vf_mac(struct igb_adapter *adapter, int, unsigned char *);
 static void igb_restore_vf_multicasts(struct igb_adapter *adapter);
@@ -142,7 +143,6 @@ static inline void igb_set_vmolr(struct e1000_hw *hw, int vfn)
 
 	reg_data = rd32(E1000_VMOLR(vfn));
 	reg_data |= E1000_VMOLR_BAM |	 /* Accept broadcast */
-	            E1000_VMOLR_ROPE |   /* Accept packets matched in UTA */
 	            E1000_VMOLR_ROMPE |  /* Accept packets matched in MTA */
 	            E1000_VMOLR_AUPE |   /* Accept untagged packets */
 	            E1000_VMOLR_STRVLAN; /* Strip vlan tags */
@@ -167,16 +167,6 @@ static inline int igb_set_vf_rlpml(struct igb_adapter *adapter, int size,
 	wr32(E1000_VMOLR(vfn), vmolr);
 
 	return 0;
-}
-
-static inline void igb_set_rah_pool(struct e1000_hw *hw, int pool, int entry)
-{
-	u32 reg_data;
-
-	reg_data = rd32(E1000_RAH(entry));
-	reg_data &= ~E1000_RAH_POOL_MASK;
-	reg_data |= E1000_RAH_POOL_1 << pool;;
-	wr32(E1000_RAH(entry), reg_data);
 }
 
 #ifdef CONFIG_PM
@@ -983,7 +973,6 @@ int igb_up(struct igb_adapter *adapter)
 		igb_configure_msix(adapter);
 
 	igb_vmm_control(adapter);
-	igb_set_rah_pool(hw, adapter->vfs_allocated_count, 0);
 	igb_set_vmolr(hw, adapter->vfs_allocated_count);
 
 	/* Clear any pending interrupts. */
@@ -1770,7 +1759,6 @@ static int igb_open(struct net_device *netdev)
 	igb_configure(adapter);
 
 	igb_vmm_control(adapter);
-	igb_set_rah_pool(hw, adapter->vfs_allocated_count, 0);
 	igb_set_vmolr(hw, adapter->vfs_allocated_count);
 
 	err = igb_request_irq(adapter);
@@ -2299,6 +2287,13 @@ static void igb_configure_rx(struct igb_adapter *adapter)
 	/* Set the default pool for the PF's first queue */
 	igb_configure_vt_default_pool(adapter);
 
+	/* set UTA to appropriate mode */
+	igb_set_uta(adapter);
+
+	/* set the correct pool for the PF default MAC address in entry 0 */
+	igb_rar_set_qsel(adapter, adapter->hw.mac.addr, 0,
+	                 adapter->vfs_allocated_count);
+
 	igb_rlpml_set(adapter);
 
 	/* Enable Receives */
@@ -2522,10 +2517,100 @@ static int igb_set_mac(struct net_device *netdev, void *p)
 	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
 	memcpy(hw->mac.addr, addr->sa_data, netdev->addr_len);
 
-	igb_rar_set(hw, hw->mac.addr, 0);
-	igb_set_rah_pool(hw, adapter->vfs_allocated_count, 0);
+	/* set the correct pool for the new PF MAC address in entry 0 */
+	igb_rar_set_qsel(adapter, hw->mac.addr, 0,
+	                 adapter->vfs_allocated_count);
 
 	return 0;
+}
+
+/**
+ * igb_write_mc_addr_list - write multicast addresses to MTA
+ * @netdev: network interface device structure
+ *
+ * Writes multicast address list to the MTA hash table.
+ * Returns: -ENOMEM on failure
+ *                0 on no addresses written
+ *                X on writing X addresses to MTA
+ **/
+static int igb_write_mc_addr_list(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	struct e1000_hw *hw = &adapter->hw;
+	struct dev_mc_list *mc_ptr = netdev->mc_list;
+	u8  *mta_list;
+	u32 vmolr = 0;
+	int i;
+
+	if (!netdev->mc_count) {
+		/* nothing to program, so clear mc list */
+		igb_update_mc_addr_list(hw, NULL, 0);
+		igb_restore_vf_multicasts(adapter);
+		return 0;
+	}
+
+	mta_list = kzalloc(netdev->mc_count * 6, GFP_ATOMIC);
+	if (!mta_list)
+		return -ENOMEM;
+
+	/* set vmolr receive overflow multicast bit */
+	vmolr |= E1000_VMOLR_ROMPE;
+
+	/* The shared function expects a packed array of only addresses. */
+	mc_ptr = netdev->mc_list;
+
+	for (i = 0; i < netdev->mc_count; i++) {
+		if (!mc_ptr)
+			break;
+		memcpy(mta_list + (i*ETH_ALEN), mc_ptr->dmi_addr, ETH_ALEN);
+		mc_ptr = mc_ptr->next;
+	}
+	igb_update_mc_addr_list(hw, mta_list, i);
+	kfree(mta_list);
+
+	return netdev->mc_count;
+}
+
+/**
+ * igb_write_uc_addr_list - write unicast addresses to RAR table
+ * @netdev: network interface device structure
+ *
+ * Writes unicast address list to the RAR table.
+ * Returns: -ENOMEM on failure/insufficient address space
+ *                0 on no addresses written
+ *                X on writing X addresses to the RAR table
+ **/
+static int igb_write_uc_addr_list(struct net_device *netdev)
+{
+	struct igb_adapter *adapter = netdev_priv(netdev);
+	struct e1000_hw *hw = &adapter->hw;
+	unsigned int vfn = adapter->vfs_allocated_count;
+	unsigned int rar_entries = hw->mac.rar_entry_count - (vfn + 1);
+	int count = 0;
+
+	/* return ENOMEM indicating insufficient memory for addresses */
+	if (netdev->uc.count > rar_entries)
+		return -ENOMEM;
+
+	if (netdev->uc.count && rar_entries) {
+		struct netdev_hw_addr *ha;
+		list_for_each_entry(ha, &netdev->uc.list, list) {
+			if (!rar_entries)
+				break;
+			igb_rar_set_qsel(adapter, ha->addr,
+			                 rar_entries--,
+			                 vfn);
+			count++;
+		}
+	}
+	/* write the addresses in reverse order to avoid write combining */
+	for (; rar_entries > 0 ; rar_entries--) {
+		wr32(E1000_RAH(rar_entries), 0);
+		wr32(E1000_RAL(rar_entries), 0);
+	}
+	wrfl();
+
+	return count;
 }
 
 /**
@@ -2541,74 +2626,63 @@ static void igb_set_rx_mode(struct net_device *netdev)
 {
 	struct igb_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
-	unsigned int rar_entries = hw->mac.rar_entry_count -
-	                           (adapter->vfs_allocated_count + 1);
-	struct dev_mc_list *mc_ptr = netdev->mc_list;
-	u8  *mta_list = NULL;
-	u32 rctl;
-	int i;
+	unsigned int vfn = adapter->vfs_allocated_count;
+	u32 rctl, vmolr = 0;
+	int count;
 
 	/* Check for Promiscuous and All Multicast modes */
 	rctl = rd32(E1000_RCTL);
 
+	/* clear the effected bits */
+	rctl &= ~(E1000_RCTL_UPE | E1000_RCTL_MPE | E1000_RCTL_VFE);
+
 	if (netdev->flags & IFF_PROMISC) {
 		rctl |= (E1000_RCTL_UPE | E1000_RCTL_MPE);
-		rctl &= ~E1000_RCTL_VFE;
+		vmolr |= (E1000_VMOLR_ROPE | E1000_VMOLR_MPME);
 	} else {
-		if (netdev->flags & IFF_ALLMULTI)
+		if (netdev->flags & IFF_ALLMULTI) {
 			rctl |= E1000_RCTL_MPE;
-		else
-			rctl &= ~E1000_RCTL_MPE;
-
-		if (netdev->uc.count > rar_entries)
+			vmolr |= E1000_VMOLR_MPME;
+		} else {
+			/*
+			 * Write addresses to the MTA, if the attempt fails
+			 * then we should just turn on promiscous mode so
+			 * that we can at least receive multicast traffic
+			 */
+			count = igb_write_mc_addr_list(netdev);
+			if (count < 0) {
+				rctl |= E1000_RCTL_MPE;
+				vmolr |= E1000_VMOLR_MPME;
+			} else if (count) {
+				vmolr |= E1000_VMOLR_ROMPE;
+			}
+		}
+		/*
+		 * Write addresses to available RAR registers, if there is not
+		 * sufficient space to store all the addresses then enable
+		 * unicast promiscous mode
+		 */
+		count = igb_write_uc_addr_list(netdev);
+		if (count < 0) {
 			rctl |= E1000_RCTL_UPE;
-		else
-			rctl &= ~E1000_RCTL_UPE;
+			vmolr |= E1000_VMOLR_ROPE;
+		}
 		rctl |= E1000_RCTL_VFE;
 	}
 	wr32(E1000_RCTL, rctl);
 
-	if (netdev->uc.count && rar_entries) {
-		struct netdev_hw_addr *ha;
-		list_for_each_entry(ha, &netdev->uc.list, list) {
-			if (!rar_entries)
-				break;
-			igb_rar_set(hw, ha->addr, rar_entries);
-			igb_set_rah_pool(hw, adapter->vfs_allocated_count,
-			                 rar_entries);
-			rar_entries--;
-		}
-	}
-	/* write the addresses in reverse order to avoid write combining */
-	for (; rar_entries > 0 ; rar_entries--) {
-		wr32(E1000_RAH(rar_entries), 0);
-		wr32(E1000_RAL(rar_entries), 0);
-	}
-	wrfl();
-
-	if (!netdev->mc_count) {
-		/* nothing to program, so clear mc list */
-		igb_update_mc_addr_list(hw, NULL, 0);
-		igb_restore_vf_multicasts(adapter);
+	/*
+	 * In order to support SR-IOV and eventually VMDq it is necessary to set
+	 * the VMOLR to enable the appropriate modes.  Without this workaround
+	 * we will have issues with VLAN tag stripping not being done for frames
+	 * that are only arriving because we are the default pool
+	 */
+	if (hw->mac.type < e1000_82576)
 		return;
-	}
 
-	mta_list = kzalloc(netdev->mc_count * 6, GFP_ATOMIC);
-	if (!mta_list) {
-		dev_err(&adapter->pdev->dev,
-		        "failed to allocate multicast filter list\n");
-		return;
-	}
-
-	/* The shared function expects a packed array of only addresses. */
-	for (i = 0; i < netdev->mc_count; i++) {
-		if (!mc_ptr)
-			break;
-		memcpy(mta_list + (i*ETH_ALEN), mc_ptr->dmi_addr, ETH_ALEN);
-		mc_ptr = mc_ptr->next;
-	}
-	igb_update_mc_addr_list(hw, mta_list, i);
-	kfree(mta_list);
+	vmolr |= rd32(E1000_VMOLR(vfn)) &
+	         ~(E1000_VMOLR_ROPE | E1000_VMOLR_MPME | E1000_VMOLR_ROMPE);
+	wr32(E1000_VMOLR(vfn), vmolr);
 	igb_restore_vf_multicasts(adapter);
 }
 
@@ -4143,8 +4217,7 @@ static inline void igb_vf_reset_msg(struct igb_adapter *adapter, u32 vf)
 	igb_vf_reset_event(adapter, vf);
 
 	/* set vf mac address */
-	igb_rar_set(hw, vf_mac, rar_entry);
-	igb_set_rah_pool(hw, vf, rar_entry);
+	igb_rar_set_qsel(adapter, vf_mac, rar_entry, vf);
 
 	/* enable transmit and receive for vf */
 	reg = rd32(E1000_VFTE);
@@ -4271,6 +4344,33 @@ static int igb_rcv_msg_from_vf(struct igb_adapter *adapter, u32 vf)
 	igb_write_mbx(hw, msgbuf, 1, vf);
 
 	return retval;
+}
+
+/**
+ *  igb_set_uta - Set unicast filter table address
+ *  @adapter: board private structure
+ *
+ *  The unicast table address is a register array of 32-bit registers.
+ *  The table is meant to be used in a way similar to how the MTA is used
+ *  however due to certain limitations in the hardware it is necessary to
+ *  set all the hash bits to 1 and use the VMOLR ROPE bit as a promiscous
+ *  enable bit to allow vlan tag stripping when promiscous mode is enabled
+ **/
+static void igb_set_uta(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+	int i;
+
+	/* The UTA table only exists on 82576 hardware and newer */
+	if (hw->mac.type < e1000_82576)
+		return;
+
+	/* we only need to do this if VMDq is enabled */
+	if (!adapter->vfs_allocated_count)
+		return;
+
+	for (i = 0; i < hw->mac.uta_reg_count; i++)
+		array_wr32(E1000_UTA, i, ~0);
 }
 
 /**
@@ -5533,6 +5633,33 @@ static void igb_io_resume(struct pci_dev *pdev)
 	igb_get_hw_control(adapter);
 }
 
+static void igb_rar_set_qsel(struct igb_adapter *adapter, u8 *addr, u32 index,
+                             u8 qsel)
+{
+	u32 rar_low, rar_high;
+	struct e1000_hw *hw = &adapter->hw;
+
+	/* HW expects these in little endian so we reverse the byte order
+	 * from network order (big endian) to little endian
+	 */
+	rar_low = ((u32) addr[0] | ((u32) addr[1] << 8) |
+	          ((u32) addr[2] << 16) | ((u32) addr[3] << 24));
+	rar_high = ((u32) addr[4] | ((u32) addr[5] << 8));
+
+	/* Indicate to hardware the Address is Valid. */
+	rar_high |= E1000_RAH_AV;
+
+	if (hw->mac.type == e1000_82575)
+		rar_high |= E1000_RAH_POOL_1 * qsel;
+	else
+		rar_high |= E1000_RAH_POOL_1 << qsel;
+
+	wr32(E1000_RAL(index), rar_low);
+	wrfl();
+	wr32(E1000_RAH(index), rar_high);
+	wrfl();
+}
+
 static int igb_set_vf_mac(struct igb_adapter *adapter,
                           int vf, unsigned char *mac_addr)
 {
@@ -5543,8 +5670,7 @@ static int igb_set_vf_mac(struct igb_adapter *adapter,
 
 	memcpy(adapter->vf_data[vf].vf_mac_addresses, mac_addr, ETH_ALEN);
 
-	igb_rar_set(hw, mac_addr, rar_entry);
-	igb_set_rah_pool(hw, vf, rar_entry);
+	igb_rar_set_qsel(adapter, mac_addr, rar_entry, vf);
 
 	return 0;
 }
