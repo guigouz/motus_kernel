@@ -3386,7 +3386,7 @@ static const struct file_operations bond_info_fops = {
 	.release = seq_release,
 };
 
-static int bond_create_proc_entry(struct bonding *bond)
+static void bond_create_proc_entry(struct bonding *bond)
 {
 	struct net_device *bond_dev = bond->dev;
 
@@ -3401,8 +3401,6 @@ static int bond_create_proc_entry(struct bonding *bond)
 		else
 			memcpy(bond->proc_file_name, bond_dev->name, IFNAMSIZ);
 	}
-
-	return 0;
 }
 
 static void bond_remove_proc_entry(struct bonding *bond)
@@ -3441,7 +3439,7 @@ static void bond_destroy_proc_dir(void)
 
 #else /* !CONFIG_PROC_FS */
 
-static int bond_create_proc_entry(struct bonding *bond)
+static void bond_create_proc_entry(struct bonding *bond)
 {
 }
 
