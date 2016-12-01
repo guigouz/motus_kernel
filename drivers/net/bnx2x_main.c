@@ -57,8 +57,8 @@
 #include "bnx2x_init_ops.h"
 #include "bnx2x_dump.h"
 
-#define DRV_MODULE_VERSION	"1.52.1"
-#define DRV_MODULE_RELDATE	"2009/08/12"
+#define DRV_MODULE_VERSION	"1.52.1-1"
+#define DRV_MODULE_RELDATE	"2009/10/13"
 #define BNX2X_BC_VER		0x040200
 
 #include <linux/firmware.h>
@@ -1051,7 +1051,6 @@ static void bnx2x_sp_event(struct bnx2x_fastpath *fp,
 		break;
 
 	case (RAMROD_CMD_ID_ETH_SET_MAC | BNX2X_STATE_CLOSING_WAIT4_HALT):
-	case (RAMROD_CMD_ID_ETH_SET_MAC | BNX2X_STATE_DISABLED):
 		DP(NETIF_MSG_IFDOWN, "got (un)set mac ramrod\n");
 		bp->set_mac_pending--;
 		smp_wmb();
@@ -2165,18 +2164,30 @@ static void bnx2x_calc_fc_adv(struct bnx2x *bp)
 
 static void bnx2x_link_report(struct bnx2x *bp)
 {
-	if (bp->state == BNX2X_STATE_DISABLED) {
+	if (bp->flags & MF_FUNC_DIS) {
 		netif_carrier_off(bp->dev);
 		printk(KERN_ERR PFX "%s NIC Link is Down\n", bp->dev->name);
 		return;
 	}
 
 	if (bp->link_vars.link_up) {
+		u16 line_speed;
+
 		if (bp->state == BNX2X_STATE_OPEN)
 			netif_carrier_on(bp->dev);
 		printk(KERN_INFO PFX "%s NIC Link is Up, ", bp->dev->name);
 
-		printk("%d Mbps ", bp->link_vars.line_speed);
+		line_speed = bp->link_vars.line_speed;
+		if (IS_E1HMF(bp)) {
+			u16 vn_max_rate;
+
+			vn_max_rate =
+				((bp->mf_config & FUNC_MF_CFG_MAX_BW_MASK) >>
+				 FUNC_MF_CFG_MAX_BW_SHIFT) * 100;
+			if (vn_max_rate < line_speed)
+				line_speed = vn_max_rate;
+		}
+		printk("%d Mbps ", line_speed);
 
 		if (bp->link_vars.duplex == DUPLEX_FULL)
 			printk("full duplex");
@@ -2341,8 +2352,14 @@ static void bnx2x_calc_vn_weight_sum(struct bnx2x *bp)
 	}
 
 	/* ... only if all min rates are zeros - disable fairness */
-	if (all_zero)
-		bp->vn_weight_sum = 0;
+	if (all_zero) {
+		bp->cmng.flags.cmng_enables &=
+					~CMNG_FLAGS_PER_PORT_FAIRNESS_VN;
+		DP(NETIF_MSG_IFUP, "All MIN values are zeroes"
+		   "  fairness will be disabled\n");
+	} else
+		bp->cmng.flags.cmng_enables |=
+					CMNG_FLAGS_PER_PORT_FAIRNESS_VN;
 }
 
 static void bnx2x_init_vn_minmax(struct bnx2x *bp, int func)
@@ -2361,17 +2378,14 @@ static void bnx2x_init_vn_minmax(struct bnx2x *bp, int func)
 	} else {
 		vn_min_rate = ((vn_cfg & FUNC_MF_CFG_MIN_BW_MASK) >>
 				FUNC_MF_CFG_MIN_BW_SHIFT) * 100;
-		/* If fairness is enabled (not all min rates are zeroes) and
-		   if current min rate is zero - set it to 1.
-		   This is a requirement of the algorithm. */
-		if (bp->vn_weight_sum && (vn_min_rate == 0))
+		/* If min rate is zero - set it to 1 */
+		if (!vn_min_rate)
 			vn_min_rate = DEF_MIN_RATE;
 		vn_max_rate = ((vn_cfg & FUNC_MF_CFG_MAX_BW_MASK) >>
 				FUNC_MF_CFG_MAX_BW_SHIFT) * 100;
 	}
-
 	DP(NETIF_MSG_IFUP,
-	   "func %d: vn_min_rate=%d  vn_max_rate=%d  vn_weight_sum=%d\n",
+	   "func %d: vn_min_rate %d  vn_max_rate %d  vn_weight_sum %d\n",
 	   func, vn_min_rate, vn_max_rate, bp->vn_weight_sum);
 
 	memset(&m_rs_vn, 0, sizeof(struct rate_shaping_vars_per_vn));
@@ -2442,8 +2456,7 @@ static void bnx2x_link_attn(struct bnx2x *bp)
 			memset(&(pstats->mac_stx[0]), 0,
 			       sizeof(struct mac_stx));
 		}
-		if ((bp->state == BNX2X_STATE_OPEN) ||
-		    (bp->state == BNX2X_STATE_DISABLED))
+		if (bp->state == BNX2X_STATE_OPEN)
 			bnx2x_stats_handle(bp, STATS_EVENT_LINK_UP);
 	}
 
@@ -2486,9 +2499,7 @@ static void bnx2x_link_attn(struct bnx2x *bp)
 
 static void bnx2x__link_status_update(struct bnx2x *bp)
 {
-	int func = BP_FUNC(bp);
-
-	if (bp->state != BNX2X_STATE_OPEN)
+	if ((bp->state != BNX2X_STATE_OPEN) || (bp->flags & MF_FUNC_DIS))
 		return;
 
 	bnx2x_link_status_update(&bp->link_params, &bp->link_vars);
@@ -2498,7 +2509,6 @@ static void bnx2x__link_status_update(struct bnx2x *bp)
 	else
 		bnx2x_stats_handle(bp, STATS_EVENT_STOP);
 
-	bp->mf_config = SHMEM_RD(bp, mf_cfg.func_mf_config[func].config);
 	bnx2x_calc_vn_weight_sum(bp);
 
 	/* indicate link status */
@@ -2538,6 +2548,7 @@ u32 bnx2x_fw_command(struct bnx2x *bp, u32 command)
 	u32 cnt = 1;
 	u8 delay = CHIP_REV_IS_SLOW(bp) ? 100 : 10;
 
+	mutex_lock(&bp->fw_mb_mutex);
 	SHMEM_WR(bp, func_mb[func].drv_mb_header, (command | seq));
 	DP(BNX2X_MSG_MCP, "wrote command (%x) to FW MB\n", (command | seq));
 
@@ -2547,8 +2558,8 @@ u32 bnx2x_fw_command(struct bnx2x *bp, u32 command)
 
 		rc = SHMEM_RD(bp, func_mb[func].fw_mb_header);
 
-		/* Give the FW up to 2 second (200*10ms) */
-	} while ((seq != (rc & FW_MSG_SEQ_NUMBER_MASK)) && (cnt++ < 200));
+		/* Give the FW up to 5 second (500*10ms) */
+	} while ((seq != (rc & FW_MSG_SEQ_NUMBER_MASK)) && (cnt++ < 500));
 
 	DP(BNX2X_MSG_MCP, "[after %d ms] read (%x) seq is (%x) from FW MB\n",
 	   cnt*delay, rc, seq);
@@ -2562,6 +2573,7 @@ u32 bnx2x_fw_command(struct bnx2x *bp, u32 command)
 		bnx2x_fw_dump(bp);
 		rc = 0;
 	}
+	mutex_unlock(&bp->fw_mb_mutex);
 
 	return rc;
 }
@@ -2573,20 +2585,11 @@ static void bnx2x_set_rx_mode(struct net_device *dev);
 static void bnx2x_e1h_disable(struct bnx2x *bp)
 {
 	int port = BP_PORT(bp);
-	int i;
-
-	bp->rx_mode = BNX2X_RX_MODE_NONE;
-	bnx2x_set_storm_rx_mode(bp);
 
 	netif_tx_disable(bp->dev);
 	bp->dev->trans_start = jiffies;	/* prevent tx timeout */
 
 	REG_WR(bp, NIG_REG_LLH0_FUNC_EN + port*8, 0);
-
-	bnx2x_set_eth_mac_addr_e1h(bp, 0);
-
-	for (i = 0; i < MC_HASH_SIZE; i++)
-		REG_WR(bp, MC_HASH_OFFSET(bp, i), 0);
 
 	netif_carrier_off(bp->dev);
 }
@@ -2597,13 +2600,13 @@ static void bnx2x_e1h_enable(struct bnx2x *bp)
 
 	REG_WR(bp, NIG_REG_LLH0_FUNC_EN + port*8, 1);
 
-	bnx2x_set_eth_mac_addr_e1h(bp, 1);
-
 	/* Tx queue should be only reenabled */
 	netif_tx_wake_all_queues(bp->dev);
 
-	/* Initialize the receive filter. */
-	bnx2x_set_rx_mode(bp->dev);
+	/*
+	 * Should not call netif_carrier_on since it will be called if the link
+	 * is up when checking for link state
+	 */
 }
 
 static void bnx2x_update_min_max(struct bnx2x *bp)
@@ -2642,21 +2645,23 @@ static void bnx2x_update_min_max(struct bnx2x *bp)
 
 static void bnx2x_dcc_event(struct bnx2x *bp, u32 dcc_event)
 {
-	int func = BP_FUNC(bp);
-
 	DP(BNX2X_MSG_MCP, "dcc_event 0x%x\n", dcc_event);
-	bp->mf_config = SHMEM_RD(bp, mf_cfg.func_mf_config[func].config);
 
 	if (dcc_event & DRV_STATUS_DCC_DISABLE_ENABLE_PF) {
 
+		/*
+		 * This is the only place besides the function initialization
+		 * where the bp->flags can change so it is done without any
+		 * locks
+		 */
 		if (bp->mf_config & FUNC_MF_CFG_FUNC_DISABLED) {
 			DP(NETIF_MSG_IFDOWN, "mf_cfg function disabled\n");
-			bp->state = BNX2X_STATE_DISABLED;
+			bp->flags |= MF_FUNC_DIS;
 
 			bnx2x_e1h_disable(bp);
 		} else {
 			DP(NETIF_MSG_IFUP, "mf_cfg function enabled\n");
-			bp->state = BNX2X_STATE_OPEN;
+			bp->flags &= ~MF_FUNC_DIS;
 
 			bnx2x_e1h_enable(bp);
 		}
@@ -3075,6 +3080,8 @@ static inline void bnx2x_attn_int_deasserted3(struct bnx2x *bp, u32 attn)
 			int func = BP_FUNC(bp);
 
 			REG_WR(bp, MISC_REG_AEU_GENERAL_ATTN_12 + func*4, 0);
+			bp->mf_config = SHMEM_RD(bp,
+					   mf_cfg.func_mf_config[func].config);
 			val = SHMEM_RD(bp, func_mb[func].drv_status);
 			if (val & DRV_STATUS_DCC_EVENT_MASK)
 				bnx2x_dcc_event(bp,
@@ -4702,8 +4709,7 @@ static void bnx2x_timer(unsigned long data)
 		}
 	}
 
-	if ((bp->state == BNX2X_STATE_OPEN) ||
-	    (bp->state == BNX2X_STATE_DISABLED))
+	if (bp->state == BNX2X_STATE_OPEN)
 		bnx2x_stats_handle(bp, STATS_EVENT_UPDATE);
 
 timer_restart:
@@ -5567,20 +5573,18 @@ static void bnx2x_init_internal_func(struct bnx2x *bp)
 		bp->link_vars.line_speed = SPEED_10000;
 		bnx2x_init_port_minmax(bp);
 
+		if (!BP_NOMCP(bp))
+			bp->mf_config =
+			      SHMEM_RD(bp, mf_cfg.func_mf_config[func].config);
 		bnx2x_calc_vn_weight_sum(bp);
 
 		for (vn = VN_0; vn < E1HVN_MAX; vn++)
 			bnx2x_init_vn_minmax(bp, 2*vn + port);
 
 		/* Enable rate shaping and fairness */
-		bp->cmng.flags.cmng_enables =
+		bp->cmng.flags.cmng_enables |=
 					CMNG_FLAGS_PER_PORT_RATE_SHAPING_VN;
-		if (bp->vn_weight_sum)
-			bp->cmng.flags.cmng_enables |=
-					CMNG_FLAGS_PER_PORT_FAIRNESS_VN;
-		else
-			DP(NETIF_MSG_IFUP, "All MIN values are zeroes"
-			   "  fairness will be disabled\n");
+
 	} else {
 		/* rate shaping and fairness are disabled */
 		DP(NETIF_MSG_IFUP,
@@ -7638,7 +7642,7 @@ static int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 	if (CHIP_IS_E1H(bp))
 		if (bp->mf_config & FUNC_MF_CFG_FUNC_DISABLED) {
 			DP(NETIF_MSG_IFUP, "mf_cfg function disabled\n");
-			bp->state = BNX2X_STATE_DISABLED;
+			bp->flags |= MF_FUNC_DIS;
 		}
 
 	if (bp->state == BNX2X_STATE_OPEN) {
@@ -8965,6 +8969,7 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
 	smp_wmb(); /* Ensure that bp->intr_sem update is SMP-safe */
 
 	mutex_init(&bp->port.phy_mutex);
+	mutex_init(&bp->fw_mb_mutex);
 #ifdef BCM_CNIC
 	mutex_init(&bp->cnic_mutex);
 #endif
@@ -9043,20 +9048,23 @@ static int bnx2x_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	cmd->supported = bp->port.supported;
 	cmd->advertising = bp->port.advertising;
 
-	if (netif_carrier_ok(dev)) {
+	if ((bp->state == BNX2X_STATE_OPEN) &&
+	    !(bp->flags & MF_FUNC_DIS) &&
+	    (bp->link_vars.link_up)) {
 		cmd->speed = bp->link_vars.line_speed;
 		cmd->duplex = bp->link_vars.duplex;
-	} else {
-		cmd->speed = bp->link_params.req_line_speed;
-		cmd->duplex = bp->link_params.req_duplex;
-	}
-	if (IS_E1HMF(bp)) {
-		u16 vn_max_rate;
+		if (IS_E1HMF(bp)) {
+			u16 vn_max_rate;
 
-		vn_max_rate = ((bp->mf_config & FUNC_MF_CFG_MAX_BW_MASK) >>
+			vn_max_rate =
+				((bp->mf_config & FUNC_MF_CFG_MAX_BW_MASK) >>
 				FUNC_MF_CFG_MAX_BW_SHIFT) * 100;
-		if (vn_max_rate < cmd->speed)
-			cmd->speed = vn_max_rate;
+			if (vn_max_rate < cmd->speed)
+				cmd->speed = vn_max_rate;
+		}
+	} else {
+		cmd->speed = -1;
+		cmd->duplex = -1;
 	}
 
 	if (bp->link_params.switch_cfg == SWITCH_CFG_10G) {
@@ -9440,6 +9448,9 @@ static int bnx2x_nway_reset(struct net_device *dev)
 static u32 bnx2x_get_link(struct net_device *dev)
 {
 	struct bnx2x *bp = netdev_priv(dev);
+
+	if (bp->flags & MF_FUNC_DIS)
+		return 0;
 
 	return bp->link_vars.link_up;
 }
@@ -9845,8 +9856,7 @@ static int bnx2x_set_eeprom(struct net_device *dev,
 
 	} else if (eeprom->magic == 0x50485952) {
 		/* 'PHYR' (0x50485952): re-init link after FW upgrade */
-		if ((bp->state == BNX2X_STATE_OPEN) ||
-		    (bp->state == BNX2X_STATE_DISABLED)) {
+		if (bp->state == BNX2X_STATE_OPEN) {
 			bnx2x_acquire_phy_lock(bp);
 			rc |= bnx2x_link_reset(&bp->link_params,
 					       &bp->link_vars, 1);
@@ -10539,7 +10549,7 @@ static void bnx2x_self_test(struct net_device *dev,
 		/* disable input for TX port IF */
 		REG_WR(bp, NIG_REG_EGRESS_UMP0_IN_EN + port*4, 0);
 
-		link_up = bp->link_vars.link_up;
+		link_up = (bnx2x_link_test(bp) == 0);
 		bnx2x_nic_unload(bp, UNLOAD_NORMAL);
 		bnx2x_nic_load(bp, LOAD_DIAG);
 		/* wait until link state is restored */
