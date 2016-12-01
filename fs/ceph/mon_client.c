@@ -199,10 +199,12 @@ static void handle_subscribe_ack(struct ceph_mon_client *monc,
 				 struct ceph_msg *msg)
 {
 	unsigned seconds;
-	void *p = msg->front.iov_base;
-	void *end = p + msg->front.iov_len;
+	struct ceph_mon_subscribe_ack *h = msg->front.iov_base;
 
-	ceph_decode_32_safe(&p, end, seconds, bad);
+	if (msg->front.iov_len < sizeof(*h))
+		goto bad;
+	seconds = le32_to_cpu(h->duration);
+
 	mutex_lock(&monc->mutex);
 	if (monc->hunting) {
 		pr_info("mon%d %s session established\n",
@@ -541,7 +543,8 @@ int ceph_monc_init(struct ceph_mon_client *monc, struct ceph_client *cl)
 	err = ceph_msgpool_init(&monc->msgpool_mount_ack, 4096, 1, false);
 	if (err < 0)
 		goto out;
-	err = ceph_msgpool_init(&monc->msgpool_subscribe_ack, 8, 1, false);
+	err = ceph_msgpool_init(&monc->msgpool_subscribe_ack,
+			       sizeof(struct ceph_mon_subscribe_ack), 1, false);
 	if (err < 0)
 		goto out;
 	err = ceph_msgpool_init(&monc->msgpool_statfs_reply,
@@ -636,14 +639,15 @@ static struct ceph_msg *mon_alloc_msg(struct ceph_connection *con,
 {
 	struct ceph_mon_client *monc = con->private;
 	int type = le16_to_cpu(hdr->type);
+	int front = le32_to_cpu(hdr->front_len);
 
 	switch (type) {
 	case CEPH_MSG_CLIENT_MOUNT_ACK:
-		return ceph_msgpool_get(&monc->msgpool_mount_ack);
+		return ceph_msgpool_get(&monc->msgpool_mount_ack, front);
 	case CEPH_MSG_MON_SUBSCRIBE_ACK:
-		return ceph_msgpool_get(&monc->msgpool_subscribe_ack);
+		return ceph_msgpool_get(&monc->msgpool_subscribe_ack, front);
 	case CEPH_MSG_STATFS_REPLY:
-		return ceph_msgpool_get(&monc->msgpool_statfs_reply);
+		return ceph_msgpool_get(&monc->msgpool_statfs_reply, front);
 	}
 	return ceph_alloc_msg(con, hdr);
 }
