@@ -38,6 +38,25 @@
 #define MAX_EVENT_NAME_LEN 64
 #define KPROBE_EVENT_SYSTEM "kprobes"
 
+/* Reserved field names */
+#define FIELD_STRING_IP "__probe_ip"
+#define FIELD_STRING_NARGS "__probe_nargs"
+#define FIELD_STRING_RETIP "__probe_ret_ip"
+#define FIELD_STRING_FUNC "__probe_func"
+
+const char *reserved_field_names[] = {
+	"common_type",
+	"common_flags",
+	"common_preempt_count",
+	"common_pid",
+	"common_tgid",
+	"common_lock_depth",
+	FIELD_STRING_IP,
+	FIELD_STRING_NARGS,
+	FIELD_STRING_RETIP,
+	FIELD_STRING_FUNC,
+};
+
 /* currently, trace_kprobe only supports X86. */
 
 struct fetch_func {
@@ -215,22 +234,22 @@ static int probe_arg_string(char *buf, size_t n, struct fetch_func *ff)
 	int ret = -EINVAL;
 
 	if (ff->func == fetch_argument)
-		ret = snprintf(buf, n, "$a%lu", (unsigned long)ff->data);
+		ret = snprintf(buf, n, "$arg%lu", (unsigned long)ff->data);
 	else if (ff->func == fetch_register) {
 		const char *name;
 		name = regs_query_register_name((unsigned int)((long)ff->data));
 		ret = snprintf(buf, n, "%%%s", name);
 	} else if (ff->func == fetch_stack)
-		ret = snprintf(buf, n, "$s%lu", (unsigned long)ff->data);
+		ret = snprintf(buf, n, "$stack%lu", (unsigned long)ff->data);
 	else if (ff->func == fetch_memory)
 		ret = snprintf(buf, n, "@0x%p", ff->data);
 	else if (ff->func == fetch_symbol) {
 		struct symbol_cache *sc = ff->data;
 		ret = snprintf(buf, n, "@%s%+ld", sc->symbol, sc->offset);
 	} else if (ff->func == fetch_retvalue)
-		ret = snprintf(buf, n, "$rv");
+		ret = snprintf(buf, n, "$retval");
 	else if (ff->func == fetch_stack_address)
-		ret = snprintf(buf, n, "$sa");
+		ret = snprintf(buf, n, "$stack");
 	else if (ff->func == fetch_indirect) {
 		struct indirect_fetch_data *id = ff->data;
 		size_t l = 0;
@@ -427,40 +446,36 @@ static int parse_probe_vars(char *arg, struct fetch_func *ff, int is_return)
 	int ret = 0;
 	unsigned long param;
 
-	switch (arg[0]) {
-	case 'a':	/* argument */
-		ret = strict_strtoul(arg + 1, 10, &param);
-		if (ret || param > PARAM_MAX_ARGS)
-			ret = -EINVAL;
-		else {
-			ff->func = fetch_argument;
-			ff->data = (void *)param;
-		}
-		break;
-	case 'r':	/* retval or retaddr */
-		if (is_return && arg[1] == 'v') {
+	if (strcmp(arg, "retval") == 0) {
+		if (is_return) {
 			ff->func = fetch_retvalue;
 			ff->data = NULL;
 		} else
 			ret = -EINVAL;
-		break;
-	case 's':	/* stack */
-		if (arg[1] == 'a') {
+	} else if (strncmp(arg, "stack", 5) == 0) {
+		if (arg[5] == '\0') {
 			ff->func = fetch_stack_address;
 			ff->data = NULL;
-		} else {
-			ret = strict_strtoul(arg + 1, 10, &param);
+		} else if (isdigit(arg[5])) {
+			ret = strict_strtoul(arg + 5, 10, &param);
 			if (ret || param > PARAM_MAX_STACK)
 				ret = -EINVAL;
 			else {
 				ff->func = fetch_stack;
 				ff->data = (void *)param;
 			}
+		} else
+			ret = -EINVAL;
+	} else if (strncmp(arg, "arg", 3) == 0 && isdigit(arg[3])) {
+		ret = strict_strtoul(arg + 3, 10, &param);
+		if (ret || param > PARAM_MAX_ARGS)
+			ret = -EINVAL;
+		else {
+			ff->func = fetch_argument;
+			ff->data = (void *)param;
 		}
-		break;
-	default:
+	} else
 		ret = -EINVAL;
-	}
 	return ret;
 }
 
@@ -541,6 +556,20 @@ static int parse_probe_arg(char *arg, struct fetch_func *ff, int is_return)
 	return ret;
 }
 
+/* Return 1 if name is reserved or already used by another argument */
+static int conflict_field_name(const char *name,
+			       struct probe_arg *args, int narg)
+{
+	int i;
+	for (i = 0; i < ARRAY_SIZE(reserved_field_names); i++)
+		if (strcmp(reserved_field_names[i], name) == 0)
+			return 1;
+	for (i = 0; i < narg; i++)
+		if (strcmp(args[i].name, name) == 0)
+			return 1;
+	return 0;
+}
+
 static int create_trace_probe(int argc, char **argv)
 {
 	/*
@@ -548,10 +577,10 @@ static int create_trace_probe(int argc, char **argv)
 	 *  - Add kprobe: p[:[GRP/]EVENT] KSYM[+OFFS]|KADDR [FETCHARGS]
 	 *  - Add kretprobe: r[:[GRP/]EVENT] KSYM[+0] [FETCHARGS]
 	 * Fetch args:
-	 *  $aN	: fetch Nth of function argument. (N:0-)
-	 *  $rv	: fetch return value
-	 *  $sa	: fetch stack address
-	 *  $sN	: fetch Nth of stack (N:0-)
+	 *  $argN	: fetch Nth of function argument. (N:0-)
+	 *  $retval	: fetch return value
+	 *  $stack	: fetch stack address
+	 *  $stackN	: fetch Nth of stack (N:0-)
 	 *  @ADDR	: fetch memory at ADDR (ADDR should be in kernel)
 	 *  @SYM[+|-offs] : fetch memory at SYM +|- offs (SYM is a data symbol)
 	 *  %REG	: fetch register REG
@@ -641,6 +670,12 @@ static int create_trace_probe(int argc, char **argv)
 			*arg++ = '\0';
 		else
 			arg = argv[i];
+
+		if (conflict_field_name(argv[i], tp->args, i)) {
+			ret = -EINVAL;
+			goto error;
+		}
+
 		tp->args[i].name = kstrdup(argv[i], GFP_KERNEL);
 
 		/* Parse fetch argument */
@@ -1043,8 +1078,8 @@ static int kprobe_event_define_fields(struct ftrace_event_call *event_call)
 	if (!ret)
 		return ret;
 
-	DEFINE_FIELD(unsigned long, ip, "ip", 0);
-	DEFINE_FIELD(int, nargs, "nargs", 1);
+	DEFINE_FIELD(unsigned long, ip, FIELD_STRING_IP, 0);
+	DEFINE_FIELD(int, nargs, FIELD_STRING_NARGS, 1);
 	/* Set argument names as fields */
 	for (i = 0; i < tp->nr_args; i++)
 		DEFINE_FIELD(unsigned long, args[i], tp->args[i].name, 0);
@@ -1061,9 +1096,9 @@ static int kretprobe_event_define_fields(struct ftrace_event_call *event_call)
 	if (!ret)
 		return ret;
 
-	DEFINE_FIELD(unsigned long, func, "func", 0);
-	DEFINE_FIELD(unsigned long, ret_ip, "ret_ip", 0);
-	DEFINE_FIELD(int, nargs, "nargs", 1);
+	DEFINE_FIELD(unsigned long, func, FIELD_STRING_FUNC, 0);
+	DEFINE_FIELD(unsigned long, ret_ip, FIELD_STRING_RETIP, 0);
+	DEFINE_FIELD(int, nargs, FIELD_STRING_NARGS, 1);
 	/* Set argument names as fields */
 	for (i = 0; i < tp->nr_args; i++)
 		DEFINE_FIELD(unsigned long, args[i], tp->args[i].name, 0);
@@ -1112,15 +1147,16 @@ static int kprobe_event_show_format(struct ftrace_event_call *call,
 	int ret, i;
 	struct trace_probe *tp = (struct trace_probe *)call->data;
 
-	SHOW_FIELD(unsigned long, ip, "ip");
-	SHOW_FIELD(int, nargs, "nargs");
+	SHOW_FIELD(unsigned long, ip, FIELD_STRING_IP);
+	SHOW_FIELD(int, nargs, FIELD_STRING_NARGS);
 
 	/* Show fields */
 	for (i = 0; i < tp->nr_args; i++)
 		SHOW_FIELD(unsigned long, args[i], tp->args[i].name);
 	trace_seq_puts(s, "\n");
 
-	return __probe_event_show_format(s, tp, "(%lx)", "REC->ip");
+	return __probe_event_show_format(s, tp, "(%lx)",
+					 "REC->" FIELD_STRING_IP);
 }
 
 static int kretprobe_event_show_format(struct ftrace_event_call *call,
@@ -1130,9 +1166,9 @@ static int kretprobe_event_show_format(struct ftrace_event_call *call,
 	int ret, i;
 	struct trace_probe *tp = (struct trace_probe *)call->data;
 
-	SHOW_FIELD(unsigned long, func, "func");
-	SHOW_FIELD(unsigned long, ret_ip, "ret_ip");
-	SHOW_FIELD(int, nargs, "nargs");
+	SHOW_FIELD(unsigned long, func, FIELD_STRING_FUNC);
+	SHOW_FIELD(unsigned long, ret_ip, FIELD_STRING_RETIP);
+	SHOW_FIELD(int, nargs, FIELD_STRING_NARGS);
 
 	/* Show fields */
 	for (i = 0; i < tp->nr_args; i++)
@@ -1140,7 +1176,8 @@ static int kretprobe_event_show_format(struct ftrace_event_call *call,
 	trace_seq_puts(s, "\n");
 
 	return __probe_event_show_format(s, tp, "(%lx <- %lx)",
-					  "REC->func, REC->ret_ip");
+					 "REC->" FIELD_STRING_FUNC
+					 ", REC->" FIELD_STRING_RETIP);
 }
 
 #ifdef CONFIG_EVENT_PROFILE
