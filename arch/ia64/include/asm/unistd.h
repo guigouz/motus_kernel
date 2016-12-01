@@ -311,12 +311,12 @@
 #define __NR_preadv			1319
 #define __NR_pwritev			1320
 #define __NR_rt_tgsigqueueinfo		1321
-#define __NR_accept4			1334
+#define __NR_rt_recvmmsg		1322
 
 #ifdef __KERNEL__
 
 
-#define NR_syscalls			311 /* length of syscall table */
+#define NR_syscalls			299 /* length of syscall table */
 
 /*
  * The following defines stop scripts/checksyscalls.sh from complaining about
@@ -367,7 +367,7 @@ asmlinkage unsigned long sys_mmap2(
 				int fd, long pgoff);
 struct pt_regs;
 struct sigaction;
-long sys_execve(const char __user *filename, char __user * __user *argv,
+long sys_execve(char __user *filename, char __user * __user *argv,
 			   char __user * __user *envp, struct pt_regs *regs);
 asmlinkage long sys_ia64_pipe(void);
 asmlinkage long sys_rt_sigaction(int sig,

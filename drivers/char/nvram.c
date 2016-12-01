@@ -38,7 +38,6 @@
 #define NVRAM_VERSION	"1.3"
 
 #include <linux/module.h>
-#include <linux/smp_lock.h>
 #include <linux/nvram.h>
 
 #define PC		1
@@ -214,7 +213,6 @@ void nvram_set_checksum(void)
 
 static loff_t nvram_llseek(struct file *file, loff_t offset, int origin)
 {
-	lock_kernel();
 	switch (origin) {
 	case 0:
 		/* nothing to do */
@@ -226,7 +224,7 @@ static loff_t nvram_llseek(struct file *file, loff_t offset, int origin)
 		offset += NVRAM_BYTES;
 		break;
 	}
-	unlock_kernel();
+
 	return (offset >= 0) ? (file->f_pos = offset) : -EINVAL;
 }
 
@@ -337,14 +335,12 @@ static int nvram_ioctl(struct inode *inode, struct file *file,
 
 static int nvram_open(struct inode *inode, struct file *file)
 {
-	lock_kernel();
 	spin_lock(&nvram_state_lock);
 
 	if ((nvram_open_cnt && (file->f_flags & O_EXCL)) ||
 	    (nvram_open_mode & NVRAM_EXCL) ||
 	    ((file->f_mode & FMODE_WRITE) && (nvram_open_mode & NVRAM_WRITE))) {
 		spin_unlock(&nvram_state_lock);
-		unlock_kernel();
 		return -EBUSY;
 	}
 
@@ -355,7 +351,6 @@ static int nvram_open(struct inode *inode, struct file *file)
 	nvram_open_cnt++;
 
 	spin_unlock(&nvram_state_lock);
-	unlock_kernel();
 
 	return 0;
 }
