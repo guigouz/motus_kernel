@@ -143,12 +143,12 @@ static int __cmd_trace(void)
 	int ret, rc = EXIT_FAILURE;
 	unsigned long offset = 0;
 	unsigned long head = 0;
+	unsigned long shift;
 	struct stat perf_stat;
 	event_t *event;
 	uint32_t size;
 	char *buf;
 
-	trace_report();
 	register_idle_thread(&threads, &last_match);
 
 	input = open(input_name, O_RDONLY);
@@ -180,6 +180,10 @@ static int __cmd_trace(void)
 		return EXIT_FAILURE;
 	}
 
+	shift = page_size * (head / page_size);
+	offset += shift;
+	head -= shift;
+
 remap:
 	buf = (char *)mmap(NULL, page_size * mmap_window, PROT_READ,
 			   MAP_SHARED, input, offset);
@@ -192,9 +196,9 @@ more:
 	event = (event_t *)(buf + head);
 
 	if (head + event->header.size >= page_size * mmap_window) {
-		unsigned long shift = page_size * (head / page_size);
 		int res;
 
+		shift = page_size * (head / page_size);
 		res = munmap(buf, page_size * mmap_window);
 		assert(res == 0);
 
