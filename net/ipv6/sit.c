@@ -161,9 +161,11 @@ static void ipip6_tunnel_link(struct sit_net *sitn, struct ip_tunnel *t)
 	write_unlock_bh(&ipip6_lock);
 }
 
-static void ipip6_tunnel_clone_6rd(struct ip_tunnel *t, struct sit_net *sitn)
+static void ipip6_tunnel_clone_6rd(struct net_device *dev, struct sit_net *sitn)
 {
 #ifdef CONFIG_IPV6_SIT_6RD
+	struct ip_tunnel *t = netdev_priv(dev);
+
 	if (t->dev == sitn->fb_tunnel_dev) {
 		ipv6_addr_set(&t->ip6rd.prefix, htonl(0x20020000), 0, 0, 0);
 		t->ip6rd.relay_prefix = 0;
@@ -219,6 +221,7 @@ static struct ip_tunnel * ipip6_tunnel_locate(struct net *net,
 
 	nt->parms = *parms;
 	ipip6_tunnel_init(dev);
+	ipip6_tunnel_clone_6rd(dev, sitn);
 
 	if (parms->i_flags & SIT_ISATAP)
 		dev->priv_flags |= IFF_ISATAP;
@@ -227,8 +230,6 @@ static struct ip_tunnel * ipip6_tunnel_locate(struct net *net,
 		goto failed_free;
 
 	dev_hold(dev);
-
-	ipip6_tunnel_clone_6rd(t, sitn);
 
 	ipip6_tunnel_link(sitn, nt);
 	return nt;
@@ -568,12 +569,12 @@ __be32 try_6rd(struct in6_addr *v6dst, struct ip_tunnel *tunnel)
 		pbw0 = tunnel->ip6rd.prefixlen >> 5;
 		pbi0 = tunnel->ip6rd.prefixlen & 0x1f;
 
-		d = (ntohl(tunnel->ip6rd.prefix.s6_addr32[pbw0]) << pbi0) >>
+		d = (ntohl(v6dst->s6_addr32[pbw0]) << pbi0) >>
 		    tunnel->ip6rd.relay_prefixlen;
 
 		pbi1 = pbi0 - tunnel->ip6rd.relay_prefixlen;
 		if (pbi1 > 0)
-			d |= ntohl(tunnel->ip6rd.prefix.s6_addr32[pbw0 + 1]) >>
+			d |= ntohl(v6dst->s6_addr32[pbw0 + 1]) >>
 			     (32 - pbi1);
 
 		dst = tunnel->ip6rd.relay_prefix | htonl(d);
@@ -1013,9 +1014,12 @@ ipip6_tunnel_ioctl (struct net_device *dev, struct ifreq *ifr, int cmd)
 					 ip6rd.prefixlen);
 			if (!ipv6_addr_equal(&prefix, &ip6rd.prefix))
 				goto done;
-			relay_prefix = ip6rd.relay_prefix &
-				       htonl(0xffffffffUL <<
-					     (32 - ip6rd.relay_prefixlen));
+			if (ip6rd.relay_prefixlen)
+				relay_prefix = ip6rd.relay_prefix &
+					       htonl(0xffffffffUL <<
+						     (32 - ip6rd.relay_prefixlen));
+			else
+				relay_prefix = 0;
 			if (relay_prefix != ip6rd.relay_prefix)
 				goto done;
 
@@ -1024,7 +1028,7 @@ ipip6_tunnel_ioctl (struct net_device *dev, struct ifreq *ifr, int cmd)
 			t->ip6rd.prefixlen = ip6rd.prefixlen;
 			t->ip6rd.relay_prefixlen = ip6rd.relay_prefixlen;
 		} else
-			ipip6_tunnel_clone_6rd(t, sitn);
+			ipip6_tunnel_clone_6rd(dev, sitn);
 
 		err = 0;
 		break;
@@ -1148,6 +1152,7 @@ static int sit_init_net(struct net *net)
 	dev_net_set(sitn->fb_tunnel_dev, net);
 
 	ipip6_fb_tunnel_init(sitn->fb_tunnel_dev);
+	ipip6_tunnel_clone_6rd(sitn->fb_tunnel_dev, sitn);
 
 	if ((err = register_netdev(sitn->fb_tunnel_dev)))
 		goto err_reg_dev;
