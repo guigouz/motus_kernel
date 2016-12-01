@@ -456,9 +456,6 @@ static void iwl3945_build_tx_cmd_basic(struct iwl_priv *priv,
 			tx->timeout.pm_frame_timeout = cpu_to_le16(2);
 	} else {
 		tx->timeout.pm_frame_timeout = 0;
-#ifdef CONFIG_IWLWIFI_LEDS
-		priv->rxtxpackets += le16_to_cpu(cmd->cmd.tx.len);
-#endif
 	}
 
 	tx->driver_txop = 0;
@@ -1408,6 +1405,9 @@ static void iwl3945_rx_handle(struct iwl_priv *priv)
 				PCI_DMA_FROMDEVICE);
 		pkt = (struct iwl_rx_packet *)rxb->skb->data;
 
+		trace_iwlwifi_dev_rx(priv, pkt,
+			le32_to_cpu(pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK);
+
 		/* Reclaim a command buffer only if this packet is a response
 		 *   to a (driver-originated) command.
 		 * If the packet (e.g. Rx frame) originated from uCode,
@@ -1553,8 +1553,9 @@ void iwl3945_dump_nic_error_log(struct iwl_priv *priv)
 			"%-13s (#%d) %010u 0x%05X 0x%05X 0x%05X 0x%05X %u\n\n",
 			desc_lookup(desc), desc, time, blink1, blink2,
 			ilink1, ilink2, data1);
+		trace_iwlwifi_dev_ucode_error(priv, desc, time, data1, 0,
+					0, blink1, blink2, ilink1, ilink2);
 	}
-
 }
 
 #define EVENT_START_OFFSET  (6 * sizeof(u32))
@@ -1594,10 +1595,12 @@ static void iwl3945_print_event_log(struct iwl_priv *priv, u32 start_idx,
 		if (mode == 0) {
 			/* data, ev */
 			IWL_ERR(priv, "0x%08x\t%04u\n", time, ev);
+			trace_iwlwifi_dev_ucode_event(priv, 0, time, ev);
 		} else {
 			data = iwl_read_targ_mem(priv, ptr);
 			ptr += sizeof(u32);
 			IWL_ERR(priv, "%010u\t0x%08x\t%04u\n", time, data, ev);
+			trace_iwlwifi_dev_ucode_event(priv, time, data, ev);
 		}
 	}
 }
@@ -2481,7 +2484,7 @@ static void iwl3945_alive_start(struct iwl_priv *priv)
 
 	iwl3945_reg_txpower_periodic(priv);
 
-	iwl3945_led_register(priv);
+	iwl_leds_init(priv);
 
 	IWL_DEBUG_INFO(priv, "ALIVE processing complete.\n");
 	set_bit(STATUS_READY, &priv->status);
@@ -2519,7 +2522,6 @@ static void __iwl3945_down(struct iwl_priv *priv)
 	if (!exit_pending)
 		set_bit(STATUS_EXIT_PENDING, &priv->status);
 
-	iwl3945_led_unregister(priv);
 	iwl_clear_stations_table(priv);
 
 	/* Unblock any waiting calls */
@@ -3153,6 +3155,8 @@ static int iwl3945_mac_start(struct ieee80211_hw *hw)
 	/* ucode is running and will send rfkill notifications,
 	 * no need to poll the killswitch state anymore */
 	cancel_delayed_work(&priv->rfkill_poll);
+
+	iwl_led_start(priv);
 
 	priv->is_open = 1;
 	IWL_DEBUG_MAC80211(priv, "leave\n");

@@ -187,11 +187,18 @@ struct iwl_lib_ops {
 	struct iwl_temp_ops temp_ops;
 };
 
+struct iwl_led_ops {
+	int (*cmd)(struct iwl_priv *priv, struct iwl_led_cmd *led_cmd);
+	int (*on)(struct iwl_priv *priv);
+	int (*off)(struct iwl_priv *priv);
+};
+
 struct iwl_ops {
 	const struct iwl_ucode_ops *ucode;
 	const struct iwl_lib_ops *lib;
 	const struct iwl_hcmd_ops *hcmd;
 	const struct iwl_hcmd_utils_ops *utils;
+	const struct iwl_led_ops *led;
 };
 
 struct iwl_mod_params {
@@ -580,6 +587,7 @@ void iwlcore_free_geos(struct iwl_priv *priv);
 #define STATUS_HCMD_SYNC_ACTIVE	1	/* sync host command in progress */
 #define STATUS_INT_ENABLED	2
 #define STATUS_RF_KILL_HW	3
+#define STATUS_CT_KILL		4
 #define STATUS_INIT		5
 #define STATUS_ALIVE		6
 #define STATUS_READY		7
@@ -624,6 +632,11 @@ static inline int iwl_is_rfkill(struct iwl_priv *priv)
 	return iwl_is_rfkill_hw(priv);
 }
 
+static inline int iwl_is_ctkill(struct iwl_priv *priv)
+{
+	return test_bit(STATUS_CT_KILL, &priv->status);
+}
+
 static inline int iwl_is_ready_rf(struct iwl_priv *priv)
 {
 
@@ -645,6 +658,8 @@ extern void iwl_rx_reply_rx_phy(struct iwl_priv *priv,
 				    struct iwl_rx_mem_buffer *rxb);
 void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
 					   struct iwl_rx_mem_buffer *rxb);
+void iwl_apm_stop(struct iwl_priv *priv);
+int iwl_apm_stop_master(struct iwl_priv *priv);
 
 void iwl_setup_rxon_timing(struct iwl_priv *priv);
 static inline int iwl_send_rxon_assoc(struct iwl_priv *priv)
@@ -664,5 +679,4 @@ static inline const struct ieee80211_supported_band *iwl_get_hw_mode(
 {
 	return priv->hw->wiphy->bands[band];
 }
-
 #endif /* __iwl_core_h__ */

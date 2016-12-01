@@ -43,7 +43,6 @@
 #include "iwl-debug.h"
 #include "iwl-4965-hw.h"
 #include "iwl-3945-hw.h"
-#include "iwl-3945-led.h"
 #include "iwl-led.h"
 #include "iwl-power.h"
 #include "iwl-agn-rs.h"
@@ -74,7 +73,6 @@ struct iwl_tx_queue;
 
 /* shared structures from iwl-5000.c */
 extern struct iwl_mod_params iwl50_mod_params;
-extern struct iwl_ops iwl5000_ops;
 extern struct iwl_ucode_ops iwl5000_ucode;
 extern struct iwl_lib_ops iwl5000_lib;
 extern struct iwl_hcmd_ops iwl5000_hcmd;
@@ -89,7 +87,6 @@ extern void iwl5000_rts_tx_cmd_flag(struct ieee80211_tx_info *info,
 extern int iwl5000_calc_rssi(struct iwl_priv *priv,
 			     struct iwl_rx_phy_res *rx_resp);
 extern int iwl5000_apm_init(struct iwl_priv *priv);
-extern void iwl5000_apm_stop(struct iwl_priv *priv);
 extern int iwl5000_apm_reset(struct iwl_priv *priv);
 extern void iwl5000_nic_config(struct iwl_priv *priv);
 extern u16 iwl5000_eeprom_calib_version(struct iwl_priv *priv);
@@ -1067,14 +1064,11 @@ struct iwl_priv {
 	struct iwl_init_alive_resp card_alive_init;
 	struct iwl_alive_resp card_alive;
 
-#ifdef CONFIG_IWLWIFI_LEDS
 	unsigned long last_blink_time;
 	u8 last_blink_rate;
 	u8 allow_blinking;
 	u64 led_tpt;
-	struct iwl_led led[IWL_LED_TRG_MAX];
-	unsigned int rxtxpackets;
-#endif
+
 	u16 active_rate;
 	u16 active_rate_basic;
 

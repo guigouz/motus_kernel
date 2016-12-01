@@ -45,6 +45,7 @@
 #include "iwl-helpers.h"
 #include "iwl-calib.h"
 #include "iwl-sta.h"
+#include "iwl-agn-led.h"
 
 static int iwl4965_send_tx_power(struct iwl_priv *priv);
 static int iwl4965_hw_get_temperature(struct iwl_priv *priv);
@@ -335,7 +336,8 @@ static int iwl4965_apm_init(struct iwl_priv *priv)
 	iwl_set_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
 
 	/* wait for clock stabilization */
-	ret = iwl_poll_direct_bit(priv, CSR_GP_CNTRL,
+	ret = iwl_poll_bit(priv, CSR_GP_CNTRL,
+			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY,
 			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY, 25000);
 	if (ret < 0) {
 		IWL_DEBUG_INFO(priv, "Failed to init the card\n");
@@ -396,45 +398,11 @@ static void iwl4965_nic_config(struct iwl_priv *priv)
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 
-static int iwl4965_apm_stop_master(struct iwl_priv *priv)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&priv->lock, flags);
-
-	/* set stop master bit */
-	iwl_set_bit(priv, CSR_RESET, CSR_RESET_REG_FLAG_STOP_MASTER);
-
-	iwl_poll_direct_bit(priv, CSR_RESET,
-			CSR_RESET_REG_FLAG_MASTER_DISABLED, 100);
-
-	spin_unlock_irqrestore(&priv->lock, flags);
-	IWL_DEBUG_INFO(priv, "stop master\n");
-
-	return 0;
-}
-
-static void iwl4965_apm_stop(struct iwl_priv *priv)
-{
-	unsigned long flags;
-
-	iwl4965_apm_stop_master(priv);
-
-	spin_lock_irqsave(&priv->lock, flags);
-
-	iwl_set_bit(priv, CSR_RESET, CSR_RESET_REG_FLAG_SW_RESET);
-
-	udelay(10);
-	/* clear "init complete"  move adapter D0A* --> D0U state */
-	iwl_clear_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
-	spin_unlock_irqrestore(&priv->lock, flags);
-}
-
 static int iwl4965_apm_reset(struct iwl_priv *priv)
 {
 	int ret = 0;
 
-	iwl4965_apm_stop_master(priv);
+	iwl_apm_stop_master(priv);
 
 
 	iwl_set_bit(priv, CSR_RESET, CSR_RESET_REG_FLAG_SW_RESET);
@@ -445,7 +413,8 @@ static int iwl4965_apm_reset(struct iwl_priv *priv)
 
 	iwl_set_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
 
-	ret = iwl_poll_direct_bit(priv, CSR_GP_CNTRL,
+	ret = iwl_poll_bit(priv, CSR_GP_CNTRL,
+			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY,
 			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY, 25000);
 	if (ret < 0)
 		goto out;
@@ -664,7 +633,8 @@ static int iwl4965_alive_notify(struct iwl_priv *priv)
 		iwl_write_targ_mem(priv, a, 0);
 	for (; a < priv->scd_base_addr + IWL49_SCD_TRANSLATE_TBL_OFFSET; a += 4)
 		iwl_write_targ_mem(priv, a, 0);
-	for (; a < sizeof(u16) * priv->hw_params.max_txq_num; a += 4)
+	for (; a < priv->scd_base_addr +
+	       IWL49_SCD_TRANSLATE_TBL_OFFSET_QUEUE(priv->hw_params.max_txq_num); a += 4)
 		iwl_write_targ_mem(priv, a, 0);
 
 	/* Tel 4965 where to find Tx byte count tables */
@@ -2315,7 +2285,7 @@ static struct iwl_lib_ops iwl4965_lib = {
 	.apm_ops = {
 		.init = iwl4965_apm_init,
 		.reset = iwl4965_apm_reset,
-		.stop = iwl4965_apm_stop,
+		.stop = iwl_apm_stop,
 		.config = iwl4965_nic_config,
 		.set_pwr_src = iwl_set_pwr_src,
 	},
@@ -2351,6 +2321,7 @@ static struct iwl_ops iwl4965_ops = {
 	.lib = &iwl4965_lib,
 	.hcmd = &iwl4965_hcmd,
 	.utils = &iwl4965_hcmd_utils,
+	.led = &iwlagn_led_ops,
 };
 
 struct iwl_cfg iwl4965_agn_cfg = {

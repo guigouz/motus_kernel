@@ -791,6 +791,9 @@ void iwl_rx_handle(struct iwl_priv *priv)
 				 PCI_DMA_FROMDEVICE);
 		pkt = (struct iwl_rx_packet *)rxb->skb->data;
 
+		trace_iwlwifi_dev_rx(priv, pkt,
+			le32_to_cpu(pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK);
+
 		/* Reclaim a command buffer only if this packet is a response
 		 *   to a (driver-originated) command.
 		 * If the packet (e.g. Rx frame) originated from uCode,
@@ -1610,6 +1613,9 @@ void iwl_dump_nic_error_log(struct iwl_priv *priv)
 	line = iwl_read_targ_mem(priv, base + 9 * sizeof(u32));
 	time = iwl_read_targ_mem(priv, base + 11 * sizeof(u32));
 
+	trace_iwlwifi_dev_ucode_error(priv, desc, time, data1, data2, line,
+				      blink1, blink2, ilink1, ilink2);
+
 	IWL_ERR(priv, "Desc                               Time       "
 		"data1      data2      line\n");
 	IWL_ERR(priv, "%-28s (#%02d) %010u 0x%08X 0x%08X %u\n",
@@ -1658,12 +1664,14 @@ static void iwl_print_event_log(struct iwl_priv *priv, u32 start_idx,
 		ptr += sizeof(u32);
 		if (mode == 0) {
 			/* data, ev */
+			trace_iwlwifi_dev_ucode_event(priv, 0, time, ev);
 			IWL_ERR(priv, "EVT_LOG:0x%08x:%04u\n", time, ev);
 		} else {
 			data = iwl_read_targ_mem(priv, ptr);
 			ptr += sizeof(u32);
 			IWL_ERR(priv, "EVT_LOGT:%010u:0x%08x:%04u\n",
 					time, data, ev);
+			trace_iwlwifi_dev_ucode_event(priv, time, data, ev);
 		}
 	}
 }
@@ -1793,7 +1801,7 @@ static void iwl_alive_start(struct iwl_priv *priv)
 	/* At this point, the NIC is initialized and operational */
 	iwl_rf_kill_ct_config(priv);
 
-	iwl_leds_register(priv);
+	iwl_leds_init(priv);
 
 	IWL_DEBUG_INFO(priv, "ALIVE processing complete.\n");
 	set_bit(STATUS_READY, &priv->status);
@@ -1830,8 +1838,6 @@ static void __iwl_down(struct iwl_priv *priv)
 
 	if (!exit_pending)
 		set_bit(STATUS_EXIT_PENDING, &priv->status);
-
-	iwl_leds_unregister(priv);
 
 	iwl_clear_stations_table(priv);
 
@@ -2330,6 +2336,8 @@ static int iwl_mac_start(struct ieee80211_hw *hw)
 			return -ETIMEDOUT;
 		}
 	}
+
+	iwl_led_start(priv);
 
 out:
 	priv->is_open = 1;
