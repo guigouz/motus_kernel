@@ -16,6 +16,7 @@
 
 #include <linux/nl80211.h>
 #include "ath9k.h"
+#include "btcoex.h"
 
 static char *dev_info = "ath9k";
 
@@ -439,8 +440,10 @@ static void ath_start_ani(struct ath_softc *sc)
  */
 void ath_update_chainmask(struct ath_softc *sc, int is_ht)
 {
+	struct ath_hw *ah = sc->sc_ah;
+
 	if ((sc->sc_flags & SC_OP_SCANNING) || is_ht ||
-	    (sc->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE)) {
+	    (ah->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE)) {
 		sc->tx_chainmask = sc->sc_ah->caps.tx_chainmask;
 		sc->rx_chainmask = sc->sc_ah->caps.rx_chainmask;
 	} else {
@@ -448,7 +451,7 @@ void ath_update_chainmask(struct ath_softc *sc, int is_ht)
 		sc->rx_chainmask = 1;
 	}
 
-	DPRINTF(sc->sc_ah, ATH_DBG_CONFIG, "tx chmask: %d, rx chmask: %d\n",
+	DPRINTF(ah, ATH_DBG_CONFIG, "tx chmask: %d, rx chmask: %d\n",
 		sc->tx_chainmask, sc->rx_chainmask);
 }
 
@@ -478,6 +481,8 @@ static void ath_node_detach(struct ath_softc *sc, struct ieee80211_sta *sta)
 static void ath9k_tasklet(unsigned long data)
 {
 	struct ath_softc *sc = (struct ath_softc *)data;
+	struct ath_hw *ah = sc->sc_ah;
+
 	u32 status = sc->intrstatus;
 
 	ath9k_ps_wakeup(sc);
@@ -502,16 +507,16 @@ static void ath9k_tasklet(unsigned long data)
 		 * TSF sync does not look correct; remain awake to sync with
 		 * the next Beacon.
 		 */
-		DPRINTF(sc->sc_ah, ATH_DBG_PS, "TSFOOR - Sync with next Beacon\n");
+		DPRINTF(ah, ATH_DBG_PS, "TSFOOR - Sync with next Beacon\n");
 		sc->sc_flags |= SC_OP_WAIT_FOR_BEACON | SC_OP_BEACON_SYNC;
 	}
 
-	if (sc->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
+	if (ah->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
 		if (status & ATH9K_INT_GENTIMER)
 			ath_gen_timer_isr(sc->sc_ah);
 
 	/* re-enable hardware interrupt */
-	ath9k_hw_set_interrupts(sc->sc_ah, sc->imask);
+	ath9k_hw_set_interrupts(ah, sc->imask);
 	ath9k_ps_restore(sc);
 }
 
@@ -1281,12 +1286,12 @@ void ath_detach(struct ath_softc *sc)
 		if (ATH_TXQ_SETUP(sc, i))
 			ath_tx_cleanupq(sc, &sc->tx.txq[i]);
 
-	if ((sc->btcoex_info.no_stomp_timer) &&
-	    sc->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
-		ath_gen_timer_free(ah, sc->btcoex_info.no_stomp_timer);
+	if ((ah->btcoex_info.no_stomp_timer) &&
+	    ah->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
+		ath_gen_timer_free(ah, ah->btcoex_info.no_stomp_timer);
 
 	ath9k_hw_detach(ah);
-	ath9k_exit_debug(sc->sc_ah);
+	ath9k_exit_debug(ah);
 	sc->sc_ah = NULL;
 }
 
@@ -1516,7 +1521,7 @@ static int ath_init_softc(u16 devid, struct ath_softc *sc, u16 subsysid)
 			ARRAY_SIZE(ath9k_5ghz_chantable);
 	}
 
-	if (sc->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE) {
+	if (ah->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE) {
 		r = ath9k_hw_btcoex_init(ah);
 		if (r)
 			goto bad2;
@@ -1539,18 +1544,13 @@ bad_no_ah:
 
 void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 {
-	struct ath_hw *ah = sc->sc_ah;
-
 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
 		IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING |
 		IEEE80211_HW_SIGNAL_DBM |
+		IEEE80211_HW_AMPDU_AGGREGATION |
 		IEEE80211_HW_SUPPORTS_PS |
 		IEEE80211_HW_PS_NULLFUNC_STACK |
-		IEEE80211_HW_REPORTS_TX_ACK_STATUS |
 		IEEE80211_HW_SPECTRUM_MGMT;
-
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT)
-		 hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
 
 	if (AR_SREV_9160_10_OR_LATER(sc->sc_ah) || modparam_nohwcrypt)
 		hw->flags |= IEEE80211_HW_MFP_CAPABLE;
@@ -1560,11 +1560,6 @@ void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
 		BIT(NL80211_IFTYPE_STATION) |
 		BIT(NL80211_IFTYPE_ADHOC) |
 		BIT(NL80211_IFTYPE_MESH_POINT);
-
-	if (AR_SREV_5416(ah))
-		hw->wiphy->ps_default = false;
-	else
-		hw->wiphy->ps_default = true;
 
 	hw->queues = 4;
 	hw->max_rates = 4;
@@ -1915,14 +1910,13 @@ static int ath9k_start(struct ieee80211_hw *hw)
 {
 	struct ath_wiphy *aphy = hw->priv;
 	struct ath_softc *sc = aphy->sc;
+	struct ath_hw *ah = sc->sc_ah;
 	struct ieee80211_channel *curchan = hw->conf.channel;
 	struct ath9k_channel *init_channel;
 	int r;
 
-	DPRINTF(sc->sc_ah, ATH_DBG_CONFIG, "Starting driver with "
+	DPRINTF(ah, ATH_DBG_CONFIG, "Starting driver with "
 		"initial channel: %d MHz\n", curchan->center_freq);
-
-	ath9k_ps_wakeup(sc);
 
 	mutex_lock(&sc->mutex);
 
@@ -1954,7 +1948,7 @@ static int ath9k_start(struct ieee80211_hw *hw)
 	init_channel = ath_get_curchannel(sc, hw);
 
 	/* Reset SERDES registers */
-	ath9k_hw_configpcipowersave(sc->sc_ah, 0, 0);
+	ath9k_hw_configpcipowersave(ah, 0, 0);
 
 	/*
 	 * The basic interface to setting the hardware in a good
@@ -1964,9 +1958,9 @@ static int ath9k_start(struct ieee80211_hw *hw)
 	 * and then setup of the interrupt mask.
 	 */
 	spin_lock_bh(&sc->sc_resetlock);
-	r = ath9k_hw_reset(sc->sc_ah, init_channel, false);
+	r = ath9k_hw_reset(ah, init_channel, false);
 	if (r) {
-		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
+		DPRINTF(ah, ATH_DBG_FATAL,
 			"Unable to reset hardware; reset status %d "
 			"(freq %u MHz)\n", r,
 			curchan->center_freq);
@@ -1989,7 +1983,7 @@ static int ath9k_start(struct ieee80211_hw *hw)
 	 * here except setup the interrupt mask.
 	 */
 	if (ath_startrecv(sc) != 0) {
-		DPRINTF(sc->sc_ah, ATH_DBG_FATAL, "Unable to start recv logic\n");
+		DPRINTF(ah, ATH_DBG_FATAL, "Unable to start recv logic\n");
 		r = -EIO;
 		goto mutex_unlock;
 	}
@@ -1999,10 +1993,10 @@ static int ath9k_start(struct ieee80211_hw *hw)
 		| ATH9K_INT_RXEOL | ATH9K_INT_RXORN
 		| ATH9K_INT_FATAL | ATH9K_INT_GLOBAL;
 
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_GTT)
+	if (ah->caps.hw_caps & ATH9K_HW_CAP_GTT)
 		sc->imask |= ATH9K_INT_GTT;
 
-	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT)
+	if (ah->caps.hw_caps & ATH9K_HW_CAP_HT)
 		sc->imask |= ATH9K_INT_CST;
 
 	ath_cache_conf_rate(sc, &hw->conf);
@@ -2011,27 +2005,24 @@ static int ath9k_start(struct ieee80211_hw *hw)
 
 	/* Disable BMISS interrupt when we're not associated */
 	sc->imask &= ~(ATH9K_INT_SWBA | ATH9K_INT_BMISS);
-	ath9k_hw_set_interrupts(sc->sc_ah, sc->imask);
+	ath9k_hw_set_interrupts(ah, sc->imask);
 
 	ieee80211_wake_queues(hw);
 
 	ieee80211_queue_delayed_work(sc->hw, &sc->tx_complete_work, 0);
 
-	if ((sc->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE) &&
+	if ((ah->btcoex_info.btcoex_scheme != ATH_BTCOEX_CFG_NONE) &&
 	    !(sc->sc_flags & SC_OP_BTCOEX_ENABLED)) {
-		ath_btcoex_set_weight(&sc->btcoex_info, AR_BT_COEX_WGHT,
-				      AR_STOMP_LOW_WLAN_WGHT);
-		ath9k_hw_btcoex_enable(sc->sc_ah);
+		ath9k_hw_btcoex_init_weight(ah);
+		ath9k_hw_btcoex_enable(ah);
 
 		ath_pcie_aspm_disable(sc);
-		if (sc->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
-			ath_btcoex_timer_resume(sc, &sc->btcoex_info);
+		if (ah->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
+			ath_btcoex_timer_resume(sc);
 	}
 
 mutex_unlock:
 	mutex_unlock(&sc->mutex);
-
-	ath9k_ps_restore(sc);
 
 	return r;
 }
@@ -2139,6 +2130,7 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 {
 	struct ath_wiphy *aphy = hw->priv;
 	struct ath_softc *sc = aphy->sc;
+	struct ath_hw *ah = sc->sc_ah;
 
 	mutex_lock(&sc->mutex);
 
@@ -2153,7 +2145,7 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 	}
 
 	if (sc->sc_flags & SC_OP_INVALID) {
-		DPRINTF(sc->sc_ah, ATH_DBG_ANY, "Device not present\n");
+		DPRINTF(ah, ATH_DBG_ANY, "Device not present\n");
 		mutex_unlock(&sc->mutex);
 		return;
 	}
@@ -2163,39 +2155,33 @@ static void ath9k_stop(struct ieee80211_hw *hw)
 		return; /* another wiphy still in use */
 	}
 
-	/* Ensure HW is awake when we try to shut it down. */
-	ath9k_ps_wakeup(sc);
-
 	if (sc->sc_flags & SC_OP_BTCOEX_ENABLED) {
-		ath9k_hw_btcoex_disable(sc->sc_ah);
-		if (sc->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
-			ath_btcoex_timer_pause(sc, &sc->btcoex_info);
+		ath9k_hw_btcoex_disable(ah);
+		if (ah->btcoex_info.btcoex_scheme == ATH_BTCOEX_CFG_3WIRE)
+			ath_btcoex_timer_pause(sc);
 	}
 
 	/* make sure h/w will not generate any interrupt
 	 * before setting the invalid flag. */
-	ath9k_hw_set_interrupts(sc->sc_ah, 0);
+	ath9k_hw_set_interrupts(ah, 0);
 
 	if (!(sc->sc_flags & SC_OP_INVALID)) {
 		ath_drain_all_txq(sc, false);
 		ath_stoprecv(sc);
-		ath9k_hw_phy_disable(sc->sc_ah);
+		ath9k_hw_phy_disable(ah);
 	} else
 		sc->rx.rxlink = NULL;
 
 	/* disable HAL and put h/w to sleep */
-	ath9k_hw_disable(sc->sc_ah);
-	ath9k_hw_configpcipowersave(sc->sc_ah, 1, 1);
-	ath9k_ps_restore(sc);
-
-	/* Finally, put the chip in FULL SLEEP mode */
-	ath9k_hw_setpower(sc->sc_ah, ATH9K_PM_FULL_SLEEP);
+	ath9k_hw_disable(ah);
+	ath9k_hw_configpcipowersave(ah, 1, 1);
+	ath9k_hw_setpower(ah, ATH9K_PM_FULL_SLEEP);
 
 	sc->sc_flags |= SC_OP_INVALID;
 
 	mutex_unlock(&sc->mutex);
 
-	DPRINTF(sc->sc_ah, ATH_DBG_CONFIG, "Driver halt\n");
+	DPRINTF(ah, ATH_DBG_CONFIG, "Driver halt\n");
 }
 
 static int ath9k_add_interface(struct ieee80211_hw *hw,
@@ -2299,12 +2285,10 @@ static void ath9k_remove_interface(struct ieee80211_hw *hw,
 	if ((sc->sc_ah->opmode == NL80211_IFTYPE_AP) ||
 	    (sc->sc_ah->opmode == NL80211_IFTYPE_ADHOC) ||
 	    (sc->sc_ah->opmode == NL80211_IFTYPE_MESH_POINT)) {
-		ath9k_ps_wakeup(sc);
 		ath9k_hw_stoptxdma(sc->sc_ah, sc->beacon.beaconq);
-		ath9k_ps_restore(sc);
+		ath_beacon_return(sc, avp);
 	}
 
-	ath_beacon_return(sc, avp);
 	sc->sc_flags &= ~SC_OP_BEACONS;
 
 	for (i = 0; i < ARRAY_SIZE(sc->beacon.bslot); i++) {
@@ -2319,19 +2303,6 @@ static void ath9k_remove_interface(struct ieee80211_hw *hw,
 	sc->nvifs--;
 
 	mutex_unlock(&sc->mutex);
-}
-
-void ath9k_enable_ps(struct ath_softc *sc)
-{
-	sc->ps_enabled = true;
-	if (!(sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_AUTOSLEEP)) {
-		if ((sc->imask & ATH9K_INT_TIM_TIMER) == 0) {
-			sc->imask |= ATH9K_INT_TIM_TIMER;
-			ath9k_hw_set_interrupts(sc->sc_ah,
-					sc->imask);
-		}
-	}
-	ath9k_hw_setrxabort(sc->sc_ah, 1);
 }
 
 static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
@@ -2364,15 +2335,18 @@ static int ath9k_config(struct ieee80211_hw *hw, u32 changed)
 
 	if (changed & IEEE80211_CONF_CHANGE_PS) {
 		if (conf->flags & IEEE80211_CONF_PS) {
-			sc->sc_flags |= SC_OP_PS_ENABLED;
-			if ((sc->sc_flags & SC_OP_NULLFUNC_COMPLETED)) {
-				sc->sc_flags &= ~SC_OP_NULLFUNC_COMPLETED;
-				ath9k_enable_ps(sc);
+			if (!(ah->caps.hw_caps &
+			      ATH9K_HW_CAP_AUTOSLEEP)) {
+				if ((sc->imask & ATH9K_INT_TIM_TIMER) == 0) {
+					sc->imask |= ATH9K_INT_TIM_TIMER;
+					ath9k_hw_set_interrupts(sc->sc_ah,
+							sc->imask);
+				}
+				ath9k_hw_setrxabort(sc->sc_ah, 1);
 			}
+			sc->ps_enabled = true;
 		} else {
 			sc->ps_enabled = false;
-			sc->sc_flags &= ~(SC_OP_PS_ENABLED |
-					  SC_OP_NULLFUNC_COMPLETED);
 			ath9k_hw_setpower(sc->sc_ah, ATH9K_PM_AWAKE);
 			if (!(ah->caps.hw_caps &
 			      ATH9K_HW_CAP_AUTOSLEEP)) {
@@ -2475,9 +2449,6 @@ static void ath9k_sta_notify(struct ieee80211_hw *hw,
 {
 	struct ath_wiphy *aphy = hw->priv;
 	struct ath_softc *sc = aphy->sc;
-
-	if (!(sc->sc_flags & SC_OP_TXAGGR))
-		return;
 
 	switch (cmd) {
 	case STA_NOTIFY_ADD:
@@ -2754,21 +2725,15 @@ static int ath9k_ampdu_action(struct ieee80211_hw *hw,
 	case IEEE80211_AMPDU_RX_STOP:
 		break;
 	case IEEE80211_AMPDU_TX_START:
-		ath9k_ps_wakeup(sc);
 		ath_tx_aggr_start(sc, sta, tid, ssn);
 		ieee80211_start_tx_ba_cb_irqsafe(hw, sta->addr, tid);
-		ath9k_ps_restore(sc);
 		break;
 	case IEEE80211_AMPDU_TX_STOP:
-		ath9k_ps_wakeup(sc);
 		ath_tx_aggr_stop(sc, sta, tid);
 		ieee80211_stop_tx_ba_cb_irqsafe(hw, sta->addr, tid);
-		ath9k_ps_restore(sc);
 		break;
 	case IEEE80211_AMPDU_TX_OPERATIONAL:
-		ath9k_ps_wakeup(sc);
 		ath_tx_aggr_resume(sc, sta, tid);
-		ath9k_ps_restore(sc);
 		break;
 	default:
 		DPRINTF(sc->sc_ah, ATH_DBG_FATAL, "Unknown AMPDU action\n");

@@ -26,7 +26,6 @@
 #include "rc.h"
 #include "debug.h"
 #include "../ath.h"
-#include "btcoex.h"
 
 struct ath_node;
 
@@ -453,6 +452,16 @@ struct ath_ani {
 	struct timer_list timer;
 };
 
+struct ath_btcoex {
+	bool hw_timer_enabled;
+	spinlock_t btcoex_lock;
+	struct timer_list period_timer; /* Timer for BT period */
+	u32 bt_priority_cnt;
+	unsigned long bt_priority_time;
+	u32 btcoex_no_stomp; /* in usec */
+	u32 btcoex_period; /* in usec */
+};
+
 /********************/
 /*   LED Control    */
 /********************/
@@ -616,7 +625,7 @@ struct ath_softc {
 	struct ath_bus_ops *bus_ops;
 	struct ath_beacon_config cur_beacon_conf;
 	struct delayed_work tx_complete_work;
-	struct ath_btcoex_info btcoex_info;
+	struct ath_btcoex btcoex;
 };
 
 struct ath_wiphy {
