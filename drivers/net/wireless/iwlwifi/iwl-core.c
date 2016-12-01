@@ -949,8 +949,13 @@ EXPORT_SYMBOL(iwl_set_rxon_ht);
 #define IWL_NUM_IDLE_CHAINS_DUAL	2
 #define IWL_NUM_IDLE_CHAINS_SINGLE	1
 
-/* Determine how many receiver/antenna chains to use.
- * More provides better reception via diversity.  Fewer saves power.
+/*
+ * Determine how many receiver/antenna chains to use.
+ *
+ * More provides better reception via diversity.  Fewer saves power
+ * at the expense of throughput, but only when not in powersave to
+ * start with.
+ *
  * MIMO (dual stream) requires at least 2, but works better with 3.
  * This does not determine *which* chains to use, just how many.
  */
@@ -963,19 +968,18 @@ static int iwl_get_active_rx_chain_count(struct iwl_priv *priv)
 		return IWL_NUM_RX_CHAINS_MULTIPLE;
 }
 
+/*
+ * When we are in power saving, there's no difference between
+ * using multiple chains or just a single chain, but due to the
+ * lack of SM PS we lose a lot of throughput if we use just a
+ * single chain.
+ *
+ * Therefore, use the active count here (which will use multiple
+ * chains unless connected to a legacy AP).
+ */
 static int iwl_get_idle_rx_chain_count(struct iwl_priv *priv, int active_cnt)
 {
-	bool is_cam = !test_bit(STATUS_POWER_PMI, &priv->status);
-
-	/* # Rx chains when idling and maybe trying to save power */
-
-	/*
-	 * XXX: this is incorrect!!
-	 *	we always indicate to the AP that
-	 *	our SM PS mode is "disabled"
-	 */
-
-	return is_cam ? active_cnt : IWL_NUM_IDLE_CHAINS_SINGLE;
+	return active_cnt;
 }
 
 /* up to 4 chains */
@@ -985,7 +989,7 @@ static u8 iwl_count_chain_bitmap(u32 chain_bitmap)
 	res = (chain_bitmap & BIT(0)) >> 0;
 	res += (chain_bitmap & BIT(1)) >> 1;
 	res += (chain_bitmap & BIT(2)) >> 2;
-	res += (chain_bitmap & BIT(4)) >> 4;
+	res += (chain_bitmap & BIT(3)) >> 3;
 	return res;
 }
 
@@ -2648,7 +2652,8 @@ int iwl_mac_config(struct ieee80211_hw *hw, u32 changed)
 		iwl_set_rate(priv);
 	}
 
-	if (changed & IEEE80211_CONF_CHANGE_PS) {
+	if (changed & (IEEE80211_CONF_CHANGE_PS |
+			IEEE80211_CONF_CHANGE_IDLE)) {
 		ret = iwl_power_update_mode(priv, false);
 		if (ret)
 			IWL_DEBUG_MAC80211(priv, "Error setting sleep level\n");
