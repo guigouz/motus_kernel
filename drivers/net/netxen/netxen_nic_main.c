@@ -76,6 +76,8 @@ static void netxen_nic_poll_controller(struct net_device *netdev);
 
 static void netxen_create_sysfs_entries(struct netxen_adapter *adapter);
 static void netxen_remove_sysfs_entries(struct netxen_adapter *adapter);
+static void netxen_create_diag_entries(struct netxen_adapter *adapter);
+static void netxen_remove_diag_entries(struct netxen_adapter *adapter);
 
 static int nx_decr_dev_ref_cnt(struct netxen_adapter *adapter);
 static int netxen_can_start_firmware(struct netxen_adapter *adapter);
@@ -612,14 +614,12 @@ netxen_setup_pci_map(struct netxen_adapter *adapter)
 	 * Set the CRB window to invalid. If any register in window 0 is
 	 * accessed it should set the window to 0 and then reset it to 1.
 	 */
-	adapter->curr_window = 255;
-	adapter->ahw.qdr_sn_window = -1;
-	adapter->ahw.ddr_mn_window = -1;
+	adapter->ahw.crb_win = -1;
+	adapter->ahw.ocm_win = -1;
 
 	/* remap phys address */
 	mem_base = pci_resource_start(pdev, 0);	/* 0 is for BAR 0 */
 	mem_len = pci_resource_len(pdev, 0);
-	pci_len0 = 0;
 
 	/* 128 Meg of memory */
 	if (mem_len == NETXEN_PCI_128MB_SIZE) {
@@ -628,6 +628,7 @@ netxen_setup_pci_map(struct netxen_adapter *adapter)
 				SECOND_PAGE_GROUP_SIZE);
 		mem_ptr2 = ioremap(mem_base + THIRD_PAGE_GROUP_START,
 				THIRD_PAGE_GROUP_SIZE);
+		pci_len0 = FIRST_PAGE_GROUP_SIZE;
 	} else if (mem_len == NETXEN_PCI_32MB_SIZE) {
 		mem_ptr1 = ioremap(mem_base, SECOND_PAGE_GROUP_SIZE);
 		mem_ptr2 = ioremap(mem_base + THIRD_PAGE_GROUP_START -
@@ -640,19 +641,6 @@ netxen_setup_pci_map(struct netxen_adapter *adapter)
 			return -EIO;
 		}
 		pci_len0 = mem_len;
-
-		adapter->ahw.ddr_mn_window = 0;
-		adapter->ahw.qdr_sn_window = 0;
-
-		adapter->ahw.mn_win_crb = NETXEN_PCI_CRBSPACE +
-			0x100000 + PCIX_MN_WINDOW + (pci_func * 0x20);
-		adapter->ahw.ms_win_crb = NETXEN_PCI_CRBSPACE +
-			0x100000 + PCIX_SN_WINDOW;
-		if (pci_func < 4)
-			adapter->ahw.ms_win_crb += (pci_func * 0x20);
-		else
-			adapter->ahw.ms_win_crb +=
-					0xA0 + ((pci_func - 4) * 0x10);
 	} else {
 		return -EIO;
 	}
@@ -665,6 +653,11 @@ netxen_setup_pci_map(struct netxen_adapter *adapter)
 	adapter->ahw.pci_len0 = pci_len0;
 	adapter->ahw.pci_base1 = mem_ptr1;
 	adapter->ahw.pci_base2 = mem_ptr2;
+
+	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
+		adapter->ahw.ocm_win_crb = netxen_get_ioaddr(adapter,
+			NETXEN_PCIX_PS_REG(PCIE_MN_WINDOW_REG(pci_func)));
+	}
 
 	if (NX_IS_REVISION_P3(adapter->ahw.revision_id))
 		goto skip_doorbell;
@@ -1255,7 +1248,9 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	revision_id = pdev->revision;
 	adapter->ahw.revision_id = revision_id;
 
-	rwlock_init(&adapter->adapter_lock);
+	rwlock_init(&adapter->ahw.crb_lock);
+	spin_lock_init(&adapter->ahw.mem_lock);
+
 	spin_lock_init(&adapter->tx_clean_lock);
 	INIT_LIST_HEAD(&adapter->mac_list);
 
@@ -1320,6 +1315,8 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		break;
 	}
 
+	netxen_create_diag_entries(adapter);
+
 	return 0;
 
 err_out_disable_msi:
@@ -1371,6 +1368,8 @@ static void __devexit netxen_nic_remove(struct pci_dev *pdev)
 	clear_bit(__NX_RESETTING, &adapter->state);
 
 	netxen_teardown_intr(adapter);
+
+	netxen_remove_diag_entries(adapter);
 
 	netxen_cleanup_pci_map(adapter);
 
@@ -1452,7 +1451,8 @@ netxen_nic_resume(struct pci_dev *pdev)
 	if (err)
 		return err;
 
-	adapter->curr_window = 255;
+	adapter->ahw.crb_win = -1;
+	adapter->ahw.ocm_win = -1;
 
 	err = netxen_start_firmware(adapter);
 	if (err) {
@@ -2344,6 +2344,160 @@ static struct device_attribute dev_attr_bridged_mode = {
        .store = netxen_store_bridged_mode,
 };
 
+static ssize_t
+netxen_store_diag_mode(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t len)
+{
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	unsigned long new;
+
+	if (strict_strtoul(buf, 2, &new))
+		return -EINVAL;
+
+	if (!!new != !!(adapter->flags & NETXEN_NIC_DIAG_ENABLED))
+		adapter->flags ^= NETXEN_NIC_DIAG_ENABLED;
+
+	return len;
+}
+
+static ssize_t
+netxen_show_diag_mode(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d\n",
+			!!(adapter->flags & NETXEN_NIC_DIAG_ENABLED));
+}
+
+static struct device_attribute dev_attr_diag_mode = {
+	.attr = {.name = "diag_mode", .mode = (S_IRUGO | S_IWUSR)},
+	.show = netxen_show_diag_mode,
+	.store = netxen_store_diag_mode,
+};
+
+static int
+netxen_sysfs_validate_crb(struct netxen_adapter *adapter,
+		loff_t offset, size_t size)
+{
+	if (!(adapter->flags & NETXEN_NIC_DIAG_ENABLED))
+		return -EIO;
+
+	if ((size != 4) || (offset & 0x3))
+		return  -EINVAL;
+
+	if (offset < NETXEN_PCI_CRBSPACE)
+		return -EINVAL;
+
+	return 0;
+}
+
+static ssize_t
+netxen_sysfs_read_crb(struct kobject *kobj, struct bin_attribute *attr,
+		char *buf, loff_t offset, size_t size)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	u32 data;
+	int ret;
+
+	ret = netxen_sysfs_validate_crb(adapter, offset, size);
+	if (ret != 0)
+		return ret;
+
+	data = NXRD32(adapter, offset);
+	memcpy(buf, &data, size);
+	return size;
+}
+
+static ssize_t
+netxen_sysfs_write_crb(struct kobject *kobj, struct bin_attribute *attr,
+		char *buf, loff_t offset, size_t size)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	u32 data;
+	int ret;
+
+	ret = netxen_sysfs_validate_crb(adapter, offset, size);
+	if (ret != 0)
+		return ret;
+
+	memcpy(&data, buf, size);
+	NXWR32(adapter, offset, data);
+	return size;
+}
+
+static int
+netxen_sysfs_validate_mem(struct netxen_adapter *adapter,
+		loff_t offset, size_t size)
+{
+	if (!(adapter->flags & NETXEN_NIC_DIAG_ENABLED))
+		return -EIO;
+
+	if ((size != 8) || (offset & 0x7))
+		return  -EIO;
+
+	return 0;
+}
+
+static ssize_t
+netxen_sysfs_read_mem(struct kobject *kobj, struct bin_attribute *attr,
+		char *buf, loff_t offset, size_t size)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	u64 data;
+	int ret;
+
+	ret = netxen_sysfs_validate_mem(adapter, offset, size);
+	if (ret != 0)
+		return ret;
+
+	if (adapter->pci_mem_read(adapter, offset, &data))
+		return -EIO;
+
+	memcpy(buf, &data, size);
+
+	return size;
+}
+
+ssize_t netxen_sysfs_write_mem(struct kobject *kobj,
+		struct bin_attribute *attr, char *buf,
+		loff_t offset, size_t size)
+{
+	struct device *dev = container_of(kobj, struct device, kobj);
+	struct netxen_adapter *adapter = dev_get_drvdata(dev);
+	u64 data;
+	int ret;
+
+	ret = netxen_sysfs_validate_mem(adapter, offset, size);
+	if (ret != 0)
+		return ret;
+
+	memcpy(&data, buf, size);
+
+	if (adapter->pci_mem_write(adapter, offset, data))
+		return -EIO;
+
+	return size;
+}
+
+
+static struct bin_attribute bin_attr_crb = {
+	.attr = {.name = "crb", .mode = (S_IRUGO | S_IWUSR)},
+	.size = 0,
+	.read = netxen_sysfs_read_crb,
+	.write = netxen_sysfs_write_crb,
+};
+
+static struct bin_attribute bin_attr_mem = {
+	.attr = {.name = "mem", .mode = (S_IRUGO | S_IWUSR)},
+	.size = 0,
+	.read = netxen_sysfs_read_mem,
+	.write = netxen_sysfs_write_mem,
+};
+
 static void
 netxen_create_sysfs_entries(struct netxen_adapter *adapter)
 {
@@ -2367,6 +2521,33 @@ netxen_remove_sysfs_entries(struct netxen_adapter *adapter)
 
 	if (adapter->capabilities & NX_FW_CAPABILITY_BDG)
 		device_remove_file(dev, &dev_attr_bridged_mode);
+}
+
+static void
+netxen_create_diag_entries(struct netxen_adapter *adapter)
+{
+	struct pci_dev *pdev = adapter->pdev;
+	struct device *dev;
+
+	dev = &pdev->dev;
+	if (device_create_file(dev, &dev_attr_diag_mode))
+		dev_info(dev, "failed to create diag_mode sysfs entry\n");
+	if (device_create_bin_file(dev, &bin_attr_crb))
+		dev_info(dev, "failed to create crb sysfs entry\n");
+	if (device_create_bin_file(dev, &bin_attr_mem))
+		dev_info(dev, "failed to create mem sysfs entry\n");
+}
+
+
+static void
+netxen_remove_diag_entries(struct netxen_adapter *adapter)
+{
+	struct pci_dev *pdev = adapter->pdev;
+	struct device *dev = &pdev->dev;
+
+	device_remove_file(dev, &dev_attr_diag_mode);
+	device_remove_bin_file(dev, &bin_attr_crb);
+	device_remove_bin_file(dev, &bin_attr_mem);
 }
 
 #ifdef CONFIG_INET

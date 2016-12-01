@@ -703,7 +703,10 @@ netxen_load_firmware(struct netxen_adapter *adapter)
 
 		for (i = 0; i < size; i++) {
 			data = cpu_to_le64(ptr64[i]);
-			adapter->pci_mem_write(adapter, flashaddr, &data, 8);
+			if (adapter->pci_mem_write(adapter,
+						flashaddr, data))
+				return -EIO;
+
 			flashaddr += 8;
 		}
 
@@ -717,7 +720,7 @@ netxen_load_firmware(struct netxen_adapter *adapter)
 			data = cpu_to_le64(ptr64[i]);
 
 			if (adapter->pci_mem_write(adapter,
-						flashaddr, &data, 8))
+						flashaddr, data))
 				return -EIO;
 
 			flashaddr += 8;
@@ -731,17 +734,17 @@ netxen_load_firmware(struct netxen_adapter *adapter)
 
 		for (i = 0; i < size; i++) {
 			if (netxen_rom_fast_read(adapter,
-					flashaddr, &lo) != 0)
+					flashaddr, (int *)&lo) != 0)
 				return -EIO;
 			if (netxen_rom_fast_read(adapter,
-					flashaddr + 4, &hi) != 0)
+					flashaddr + 4, (int *)&hi) != 0)
 				return -EIO;
 
 			/* hi, lo are already in host endian byteorder */
 			data = (((u64)hi << 32) | lo);
 
 			if (adapter->pci_mem_write(adapter,
-						flashaddr, &data, 8))
+						flashaddr, data))
 				return -EIO;
 
 			flashaddr += 8;
@@ -1508,10 +1511,8 @@ netxen_post_rx_buffers(struct netxen_adapter *adapter, u32 ringid,
 					      (rds_ring->num_desc - 1)));
 			netxen_set_msg_ctxid(msg, adapter->portnum);
 			netxen_set_msg_opcode(msg, NETXEN_RCV_PRODUCER(ringid));
-			read_lock(&adapter->adapter_lock);
-			writel(msg, DB_NORMALIZE(adapter,
-					    NETXEN_RCV_PRODUCER_OFFSET));
-			read_unlock(&adapter->adapter_lock);
+			NXWRIO(adapter, DB_NORMALIZE(adapter,
+					NETXEN_RCV_PRODUCER_OFFSET), msg);
 		}
 	}
 }
