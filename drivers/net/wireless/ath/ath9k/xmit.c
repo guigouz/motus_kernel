@@ -423,14 +423,6 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 		bf = bf_next;
 	}
 
-	/* prepend un-acked frames to the beginning of the pending frame queue */
-	if (!list_empty(&bf_pending)) {
-		spin_lock_bh(&txq->axq_lock);
-		list_splice(&bf_pending, &tid->buf_q);
-		ath_tx_queue_tid(txq, tid);
-		spin_unlock_bh(&txq->axq_lock);
-	}
-
 	if (tid->state & AGGR_CLEANUP) {
 		if (tid->baw_head == tid->baw_tail) {
 			tid->state &= ~AGGR_ADDBA_COMPLETE;
@@ -441,6 +433,14 @@ static void ath_tx_complete_aggr(struct ath_softc *sc, struct ath_txq *txq,
 		}
 		rcu_read_unlock();
 		return;
+	}
+
+	/* prepend un-acked frames to the beginning of the pending frame queue */
+	if (!list_empty(&bf_pending)) {
+		spin_lock_bh(&txq->axq_lock);
+		list_splice(&bf_pending, &tid->buf_q);
+		ath_tx_queue_tid(txq, tid);
+		spin_unlock_bh(&txq->axq_lock);
 	}
 
 	rcu_read_unlock();
@@ -854,7 +854,7 @@ struct ath_txq *ath_txq_setup(struct ath_softc *sc, int qtype, int subtype)
 		return NULL;
 	}
 	if (qnum >= ARRAY_SIZE(sc->tx.txq)) {
-		DPRINTF(sc, ATH_DBG_FATAL,
+		DPRINTF(ah, ATH_DBG_FATAL,
 			"qnum %u out of range, max %u!\n",
 			qnum, (unsigned int)ARRAY_SIZE(sc->tx.txq));
 		ath9k_hw_releasetxqueue(ah, qnum);
@@ -884,7 +884,7 @@ int ath_tx_get_qnum(struct ath_softc *sc, int qtype, int haltype)
 	switch (qtype) {
 	case ATH9K_TX_QUEUE_DATA:
 		if (haltype >= ARRAY_SIZE(sc->tx.hwq_map)) {
-			DPRINTF(sc, ATH_DBG_FATAL,
+			DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 				"HAL AC %u out of range, max %zu!\n",
 				haltype, ARRAY_SIZE(sc->tx.hwq_map));
 			return -1;
@@ -914,7 +914,7 @@ struct ath_txq *ath_test_get_txq(struct ath_softc *sc, struct sk_buff *skb)
 	spin_lock_bh(&txq->axq_lock);
 
 	if (txq->axq_depth >= (ATH_TXBUF - 20)) {
-		DPRINTF(sc, ATH_DBG_XMIT,
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT,
 			"TX queue: %d is full, depth: %d\n",
 			qnum, txq->axq_depth);
 		ieee80211_stop_queue(sc->hw, skb_get_queue_mapping(skb));
@@ -955,7 +955,7 @@ int ath_txq_update(struct ath_softc *sc, int qnum,
 	qi.tqi_readyTime = qinfo->tqi_readyTime;
 
 	if (!ath9k_hw_set_txq_props(ah, qnum, &qi)) {
-		DPRINTF(sc, ATH_DBG_FATAL,
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 			"Unable to update hardware queue %u!\n", qnum);
 		error = -EIO;
 	} else {
@@ -1076,12 +1076,12 @@ void ath_drain_all_txq(struct ath_softc *sc, bool retry_tx)
 	if (npend) {
 		int r;
 
-		DPRINTF(sc, ATH_DBG_FATAL, "Unable to stop TxDMA. Reset HAL!\n");
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "Unable to stop TxDMA. Reset HAL!\n");
 
 		spin_lock_bh(&sc->sc_resetlock);
-		r = ath9k_hw_reset(ah, sc->sc_ah->curchan, false);
+		r = ath9k_hw_reset(ah, sc->sc_ah->curchan, true);
 		if (r)
-			DPRINTF(sc, ATH_DBG_FATAL,
+			DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 				"Unable to reset hardware; reset status %d\n",
 				r);
 		spin_unlock_bh(&sc->sc_resetlock);
@@ -1147,7 +1147,7 @@ int ath_tx_setup(struct ath_softc *sc, int haltype)
 	struct ath_txq *txq;
 
 	if (haltype >= ARRAY_SIZE(sc->tx.hwq_map)) {
-		DPRINTF(sc, ATH_DBG_FATAL,
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 			"HAL AC %u out of range, max %zu!\n",
 			 haltype, ARRAY_SIZE(sc->tx.hwq_map));
 		return 0;
@@ -1188,17 +1188,17 @@ static void ath_tx_txqaddbuf(struct ath_softc *sc, struct ath_txq *txq,
 	txq->axq_depth++;
 	txq->axq_linkbuf = list_entry(txq->axq_q.prev, struct ath_buf, list);
 
-	DPRINTF(sc, ATH_DBG_QUEUE,
+	DPRINTF(sc->sc_ah, ATH_DBG_QUEUE,
 		"qnum: %d, txq depth: %d\n", txq->axq_qnum, txq->axq_depth);
 
 	if (txq->axq_link == NULL) {
 		ath9k_hw_puttxbuf(ah, txq->axq_qnum, bf->bf_daddr);
-		DPRINTF(sc, ATH_DBG_XMIT,
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT,
 			"TXDP[%u] = %llx (%p)\n",
 			txq->axq_qnum, ito64(bf->bf_daddr), bf->bf_desc);
 	} else {
 		*txq->axq_link = bf->bf_daddr;
-		DPRINTF(sc, ATH_DBG_XMIT, "link[%u] (%p)=%llx (%p)\n",
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "link[%u] (%p)=%llx (%p)\n",
 			txq->axq_qnum, txq->axq_link,
 			ito64(bf->bf_daddr), bf->bf_desc);
 	}
@@ -1318,6 +1318,25 @@ static enum ath9k_pkt_type get_hw_packet_type(struct sk_buff *skb)
 		htype = ATH9K_PKT_TYPE_NORMAL;
 
 	return htype;
+}
+
+static bool is_pae(struct sk_buff *skb)
+{
+	struct ieee80211_hdr *hdr;
+	__le16 fc;
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+	fc = hdr->frame_control;
+
+	if (ieee80211_is_data(fc)) {
+		if (ieee80211_is_nullfunc(fc) ||
+		    /* Port Access Entity (IEEE 802.1X) */
+		    (skb->protocol == cpu_to_be16(ETH_P_PAE))) {
+			return true;
+		}
+	}
+
+	return false;
 }
 
 static int get_hw_crypto_keytype(struct sk_buff *skb)
@@ -1544,7 +1563,7 @@ static int ath_tx_setup_buffer(struct ieee80211_hw *hw, struct ath_buf *bf,
 
 	bf->bf_frmlen = skb->len + FCS_LEN - (hdrlen & 3);
 
-	if (conf_is_ht(&sc->hw->conf))
+	if (conf_is_ht(&sc->hw->conf) && !is_pae(skb))
 		bf->bf_state.bf_type |= BUF_HT;
 
 	bf->bf_flags = setup_tx_flags(sc, skb, txctl->txq);
@@ -1568,18 +1587,12 @@ static int ath_tx_setup_buffer(struct ieee80211_hw *hw, struct ath_buf *bf,
 		bf->bf_mpdu = NULL;
 		kfree(tx_info_priv);
 		tx_info->rate_driver_data[0] = NULL;
-		DPRINTF(sc, ATH_DBG_FATAL, "dma_mapping_error() on TX\n");
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
+			"dma_mapping_error() on TX\n");
 		return -ENOMEM;
 	}
 
 	bf->bf_buf_addr = bf->bf_dmacontext;
-
-	if (ieee80211_is_nullfunc(fc) && ieee80211_has_pm(fc)) {
-		bf->bf_isnullfunc = true;
-		sc->sc_flags &= ~SC_OP_NULLFUNC_COMPLETED;
-	} else
-		bf->bf_isnullfunc = false;
-
 	return 0;
 }
 
@@ -1662,7 +1675,7 @@ int ath_tx_start(struct ieee80211_hw *hw, struct sk_buff *skb,
 
 	bf = ath_tx_get_buffer(sc);
 	if (!bf) {
-		DPRINTF(sc, ATH_DBG_XMIT, "TX buffers are full\n");
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "TX buffers are full\n");
 		return -1;
 	}
 
@@ -1670,7 +1683,7 @@ int ath_tx_start(struct ieee80211_hw *hw, struct sk_buff *skb,
 	if (unlikely(r)) {
 		struct ath_txq *txq = txctl->txq;
 
-		DPRINTF(sc, ATH_DBG_FATAL, "TX mem alloc failure\n");
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL, "TX mem alloc failure\n");
 
 		/* upon ath_tx_processq() this TX queue will be resumed, we
 		 * guarantee this will happen by knowing beforehand that
@@ -1724,7 +1737,8 @@ void ath_tx_cabq(struct ieee80211_hw *hw, struct sk_buff *skb)
 	if (hdrlen & 3) {
 		padsize = hdrlen % 4;
 		if (skb_headroom(skb) < padsize) {
-			DPRINTF(sc, ATH_DBG_XMIT, "TX CABQ padding failed\n");
+			DPRINTF(sc->sc_ah, ATH_DBG_XMIT,
+				"TX CABQ padding failed\n");
 			dev_kfree_skb_any(skb);
 			return;
 		}
@@ -1734,10 +1748,10 @@ void ath_tx_cabq(struct ieee80211_hw *hw, struct sk_buff *skb)
 
 	txctl.txq = sc->beacon.cabq;
 
-	DPRINTF(sc, ATH_DBG_XMIT, "transmitting CABQ packet, skb: %p\n", skb);
+	DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "transmitting CABQ packet, skb: %p\n", skb);
 
 	if (ath_tx_start(hw, skb, &txctl) != 0) {
-		DPRINTF(sc, ATH_DBG_XMIT, "CABQ TX failed\n");
+		DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "CABQ TX failed\n");
 		goto exit;
 	}
 
@@ -1759,7 +1773,7 @@ static void ath_tx_complete(struct ath_softc *sc, struct sk_buff *skb,
 	int hdrlen, padsize;
 	int frame_type = ATH9K_NOT_INTERNAL;
 
-	DPRINTF(sc, ATH_DBG_XMIT, "TX complete: skb: %p\n", skb);
+	DPRINTF(sc->sc_ah, ATH_DBG_XMIT, "TX complete: skb: %p\n", skb);
 
 	if (tx_info_priv) {
 		hw = tx_info_priv->aphy->hw;
@@ -1793,7 +1807,7 @@ static void ath_tx_complete(struct ath_softc *sc, struct sk_buff *skb,
 
 	if (sc->sc_flags & SC_OP_WAIT_FOR_TX_ACK) {
 		sc->sc_flags &= ~SC_OP_WAIT_FOR_TX_ACK;
-		DPRINTF(sc, ATH_DBG_PS, "Going back to sleep after having "
+		DPRINTF(sc->sc_ah, ATH_DBG_PS, "Going back to sleep after having "
 			"received TX status (0x%x)\n",
 			sc->sc_flags & (SC_OP_WAIT_FOR_BEACON |
 					SC_OP_WAIT_FOR_CAB |
@@ -1819,16 +1833,6 @@ static void ath_tx_complete_buf(struct ath_softc *sc, struct ath_buf *bf,
 	if (sendbar)
 		tx_flags = ATH_TX_BAR;
 
-	/* Try to avoid running out of descriptors */
-	if (txq->axq_depth >= (ATH_TXBUF - 20)) {
-		DPRINTF(sc, ATH_DBG_XMIT,
-			"TX queue: %d is full, depth: %d\n",
-			qnum, txq->axq_depth);
-		ieee80211_stop_queue(sc->hw, skb_get_queue_mapping(skb));
-		txq->stopped = 1;
-		spin_unlock_bh(&txq->axq_lock);
-		return NULL;
-	}
 	if (!txok) {
 		tx_flags |= ATH_TX_ERROR;
 
@@ -1940,7 +1944,7 @@ static void ath_tx_processq(struct ath_softc *sc, struct ath_txq *txq)
 	int txok;
 	int status;
 
-	DPRINTF(sc, ATH_DBG_QUEUE, "tx queue %d (%x), link %p\n",
+	DPRINTF(ah, ATH_DBG_QUEUE, "tx queue %d (%x), link %p\n",
 		txq->axq_qnum, ath9k_hw_gettxbuf(sc->sc_ah, txq->axq_qnum),
 		txq->axq_link);
 
@@ -1987,14 +1991,6 @@ static void ath_tx_processq(struct ath_softc *sc, struct ath_txq *txq)
 		if (ds == txq->axq_gatingds)
 			txq->axq_gatingds = NULL;
 
-		if (bf->bf_isnullfunc &&
-		    (ds->ds_txstat.ts_status & ATH9K_TX_ACKED)) {
-			if ((sc->sc_flags & SC_OP_PS_ENABLED))
-				ath9k_enable_ps(sc);
-			else
-				sc->sc_flags |= SC_OP_NULLFUNC_COMPLETED;
-		}
-
 		/*
 		 * Remove ath_buf's of the same transmit unit from txq,
 		 * however leave the last descriptor back as the holding
@@ -2010,7 +2006,7 @@ static void ath_tx_processq(struct ath_softc *sc, struct ath_txq *txq)
 		if (bf_isaggr(bf))
 			txq->axq_aggr_depth--;
 
-		txok = !(ds->ds_txstat.ts_status & ATH9K_TXERR_MASK);
+		txok = (ds->ds_txstat.ts_status == 0);
 		txq->axq_tx_inprogress = false;
 		spin_unlock_bh(&txq->axq_lock);
 
@@ -2070,10 +2066,8 @@ static void ath_tx_complete_poll_work(struct work_struct *work)
 		}
 
 	if (needreset) {
-		DPRINTF(sc, ATH_DBG_RESET, "tx hung, resetting the chip\n");
-		ath9k_ps_wakeup(sc);
+		DPRINTF(sc->sc_ah, ATH_DBG_RESET, "tx hung, resetting the chip\n");
 		ath_reset(sc, false);
-		ath9k_ps_restore(sc);
 	}
 
 	ieee80211_queue_delayed_work(sc->hw, &sc->tx_complete_work,
@@ -2108,7 +2102,7 @@ int ath_tx_init(struct ath_softc *sc, int nbufs)
 	error = ath_descdma_setup(sc, &sc->tx.txdma, &sc->tx.txbuf,
 				  "tx", nbufs, 1);
 	if (error != 0) {
-		DPRINTF(sc, ATH_DBG_FATAL,
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 			"Failed to allocate tx descriptors: %d\n", error);
 		goto err;
 	}
@@ -2116,7 +2110,7 @@ int ath_tx_init(struct ath_softc *sc, int nbufs)
 	error = ath_descdma_setup(sc, &sc->beacon.bdma, &sc->beacon.bbuf,
 				  "beacon", ATH_BCBUF, 1);
 	if (error != 0) {
-		DPRINTF(sc, ATH_DBG_FATAL,
+		DPRINTF(sc->sc_ah, ATH_DBG_FATAL,
 			"Failed to allocate beacon descriptors: %d\n", error);
 		goto err;
 	}
