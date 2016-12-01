@@ -33,7 +33,6 @@
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
-#include <linux/sched.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/wireless.h>
@@ -1044,9 +1043,6 @@ static void iwl_irq_tasklet_legacy(struct iwl_priv *priv)
 	/* only Re-enable if diabled by irq */
 	if (test_bit(STATUS_INT_ENABLED, &priv->status))
 		iwl_enable_interrupts(priv);
-	/* Re-enable RF_KILL if it occurred */
-	else if (handled & CSR_INT_BIT_RF_KILL)
-		iwl_enable_rfkill_int(priv);
 
 #ifdef CONFIG_IWLWIFI_DEBUG
 	if (iwl_get_debug_level(priv) & (IWL_DL_ISR)) {
@@ -1248,9 +1244,6 @@ static void iwl_irq_tasklet(struct iwl_priv *priv)
 	/* only Re-enable if diabled by irq */
 	if (test_bit(STATUS_INT_ENABLED, &priv->status))
 		iwl_enable_interrupts(priv);
-	/* Re-enable RF_KILL if it occurred */
-	else if (handled & CSR_INT_BIT_RF_KILL)
-		iwl_enable_rfkill_int(priv);
 
 	spin_unlock_irqrestore(&priv->lock, flags);
 
@@ -1768,6 +1761,10 @@ static void iwl_alive_start(struct iwl_priv *priv)
 
 	priv->active_rate = priv->rates_mask;
 	priv->active_rate_basic = priv->rates_mask & IWL_BASIC_RATES_MASK;
+
+	/* Configure Tx antenna selection based on H/W config */
+	if (priv->cfg->ops->hcmd->set_tx_ant)
+		priv->cfg->ops->hcmd->set_tx_ant(priv, priv->cfg->valid_tx_ant);
 
 	if (iwl_is_associated(priv)) {
 		struct iwl_rxon_cmd *active_rxon =
@@ -2364,10 +2361,9 @@ static void iwl_mac_stop(struct ieee80211_hw *hw)
 
 	flush_workqueue(priv->workqueue);
 
-	/* User space software may expect getting rfkill changes
-	 * even if interface is down */
+	/* enable interrupts again in order to receive rfkill changes */
 	iwl_write32(priv, CSR_INT, 0xFFFFFFFF);
-	iwl_enable_rfkill_int(priv);
+	iwl_enable_interrupts(priv);
 
 	IWL_DEBUG_MAC80211(priv, "leave\n");
 }
@@ -3102,14 +3098,14 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * 8. Setup and register mac80211
 	 **********************************/
 
-	/* enable rfkill interrupt: hw bug w/a */
+	/* enable interrupts if needed: hw bug w/a */
 	pci_read_config_word(priv->pci_dev, PCI_COMMAND, &pci_cmd);
 	if (pci_cmd & PCI_COMMAND_INTX_DISABLE) {
 		pci_cmd &= ~PCI_COMMAND_INTX_DISABLE;
 		pci_write_config_word(priv->pci_dev, PCI_COMMAND, pci_cmd);
 	}
 
-	iwl_enable_rfkill_int(priv);
+	iwl_enable_interrupts(priv);
 
 	err = iwl_setup_mac(priv);
 	if (err)
@@ -3152,8 +3148,8 @@ static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
  out_pci_disable_device:
 	pci_disable_device(pdev);
  out_ieee80211_free_hw:
-	iwl_free_traffic_mem(priv);
 	ieee80211_free_hw(priv->hw);
+	iwl_free_traffic_mem(priv);
  out:
 	return err;
 }
@@ -3245,77 +3241,68 @@ static struct pci_device_id iwl_hw_card_ids[] = {
 	{IWL_PCI_DEVICE(0x4230, PCI_ANY_ID, iwl4965_agn_cfg)},
 #endif /* CONFIG_IWL4965 */
 #ifdef CONFIG_IWL5000
-/* 5100 Series WiFi */
-	{IWL_PCI_DEVICE(0x4232, 0x1201, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1301, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1204, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1304, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1205, iwl5100_bgn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1305, iwl5100_bgn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1206, iwl5100_abg_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1306, iwl5100_abg_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1221, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1321, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1224, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1324, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1225, iwl5100_bgn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1325, iwl5100_bgn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1226, iwl5100_abg_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4232, 0x1326, iwl5100_abg_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1211, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1311, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1214, iwl5100_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1314, iwl5100_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1215, iwl5100_bgn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1315, iwl5100_bgn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1216, iwl5100_abg_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4237, 0x1316, iwl5100_abg_cfg)}, /* Half Mini Card */
+	{IWL_PCI_DEVICE(0x4232, 0x1205, iwl5100_bg_cfg)},
+	{IWL_PCI_DEVICE(0x4232, 0x1305, iwl5100_bg_cfg)},
+	{IWL_PCI_DEVICE(0x4232, 0x1206, iwl5100_abg_cfg)},
+	{IWL_PCI_DEVICE(0x4232, 0x1306, iwl5100_abg_cfg)},
+	{IWL_PCI_DEVICE(0x4232, 0x1326, iwl5100_abg_cfg)},
+	{IWL_PCI_DEVICE(0x4237, 0x1216, iwl5100_abg_cfg)},
+	{IWL_PCI_DEVICE(0x4232, PCI_ANY_ID, iwl5100_agn_cfg)},
+	{IWL_PCI_DEVICE(0x4235, PCI_ANY_ID, iwl5300_agn_cfg)},
+	{IWL_PCI_DEVICE(0x4236, PCI_ANY_ID, iwl5300_agn_cfg)},
+	{IWL_PCI_DEVICE(0x4237, PCI_ANY_ID, iwl5100_agn_cfg)},
+/* 5350 WiFi/WiMax */
+	{IWL_PCI_DEVICE(0x423A, 0x1001, iwl5350_agn_cfg)},
+	{IWL_PCI_DEVICE(0x423A, 0x1021, iwl5350_agn_cfg)},
+	{IWL_PCI_DEVICE(0x423B, 0x1011, iwl5350_agn_cfg)},
+/* 5150 Wifi/WiMax */
+	{IWL_PCI_DEVICE(0x423C, PCI_ANY_ID, iwl5150_agn_cfg)},
+	{IWL_PCI_DEVICE(0x423D, PCI_ANY_ID, iwl5150_agn_cfg)},
 
-/* 5300 Series WiFi */
-	{IWL_PCI_DEVICE(0x4235, 0x1021, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1121, iwl5300_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1024, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1124, iwl5300_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1001, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1101, iwl5300_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1004, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4235, 0x1104, iwl5300_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4236, 0x1011, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4236, 0x1111, iwl5300_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x4236, 0x1014, iwl5300_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x4236, 0x1114, iwl5300_agn_cfg)}, /* Half Mini Card */
+/* 6x00 Series */
+	{IWL_PCI_DEVICE(0x008D, 0x1301, iwl6000h_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x008D, 0x1321, iwl6000h_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x008D, 0x1326, iwl6000h_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x008D, 0x1306, iwl6000h_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x008D, 0x1307, iwl6000h_2bg_cfg)},
+	{IWL_PCI_DEVICE(0x008E, 0x1311, iwl6000h_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x008E, 0x1316, iwl6000h_2abg_cfg)},
 
-/* 5350 Series WiFi/WiMax */
-	{IWL_PCI_DEVICE(0x423A, 0x1001, iwl5350_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423A, 0x1021, iwl5350_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423B, 0x1011, iwl5350_agn_cfg)}, /* Mini Card */
+	{IWL_PCI_DEVICE(0x422B, 0x1101, iwl6000_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x422B, 0x1121, iwl6000_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x422C, 0x1301, iwl6000i_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x422C, 0x1306, iwl6000i_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x422C, 0x1307, iwl6000i_2bg_cfg)},
+	{IWL_PCI_DEVICE(0x422C, 0x1321, iwl6000i_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x422C, 0x1326, iwl6000i_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x4238, 0x1111, iwl6000_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x4239, 0x1311, iwl6000i_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x4239, 0x1316, iwl6000i_2abg_cfg)},
 
-/* 5150 Series Wifi/WiMax */
-	{IWL_PCI_DEVICE(0x423C, 0x1201, iwl5150_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423C, 0x1301, iwl5150_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x423C, 0x1206, iwl5150_abg_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423C, 0x1306, iwl5150_abg_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x423C, 0x1221, iwl5150_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423C, 0x1321, iwl5150_agn_cfg)}, /* Half Mini Card */
+/* 6x50 WiFi/WiMax Series */
+	{IWL_PCI_DEVICE(0x0086, 0x1101, iwl6050_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x0086, 0x1121, iwl6050_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x0087, 0x1301, iwl6050_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x0087, 0x1306, iwl6050_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x0087, 0x1321, iwl6050_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x0087, 0x1326, iwl6050_2abg_cfg)},
+	{IWL_PCI_DEVICE(0x0088, 0x1111, iwl6050_3agn_cfg)},
+	{IWL_PCI_DEVICE(0x0089, 0x1311, iwl6050_2agn_cfg)},
+	{IWL_PCI_DEVICE(0x0089, 0x1316, iwl6050_2abg_cfg)},
 
-	{IWL_PCI_DEVICE(0x423D, 0x1211, iwl5150_agn_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423D, 0x1311, iwl5150_agn_cfg)}, /* Half Mini Card */
-	{IWL_PCI_DEVICE(0x423D, 0x1216, iwl5150_abg_cfg)}, /* Mini Card */
-	{IWL_PCI_DEVICE(0x423D, 0x1316, iwl5150_abg_cfg)}, /* Half Mini Card */
-/* 6000/6050 Series */
-	{IWL_PCI_DEVICE(0x008D, PCI_ANY_ID, iwl6000h_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x008E, PCI_ANY_ID, iwl6000h_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x422B, PCI_ANY_ID, iwl6000_3agn_cfg)},
-	{IWL_PCI_DEVICE(0x422C, PCI_ANY_ID, iwl6000i_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x4238, PCI_ANY_ID, iwl6000_3agn_cfg)},
-	{IWL_PCI_DEVICE(0x4239, PCI_ANY_ID, iwl6000i_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0086, PCI_ANY_ID, iwl6050_3agn_cfg)},
-	{IWL_PCI_DEVICE(0x0087, PCI_ANY_ID, iwl6050_2agn_cfg)},
-	{IWL_PCI_DEVICE(0x0088, PCI_ANY_ID, iwl6050_3agn_cfg)},
-	{IWL_PCI_DEVICE(0x0089, PCI_ANY_ID, iwl6050_2agn_cfg)},
 /* 1000 Series WiFi */
-	{IWL_PCI_DEVICE(0x0083, PCI_ANY_ID, iwl1000_bgn_cfg)},
-	{IWL_PCI_DEVICE(0x0084, PCI_ANY_ID, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1205, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1305, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1225, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1325, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0084, 0x1215, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0084, 0x1315, iwl1000_bgn_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1206, iwl1000_bg_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1306, iwl1000_bg_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1226, iwl1000_bg_cfg)},
+	{IWL_PCI_DEVICE(0x0083, 0x1326, iwl1000_bg_cfg)},
+	{IWL_PCI_DEVICE(0x0084, 0x1216, iwl1000_bg_cfg)},
+	{IWL_PCI_DEVICE(0x0084, 0x1316, iwl1000_bg_cfg)},
 #endif /* CONFIG_IWL5000 */
 
 	{0}
