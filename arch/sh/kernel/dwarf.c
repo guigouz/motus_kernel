@@ -530,7 +530,18 @@ static int dwarf_cfa_execute_insns(unsigned char *insn_start,
 }
 
 /**
- *	dwarf_unwind_stack - recursively unwind the stack
+ *	dwarf_free_frame - free the memory allocated for @frame
+ *	@frame: the frame to free
+ */
+void dwarf_free_frame(struct dwarf_frame *frame)
+{
+	dwarf_frame_free_regs(frame);
+	mempool_free(frame, dwarf_frame_pool);
+}
+
+/**
+ *	dwarf_unwind_stack - unwind the stack
+ *
  *	@pc: address of the function to unwind
  *	@prev: struct dwarf_frame of the previous stackframe on the callstack
  *
@@ -548,9 +559,9 @@ struct dwarf_frame * dwarf_unwind_stack(unsigned long pc,
 	unsigned long addr;
 
 	/*
-	 * If this is the first invocation of this recursive function we
-	 * need get the contents of a physical register to get the CFA
-	 * in order to begin the virtual unwinding of the stack.
+	 * If we're starting at the top of the stack we need get the
+	 * contents of a physical register to get the CFA in order to
+	 * begin the virtual unwinding of the stack.
 	 *
 	 * NOTE: the return address is guaranteed to be setup by the
 	 * time this function makes its first function call.
@@ -572,9 +583,8 @@ struct dwarf_frame * dwarf_unwind_stack(unsigned long pc,
 	fde = dwarf_lookup_fde(pc);
 	if (!fde) {
 		/*
-		 * This is our normal exit path - the one that stops the
-		 * recursion. There's two reasons why we might exit
-		 * here,
+		 * This is our normal exit path. There are two reasons
+		 * why we might exit here,
 		 *
 		 *	a) pc has no asscociated DWARF frame info and so
 		 *	we don't know how to unwind this frame. This is
@@ -616,10 +626,10 @@ struct dwarf_frame * dwarf_unwind_stack(unsigned long pc,
 
 		} else {
 			/*
-			 * Again, this is the first invocation of this
-			 * recurisve function. We need to physically
-			 * read the contents of a register in order to
-			 * get the Canonical Frame Address for this
+			 * Again, we're starting from the top of the
+			 * stack. We need to physically read
+			 * the contents of a register in order to get
+			 * the Canonical Frame Address for this
 			 * function.
 			 */
 			frame->cfa = dwarf_read_arch_reg(frame->cfa_register);
@@ -649,8 +659,7 @@ struct dwarf_frame * dwarf_unwind_stack(unsigned long pc,
 	return frame;
 
 bail:
-	dwarf_frame_free_regs(frame);
-	mempool_free(frame, dwarf_frame_pool);
+	dwarf_free_frame(frame);
 	return NULL;
 }
 
@@ -837,10 +846,8 @@ static void dwarf_unwinder_dump(struct task_struct *task,
 	while (1) {
 		frame = dwarf_unwind_stack(return_addr, _frame);
 
-		if (_frame) {
-			dwarf_frame_free_regs(_frame);
-			mempool_free(_frame, dwarf_frame_pool);
-		}
+		if (_frame)
+			dwarf_free_frame(_frame);
 
 		_frame = frame;
 
@@ -850,6 +857,9 @@ static void dwarf_unwinder_dump(struct task_struct *task,
 		return_addr = frame->return_addr;
 		ops->address(data, return_addr, 1);
 	}
+
+	if (frame)
+		dwarf_free_frame(frame);
 }
 
 static struct unwinder dwarf_unwinder = {
