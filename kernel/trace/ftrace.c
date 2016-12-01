@@ -60,6 +60,13 @@ static int last_ftrace_enabled;
 /* Quick disabling of function tracer. */
 int function_trace_stop;
 
+/* List for set_ftrace_pid's pids. */
+LIST_HEAD(ftrace_pids);
+struct ftrace_pid {
+	struct list_head list;
+	struct pid *pid;
+};
+
 /*
  * ftrace_disabled is set when an anomaly is discovered.
  * ftrace_disabled is much stronger than ftrace_enabled.
@@ -159,7 +166,7 @@ static int __register_ftrace_function(struct ftrace_ops *ops)
 		else
 			func = ftrace_list_func;
 
-		if (ftrace_pid_trace) {
+		if (!list_empty(&ftrace_pids)) {
 			set_ftrace_pid_function(func);
 			func = ftrace_pid_func;
 		}
@@ -207,7 +214,7 @@ static int __unregister_ftrace_function(struct ftrace_ops *ops)
 		if (ftrace_list->next == &ftrace_list_end) {
 			ftrace_func_t func = ftrace_list->func;
 
-			if (ftrace_pid_trace) {
+			if (!list_empty(&ftrace_pids)) {
 				set_ftrace_pid_function(func);
 				func = ftrace_pid_func;
 			}
@@ -235,7 +242,7 @@ static void ftrace_update_pid_func(void)
 	func = __ftrace_trace_function;
 #endif
 
-	if (ftrace_pid_trace) {
+	if (!list_empty(&ftrace_pids)) {
 		set_ftrace_pid_function(func);
 		func = ftrace_pid_func;
 	} else {
@@ -831,8 +838,6 @@ static __init void ftrace_profile_debugfs(struct dentry *d_tracer)
 }
 #endif /* CONFIG_FUNCTION_PROFILER */
 
-/* set when tracing only a pid */
-struct pid *ftrace_pid_trace;
 static struct pid * const ftrace_swapper_pid = &init_struct_pid;
 
 #ifdef CONFIG_DYNAMIC_FTRACE
@@ -1271,12 +1276,34 @@ static int ftrace_update_code(struct module *mod)
 		ftrace_new_addrs = p->newlist;
 		p->flags = 0L;
 
-		/* convert record (i.e, patch mcount-call with NOP) */
-		if (ftrace_code_disable(mod, p)) {
-			p->flags |= FTRACE_FL_CONVERTED;
-			ftrace_update_cnt++;
-		} else
+		/*
+		 * Do the initial record convertion from mcount jump
+		 * to the NOP instructions.
+		 */
+		if (!ftrace_code_disable(mod, p)) {
 			ftrace_free_rec(p);
+			continue;
+		}
+
+		p->flags |= FTRACE_FL_CONVERTED;
+		ftrace_update_cnt++;
+
+		/*
+		 * If the tracing is enabled, go ahead and enable the record.
+		 *
+		 * The reason not to enable the record immediatelly is the
+		 * inherent check of ftrace_make_nop/ftrace_make_call for
+		 * correct previous instructions.  Making first the NOP
+		 * conversion puts the module to the correct state, thus
+		 * passing the ftrace_make_call check.
+		 */
+		if (ftrace_start_up) {
+			int failed = __ftrace_replace_code(p, 1);
+			if (failed) {
+				ftrace_bug(failed, p->ip);
+				ftrace_free_rec(p);
+			}
+		}
 	}
 
 	stop = ftrace_now(raw_smp_processor_id());
@@ -2614,7 +2641,7 @@ static __init int ftrace_init_dyn_debugfs(struct dentry *d_tracer)
 	return 0;
 }
 
-static int ftrace_convert_nops(struct module *mod,
+static int ftrace_process_locs(struct module *mod,
 			       unsigned long *start,
 			       unsigned long *end)
 {
@@ -2674,7 +2701,7 @@ static void ftrace_init_module(struct module *mod,
 {
 	if (ftrace_disabled || start == end)
 		return;
-	ftrace_convert_nops(mod, start, end);
+	ftrace_process_locs(mod, start, end);
 }
 
 static int ftrace_module_notify(struct notifier_block *self,
@@ -2735,7 +2762,7 @@ void __init ftrace_init(void)
 
 	last_ftrace_enabled = ftrace_enabled = 1;
 
-	ret = ftrace_convert_nops(NULL,
+	ret = ftrace_process_locs(NULL,
 				  __start_mcount_loc,
 				  __stop_mcount_loc);
 
@@ -2767,23 +2794,6 @@ static inline void ftrace_startup_enable(int command) { }
 # define ftrace_startup_sysctl()	do { } while (0)
 # define ftrace_shutdown_sysctl()	do { } while (0)
 #endif /* CONFIG_DYNAMIC_FTRACE */
-
-static ssize_t
-ftrace_pid_read(struct file *file, char __user *ubuf,
-		       size_t cnt, loff_t *ppos)
-{
-	char buf[64];
-	int r;
-
-	if (ftrace_pid_trace == ftrace_swapper_pid)
-		r = sprintf(buf, "swapper tasks\n");
-	else if (ftrace_pid_trace)
-		r = sprintf(buf, "%u\n", pid_vnr(ftrace_pid_trace));
-	else
-		r = sprintf(buf, "no pid\n");
-
-	return simple_read_from_buffer(ubuf, cnt, ppos, buf, r);
-}
 
 static void clear_ftrace_swapper(void)
 {
@@ -2835,14 +2845,12 @@ static void set_ftrace_pid(struct pid *pid)
 	rcu_read_unlock();
 }
 
-static void clear_ftrace_pid_task(struct pid **pid)
+static void clear_ftrace_pid_task(struct pid *pid)
 {
-	if (*pid == ftrace_swapper_pid)
+	if (pid == ftrace_swapper_pid)
 		clear_ftrace_swapper();
 	else
-		clear_ftrace_pid(*pid);
-
-	*pid = NULL;
+		clear_ftrace_pid(pid);
 }
 
 static void set_ftrace_pid_task(struct pid *pid)
@@ -2853,11 +2861,140 @@ static void set_ftrace_pid_task(struct pid *pid)
 		set_ftrace_pid(pid);
 }
 
+static int ftrace_pid_add(int p)
+{
+	struct pid *pid;
+	struct ftrace_pid *fpid;
+	int ret = -EINVAL;
+
+	mutex_lock(&ftrace_lock);
+
+	if (!p)
+		pid = ftrace_swapper_pid;
+	else
+		pid = find_get_pid(p);
+
+	if (!pid)
+		goto out;
+
+	ret = 0;
+
+	list_for_each_entry(fpid, &ftrace_pids, list)
+		if (fpid->pid == pid)
+			goto out_put;
+
+	ret = -ENOMEM;
+
+	fpid = kmalloc(sizeof(*fpid), GFP_KERNEL);
+	if (!fpid)
+		goto out_put;
+
+	list_add(&fpid->list, &ftrace_pids);
+	fpid->pid = pid;
+
+	set_ftrace_pid_task(pid);
+
+	ftrace_update_pid_func();
+	ftrace_startup_enable(0);
+
+	mutex_unlock(&ftrace_lock);
+	return 0;
+
+out_put:
+	if (pid != ftrace_swapper_pid)
+		put_pid(pid);
+
+out:
+	mutex_unlock(&ftrace_lock);
+	return ret;
+}
+
+static void ftrace_pid_reset(void)
+{
+	struct ftrace_pid *fpid, *safe;
+
+	mutex_lock(&ftrace_lock);
+	list_for_each_entry_safe(fpid, safe, &ftrace_pids, list) {
+		struct pid *pid = fpid->pid;
+
+		clear_ftrace_pid_task(pid);
+
+		list_del(&fpid->list);
+		kfree(fpid);
+	}
+
+	ftrace_update_pid_func();
+	ftrace_startup_enable(0);
+
+	mutex_unlock(&ftrace_lock);
+}
+
+static void *fpid_start(struct seq_file *m, loff_t *pos)
+{
+	mutex_lock(&ftrace_lock);
+
+	if (list_empty(&ftrace_pids) && (!*pos))
+		return (void *) 1;
+
+	return seq_list_start(&ftrace_pids, *pos);
+}
+
+static void *fpid_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	if (v == (void *)1)
+		return NULL;
+
+	return seq_list_next(v, &ftrace_pids, pos);
+}
+
+static void fpid_stop(struct seq_file *m, void *p)
+{
+	mutex_unlock(&ftrace_lock);
+}
+
+static int fpid_show(struct seq_file *m, void *v)
+{
+	const struct ftrace_pid *fpid = list_entry(v, struct ftrace_pid, list);
+
+	if (v == (void *)1) {
+		seq_printf(m, "no pid\n");
+		return 0;
+	}
+
+	if (fpid->pid == ftrace_swapper_pid)
+		seq_printf(m, "swapper tasks\n");
+	else
+		seq_printf(m, "%u\n", pid_vnr(fpid->pid));
+
+	return 0;
+}
+
+static const struct seq_operations ftrace_pid_sops = {
+	.start = fpid_start,
+	.next = fpid_next,
+	.stop = fpid_stop,
+	.show = fpid_show,
+};
+
+static int
+ftrace_pid_open(struct inode *inode, struct file *file)
+{
+	int ret = 0;
+
+	if ((file->f_mode & FMODE_WRITE) &&
+	    (file->f_flags & O_TRUNC))
+		ftrace_pid_reset();
+
+	if (file->f_mode & FMODE_READ)
+		ret = seq_open(file, &ftrace_pid_sops);
+
+	return ret;
+}
+
 static ssize_t
 ftrace_pid_write(struct file *filp, const char __user *ubuf,
 		   size_t cnt, loff_t *ppos)
 {
-	struct pid *pid;
 	char buf[64];
 	long val;
 	int ret;
@@ -2870,57 +3007,38 @@ ftrace_pid_write(struct file *filp, const char __user *ubuf,
 
 	buf[cnt] = 0;
 
+	/*
+	 * Allow "echo > set_ftrace_pid" or "echo -n '' > set_ftrace_pid"
+	 * to clean the filter quietly.
+	 */
+	strstrip(buf);
+	if (strlen(buf) == 0)
+		return 1;
+
 	ret = strict_strtol(buf, 10, &val);
 	if (ret < 0)
 		return ret;
 
-	mutex_lock(&ftrace_lock);
-	if (val < 0) {
-		/* disable pid tracing */
-		if (!ftrace_pid_trace)
-			goto out;
+	ret = ftrace_pid_add(val);
 
-		clear_ftrace_pid_task(&ftrace_pid_trace);
+	return ret ? ret : cnt;
+}
 
-	} else {
-		/* swapper task is special */
-		if (!val) {
-			pid = ftrace_swapper_pid;
-			if (pid == ftrace_pid_trace)
-				goto out;
-		} else {
-			pid = find_get_pid(val);
+static int
+ftrace_pid_release(struct inode *inode, struct file *file)
+{
+	if (file->f_mode & FMODE_READ)
+		seq_release(inode, file);
 
-			if (pid == ftrace_pid_trace) {
-				put_pid(pid);
-				goto out;
-			}
-		}
-
-		if (ftrace_pid_trace)
-			clear_ftrace_pid_task(&ftrace_pid_trace);
-
-		if (!pid)
-			goto out;
-
-		ftrace_pid_trace = pid;
-
-		set_ftrace_pid_task(ftrace_pid_trace);
-	}
-
-	/* update the function call */
-	ftrace_update_pid_func();
-	ftrace_startup_enable(0);
-
- out:
-	mutex_unlock(&ftrace_lock);
-
-	return cnt;
+	return 0;
 }
 
 static const struct file_operations ftrace_pid_fops = {
-	.read = ftrace_pid_read,
-	.write = ftrace_pid_write,
+	.open		= ftrace_pid_open,
+	.write		= ftrace_pid_write,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= ftrace_pid_release,
 };
 
 static __init int ftrace_init_debugfs(void)

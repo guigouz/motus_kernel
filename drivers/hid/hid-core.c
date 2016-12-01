@@ -39,8 +39,6 @@
  * Version Information
  */
 
-#define DRIVER_VERSION "v2.6"
-#define DRIVER_AUTHOR "Andreas Gal, Vojtech Pavlik, Jiri Kosina"
 #define DRIVER_DESC "HID core driver"
 #define DRIVER_LICENSE "GPL"
 
@@ -1698,6 +1696,7 @@ static const struct hid_device_id hid_ignore_list[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_KBGEAR, USB_DEVICE_ID_KBGEAR_JAMSTUDIO) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_KWORLD, USB_DEVICE_ID_KWORLD_RADIO_FM700) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_KYE, USB_DEVICE_ID_KYE_GPEN_560) },
+	{ HID_BLUETOOTH_DEVICE(USB_VENDOR_ID_KYE, 0x0058) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LD, USB_DEVICE_ID_LD_CASSY) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LD, USB_DEVICE_ID_LD_POCKETCASSY) },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_LD, USB_DEVICE_ID_LD_MOBILECASSY) },
@@ -2000,5 +1999,8 @@ static void __exit hid_exit(void)
 module_init(hid_init);
 module_exit(hid_exit);
 
+MODULE_AUTHOR("Andreas Gal");
+MODULE_AUTHOR("Vojtech Pavlik");
+MODULE_AUTHOR("Jiri Kosina");
 MODULE_LICENSE(DRIVER_LICENSE);
 

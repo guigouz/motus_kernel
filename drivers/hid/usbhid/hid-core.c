@@ -41,8 +41,6 @@
  * Version Information
  */
 
-#define DRIVER_VERSION "v2.6"
-#define DRIVER_AUTHOR "Andreas Gal, Vojtech Pavlik, Jiri Kosina"
 #define DRIVER_DESC "USB HID core driver"
 #define DRIVER_LICENSE "GPL"
 
@@ -1418,8 +1416,7 @@ static int __init hid_init(void)
 	retval = usb_register(&hid_driver);
 	if (retval)
 		goto usb_register_fail;
-	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
-			DRIVER_DESC "\n");
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_DESC "\n");
 
 	return 0;
 usb_register_fail:
@@ -1446,6 +1443,8 @@ static void __exit hid_exit(void)
 module_init(hid_init);
 module_exit(hid_exit);
 
-MODULE_AUTHOR(DRIVER_AUTHOR);
+MODULE_AUTHOR("Andreas Gal");
+MODULE_AUTHOR("Vojtech Pavlik");
+MODULE_AUTHOR("Jiri Kosina");
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE(DRIVER_LICENSE);
