@@ -44,6 +44,7 @@
 #include "iwl-sta.h"
 #include "iwl-helpers.h"
 #include "iwl-5000-hw.h"
+#include "iwl-6000-hw.h"
 
 /* Highest firmware API version supported */
 #define IWL6000_UCODE_API_MAX 4
@@ -71,7 +72,21 @@ static void iwl6000_set_ct_threshold(struct iwl_priv *priv)
 /* NIC configuration for 6000 series */
 static void iwl6000_nic_config(struct iwl_priv *priv)
 {
-	iwl5000_nic_config(priv);
+	u16 radio_cfg;
+
+	radio_cfg = iwl_eeprom_query16(priv, EEPROM_RADIO_CONFIG);
+
+	/* write radio config values to register */
+	if (EEPROM_RF_CFG_TYPE_MSK(radio_cfg) <= EEPROM_RF_CONFIG_TYPE_MAX)
+		iwl_set_bit(priv, CSR_HW_IF_CONFIG_REG,
+			    EEPROM_RF_CFG_TYPE_MSK(radio_cfg) |
+			    EEPROM_RF_CFG_STEP_MSK(radio_cfg) |
+			    EEPROM_RF_CFG_DASH_MSK(radio_cfg));
+
+	/* set CSR_HW_CONFIG_REG for uCode use */
+	iwl_set_bit(priv, CSR_HW_IF_CONFIG_REG,
+		    CSR_HW_IF_CONFIG_REG_BIT_RADIO_SI |
+		    CSR_HW_IF_CONFIG_REG_BIT_MAC_SI);
 
 	/* no locking required for register write */
 	if (priv->cfg->pa_type == IWL_PA_HYBRID) {
@@ -86,8 +101,76 @@ static void iwl6000_nic_config(struct iwl_priv *priv)
 	/* else do nothing, uCode configured */
 }
 
+static struct iwl_sensitivity_ranges iwl6000_sensitivity = {
+	.min_nrg_cck = 97,
+	.max_nrg_cck = 0, /* not used, set to 0 */
+	.auto_corr_min_ofdm = 80,
+	.auto_corr_min_ofdm_mrc = 128,
+	.auto_corr_min_ofdm_x1 = 105,
+	.auto_corr_min_ofdm_mrc_x1 = 192,
+
+	.auto_corr_max_ofdm = 145,
+	.auto_corr_max_ofdm_mrc = 232,
+	.auto_corr_max_ofdm_x1 = 145,
+	.auto_corr_max_ofdm_mrc_x1 = 232,
+
+	.auto_corr_min_cck = 125,
+	.auto_corr_max_cck = 175,
+	.auto_corr_min_cck_mrc = 160,
+	.auto_corr_max_cck_mrc = 310,
+	.nrg_th_cck = 97,
+	.nrg_th_ofdm = 100,
+};
+
+static int iwl6000_hw_set_hw_params(struct iwl_priv *priv)
+{
+	if ((priv->cfg->mod_params->num_of_queues > IWL50_NUM_QUEUES) ||
+	    (priv->cfg->mod_params->num_of_queues < IWL_MIN_NUM_QUEUES)) {
+		IWL_ERR(priv,
+			"invalid queues_num, should be between %d and %d\n",
+			IWL_MIN_NUM_QUEUES, IWL50_NUM_QUEUES);
+		return -EINVAL;
+	}
+
+	priv->hw_params.max_txq_num = priv->cfg->mod_params->num_of_queues;
+	priv->hw_params.dma_chnl_num = FH50_TCSR_CHNL_NUM;
+	priv->hw_params.scd_bc_tbls_size =
+			IWL50_NUM_QUEUES * sizeof(struct iwl5000_scd_bc_tbl);
+	priv->hw_params.tfd_size = sizeof(struct iwl_tfd);
+	priv->hw_params.max_stations = IWL5000_STATION_COUNT;
+	priv->hw_params.bcast_sta_id = IWL5000_BROADCAST_ID;
+
+	priv->hw_params.max_data_size = IWL60_RTC_DATA_SIZE;
+	priv->hw_params.max_inst_size = IWL60_RTC_INST_SIZE;
+
+	priv->hw_params.max_bsm_size = 0;
+	priv->hw_params.ht40_channel =  BIT(IEEE80211_BAND_2GHZ) |
+					BIT(IEEE80211_BAND_5GHZ);
+	priv->hw_params.rx_wrt_ptr_reg = FH_RSCSR_CHNL0_WPTR;
+
+	priv->hw_params.tx_chains_num = num_of_ant(priv->cfg->valid_tx_ant);
+	priv->hw_params.rx_chains_num = num_of_ant(priv->cfg->valid_rx_ant);
+	priv->hw_params.valid_tx_ant = priv->cfg->valid_tx_ant;
+	priv->hw_params.valid_rx_ant = priv->cfg->valid_rx_ant;
+
+	if (priv->cfg->ops->lib->temp_ops.set_ct_kill)
+		priv->cfg->ops->lib->temp_ops.set_ct_kill(priv);
+
+	/* Set initial sensitivity parameters */
+	/* Set initial calibration set */
+	priv->hw_params.sens = &iwl6000_sensitivity;
+	priv->hw_params.calib_init_cfg =
+			BIT(IWL_CALIB_XTAL)		|
+			BIT(IWL_CALIB_LO)		|
+			BIT(IWL_CALIB_TX_IQ) 		|
+			BIT(IWL_CALIB_TX_IQ_PERD)	|
+			BIT(IWL_CALIB_BASE_BAND);
+
+	return 0;
+}
+
 static struct iwl_lib_ops iwl6000_lib = {
-	.set_hw_params = iwl5000_hw_set_hw_params,
+	.set_hw_params = iwl6000_hw_set_hw_params,
 	.txq_update_byte_cnt_tbl = iwl5000_txq_update_byte_cnt_tbl,
 	.txq_inval_byte_cnt_tbl = iwl5000_txq_inval_byte_cnt_tbl,
 	.txq_set_sched = iwl5000_txq_set_sched,
@@ -175,7 +258,7 @@ struct iwl_cfg iwl6000h_2agn_cfg = {
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
-	.use_rts_for_ht = true, /* use rts/cts protection */
+	.led_compensation = 51,
 };
 
 /*
@@ -199,7 +282,7 @@ struct iwl_cfg iwl6000i_2agn_cfg = {
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
-	.use_rts_for_ht = true, /* use rts/cts protection */
+	.led_compensation = 51,
 };
 
 struct iwl_cfg iwl6050_2agn_cfg = {
@@ -220,7 +303,7 @@ struct iwl_cfg iwl6050_2agn_cfg = {
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
-	.use_rts_for_ht = true, /* use rts/cts protection */
+	.led_compensation = 51,
 };
 
 struct iwl_cfg iwl6000_3agn_cfg = {
@@ -241,7 +324,7 @@ struct iwl_cfg iwl6000_3agn_cfg = {
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
-	.use_rts_for_ht = true, /* use rts/cts protection */
+	.led_compensation = 51,
 };
 
 struct iwl_cfg iwl6050_3agn_cfg = {
@@ -262,7 +345,7 @@ struct iwl_cfg iwl6050_3agn_cfg = {
 	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
-	.use_rts_for_ht = true, /* use rts/cts protection */
+	.led_compensation = 51,
 };
 
 MODULE_FIRMWARE(IWL6000_MODULE_FIRMWARE(IWL6000_UCODE_API_MAX));
