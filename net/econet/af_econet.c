@@ -443,11 +443,17 @@ static int econet_sendmsg(struct kiocb *iocb, struct socket *sock,
 	size = sizeof(struct aunhdr);
 	iov[0].iov_base = (void *)&ah;
 	iov[0].iov_len = size;
-
-	userbuf = vmalloc(len);
-	if (userbuf == NULL) {
-		err = -ENOMEM;
-		goto error;
+	for (i = 0; i < msg->msg_iovlen; i++) {
+		void __user *base = msg->msg_iov[i].iov_base;
+		size_t iov_len = msg->msg_iov[i].iov_len;
+		/* Check it now since we switch to KERNEL_DS later. */
+		if (!access_ok(VERIFY_READ, base, iov_len)) {
+			mutex_unlock(&econet_mutex);
+			return -EFAULT;
+		}
+		iov[i+1].iov_base = base;
+		iov[i+1].iov_len = iov_len;
+		size += iov_len;
 	}
 
 	iov[1].iov_base = userbuf;

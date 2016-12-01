@@ -1119,7 +1119,7 @@ static struct slave *bond_find_best_slave(struct bonding *bond)
 	int mintime = bond->params.updelay;
 	int i;
 
-	new_active = old_active = bond->curr_active_slave;
+	new_active = bond->curr_active_slave;
 
 	if (!new_active) { /* there were no active slaves left */
 		if (bond->slave_cnt > 0)   /* found one slave */
@@ -4717,7 +4717,8 @@ static int bond_check_params(struct bond_params *params)
 		if ((bond_mode != BOND_MODE_XOR) &&
 		    (bond_mode != BOND_MODE_8023AD)) {
 			pr_info(DRV_NAME
-			       ": xor_mode param is irrelevant in mode %s\n",
+				": xmit_hash_policy param is irrelevant in"
+				" mode %s\n",
 			       bond_mode_name(bond_mode));
 		} else {
 			xmit_hashtype = bond_parse_parm(xmit_hash_policy,
