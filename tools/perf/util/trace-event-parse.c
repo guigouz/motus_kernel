@@ -721,6 +721,24 @@ static int event_read_id(void)
 	return -1;
 }
 
+static int field_is_string(struct format_field *field)
+{
+	if ((field->flags & FIELD_IS_ARRAY) &&
+	    (!strstr(field->type, "char") || !strstr(field->type, "u8") ||
+	     !strstr(field->type, "s8")))
+		return 1;
+
+	return 0;
+}
+
+static int field_is_dynamic(struct format_field *field)
+{
+	if (!strcmp(field->type, "__data_loc"))
+		return 1;
+
+	return 0;
+}
+
 static int event_read_fields(struct event *event, struct format_field **fields)
 {
 	struct format_field *field = NULL;
@@ -863,6 +881,12 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 				strcat(field->type, brackets);
 			}
 			free(brackets);
+		}
+
+		if (field_is_string(field)) {
+			field->flags |= FIELD_IS_STRING;
+			if (field_is_dynamic(field))
+				field->flags |= FIELD_IS_DYNAMIC;
 		}
 
 		if (test_type_token(type, token,  EVENT_OP, (char *)";"))
@@ -2950,7 +2974,7 @@ int parse_ftrace_file(char *buf, unsigned long size)
 	return 0;
 }
 
-int parse_event_file(char *buf, unsigned long size, char *system__unused __unused)
+int parse_event_file(char *buf, unsigned long size, char *sys)
 {
 	struct event *event;
 	int ret;
@@ -2976,6 +3000,8 @@ int parse_event_file(char *buf, unsigned long size, char *system__unused __unuse
 	ret = event_read_print(event);
 	if (ret < 0)
 		die("failed to read event print fmt");
+
+	event->system = strdup(sys);
 
 #define PRINT_ARGS 0
 	if (PRINT_ARGS && event->print_fmt.args)
