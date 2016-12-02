@@ -33,6 +33,17 @@ int thread__set_comm(struct thread *self, const char *comm)
 	return self->comm ? 0 : -ENOMEM;
 }
 
+int thread__comm_len(struct thread *self)
+{
+	if (!self->comm_len) {
+		if (!self->comm)
+			return 0;
+		self->comm_len = strlen(self->comm);
+	}
+
+	return self->comm_len;
+}
+
 static size_t thread__fprintf(struct thread *self, FILE *fp)
 {
 	struct rb_node *nd;
@@ -116,9 +127,9 @@ static void thread__remove_overlappings(struct thread *self, struct map *map)
 			continue;
 
 		if (verbose >= 2) {
-			printf("overlapping maps:\n");
-			map__fprintf(map, stdout);
-			map__fprintf(pos, stdout);
+			fputs("overlapping maps:\n", stderr);
+			map__fprintf(map, stderr);
+			map__fprintf(pos, stderr);
 		}
 
 		rb_erase(&pos->rb_node, &self->maps);

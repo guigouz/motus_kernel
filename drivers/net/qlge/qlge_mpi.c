@@ -638,7 +638,7 @@ int ql_mb_idc_ack(struct ql_adapter *qdev)
  * for the current port.
  * Most likely will block.
  */
-static int ql_mb_set_port_cfg(struct ql_adapter *qdev)
+int ql_mb_set_port_cfg(struct ql_adapter *qdev)
 {
 	struct mbox_params mbc;
 	struct mbox_params *mbcp = &mbc;
@@ -673,7 +673,7 @@ static int ql_mb_set_port_cfg(struct ql_adapter *qdev)
  * for the current port.
  * Most likely will block.
  */
-static int ql_mb_get_port_cfg(struct ql_adapter *qdev)
+int ql_mb_get_port_cfg(struct ql_adapter *qdev)
 {
 	struct mbox_params mbc;
 	struct mbox_params *mbcp = &mbc;
@@ -699,6 +699,76 @@ static int ql_mb_get_port_cfg(struct ql_adapter *qdev)
 			"Passed Get Port Configuration.\n");
 		qdev->link_config = mbcp->mbox_out[1];
 		qdev->max_frame_size = mbcp->mbox_out[2];
+	}
+	return status;
+}
+
+int ql_mb_wol_mode(struct ql_adapter *qdev, u32 wol)
+{
+	struct mbox_params mbc;
+	struct mbox_params *mbcp = &mbc;
+	int status;
+
+	memset(mbcp, 0, sizeof(struct mbox_params));
+
+	mbcp->in_count = 2;
+	mbcp->out_count = 1;
+
+	mbcp->mbox_in[0] = MB_CMD_SET_WOL_MODE;
+	mbcp->mbox_in[1] = wol;
+
+
+	status = ql_mailbox_command(qdev, mbcp);
+	if (status)
+		return status;
+
+	if (mbcp->mbox_out[0] != MB_CMD_STS_GOOD) {
+		QPRINTK(qdev, DRV, ERR,
+			"Failed to set WOL mode.\n");
+		status = -EIO;
+	}
+	return status;
+}
+
+int ql_mb_wol_set_magic(struct ql_adapter *qdev, u32 enable_wol)
+{
+	struct mbox_params mbc;
+	struct mbox_params *mbcp = &mbc;
+	int status;
+	u8 *addr = qdev->ndev->dev_addr;
+
+	memset(mbcp, 0, sizeof(struct mbox_params));
+
+	mbcp->in_count = 8;
+	mbcp->out_count = 1;
+
+	mbcp->mbox_in[0] = MB_CMD_SET_WOL_MAGIC;
+	if (enable_wol) {
+		mbcp->mbox_in[1] = (u32)addr[0];
+		mbcp->mbox_in[2] = (u32)addr[1];
+		mbcp->mbox_in[3] = (u32)addr[2];
+		mbcp->mbox_in[4] = (u32)addr[3];
+		mbcp->mbox_in[5] = (u32)addr[4];
+		mbcp->mbox_in[6] = (u32)addr[5];
+		mbcp->mbox_in[7] = 0;
+	} else {
+		mbcp->mbox_in[1] = 0;
+		mbcp->mbox_in[2] = 1;
+		mbcp->mbox_in[3] = 1;
+		mbcp->mbox_in[4] = 1;
+		mbcp->mbox_in[5] = 1;
+		mbcp->mbox_in[6] = 1;
+		mbcp->mbox_in[7] = 0;
+	}
+
+	status = ql_mailbox_command(qdev, mbcp);
+	if (status)
+		return status;
+
+	if (mbcp->mbox_out[0] != MB_CMD_STS_GOOD) {
+		QPRINTK(qdev, DRV, ERR,
+			"Failed to set WOL mode.\n");
+		status = -EIO;
 	}
 	return status;
 }
@@ -748,6 +818,61 @@ static int ql_idc_wait(struct ql_adapter *qdev)
 			break;
 		}
 	} while (wait_time);
+
+	return status;
+}
+
+int ql_mb_set_led_cfg(struct ql_adapter *qdev, u32 led_config)
+{
+	struct mbox_params mbc;
+	struct mbox_params *mbcp = &mbc;
+	int status;
+
+	memset(mbcp, 0, sizeof(struct mbox_params));
+
+	mbcp->in_count = 2;
+	mbcp->out_count = 1;
+
+	mbcp->mbox_in[0] = MB_CMD_SET_LED_CFG;
+	mbcp->mbox_in[1] = led_config;
+
+
+	status = ql_mailbox_command(qdev, mbcp);
+	if (status)
+		return status;
+
+	if (mbcp->mbox_out[0] != MB_CMD_STS_GOOD) {
+		QPRINTK(qdev, DRV, ERR,
+			"Failed to set LED Configuration.\n");
+		status = -EIO;
+	}
+
+	return status;
+}
+
+int ql_mb_get_led_cfg(struct ql_adapter *qdev)
+{
+	struct mbox_params mbc;
+	struct mbox_params *mbcp = &mbc;
+	int status;
+
+	memset(mbcp, 0, sizeof(struct mbox_params));
+
+	mbcp->in_count = 1;
+	mbcp->out_count = 2;
+
+	mbcp->mbox_in[0] = MB_CMD_GET_LED_CFG;
+
+	status = ql_mailbox_command(qdev, mbcp);
+	if (status)
+		return status;
+
+	if (mbcp->mbox_out[0] != MB_CMD_STS_GOOD) {
+		QPRINTK(qdev, DRV, ERR,
+			"Failed to get LED Configuration.\n");
+		status = -EIO;
+	} else
+		qdev->led_config = mbcp->mbox_out[1];
 
 	return status;
 }

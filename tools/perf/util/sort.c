@@ -5,8 +5,10 @@ char		default_parent_pattern[] = "^sys_|^do_page_fault";
 char		*parent_pattern = default_parent_pattern;
 char		default_sort_order[] = "comm,dso,symbol";
 char		*sort_order = default_sort_order;
-int sort__need_collapse = 0;
-int sort__has_parent = 0;
+int		sort__need_collapse = 0;
+int		sort__has_parent = 0;
+
+enum sort_type	sort__first_dimension;
 
 unsigned int dsos__col_width;
 unsigned int comms__col_width;
@@ -265,6 +267,19 @@ int sort_dimension__add(const char *tok)
 			sort__has_parent = 1;
 		}
 
+		if (list_empty(&hist_entry__sort_list)) {
+			if (!strcmp(sd->name, "pid"))
+				sort__first_dimension = SORT_PID;
+			else if (!strcmp(sd->name, "comm"))
+				sort__first_dimension = SORT_COMM;
+			else if (!strcmp(sd->name, "dso"))
+				sort__first_dimension = SORT_DSO;
+			else if (!strcmp(sd->name, "symbol"))
+				sort__first_dimension = SORT_SYM;
+			else if (!strcmp(sd->name, "parent"))
+				sort__first_dimension = SORT_PARENT;
+		}
+
 		list_add_tail(&sd->entry->list, &hist_entry__sort_list);
 		sd->taken = 1;
 
@@ -273,4 +288,3 @@ int sort_dimension__add(const char *tok)
 
 	return -ESRCH;
 }
-

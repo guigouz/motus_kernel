@@ -371,6 +371,77 @@ static void ql_get_drvinfo(struct net_device *ndev,
 	drvinfo->eedump_len = 0;
 }
 
+static void ql_get_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	/* What we support. */
+	wol->supported = WAKE_MAGIC;
+	/* What we've currently got set. */
+	wol->wolopts = qdev->wol;
+}
+
+static int ql_set_wol(struct net_device *ndev, struct ethtool_wolinfo *wol)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	int status;
+
+	if (wol->wolopts & ~WAKE_MAGIC)
+		return -EINVAL;
+	qdev->wol = wol->wolopts;
+
+	QPRINTK(qdev, DRV, INFO, "Set wol option 0x%x on %s\n",
+			 qdev->wol, ndev->name);
+	if (!qdev->wol) {
+		u32 wol = 0;
+		status = ql_mb_wol_mode(qdev, wol);
+		QPRINTK(qdev, DRV, ERR, "WOL %s (wol code 0x%x) on %s\n",
+			(status == 0) ? "cleared sucessfully" : "clear failed",
+			wol, qdev->ndev->name);
+	}
+
+	return 0;
+}
+
+static int ql_phys_id(struct net_device *ndev, u32 data)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+	u32 led_reg, i;
+	int status;
+
+	/* Save the current LED settings */
+	status = ql_mb_get_led_cfg(qdev);
+	if (status)
+		return status;
+	led_reg = qdev->led_config;
+
+	/* Start blinking the led */
+	if (!data || data > 300)
+		data = 300;
+
+	for (i = 0; i < (data * 10); i++)
+		ql_mb_set_led_cfg(qdev, QL_LED_BLINK);
+
+	/* Restore LED settings */
+	status = ql_mb_set_led_cfg(qdev, led_reg);
+	if (status)
+		return status;
+
+	return 0;
+}
+
+static int ql_get_regs_len(struct net_device *ndev)
+{
+	return sizeof(struct ql_reg_dump);
+}
+
+static void ql_get_regs(struct net_device *ndev,
+			struct ethtool_regs *regs, void *p)
+{
+	struct ql_adapter *qdev = netdev_priv(ndev);
+
+	ql_gen_reg_dump(qdev, p);
+}
+
 static int ql_get_coalesce(struct net_device *dev, struct ethtool_coalesce *c)
 {
 	struct ql_adapter *qdev = netdev_priv(dev);
@@ -424,6 +495,37 @@ static int ql_set_coalesce(struct net_device *ndev, struct ethtool_coalesce *c)
 	return ql_update_ring_coalescing(qdev);
 }
 
+static void ql_get_pauseparam(struct net_device *netdev,
+			struct ethtool_pauseparam *pause)
+{
+	struct ql_adapter *qdev = netdev_priv(netdev);
+
+	ql_mb_get_port_cfg(qdev);
+	if (qdev->link_config & CFG_PAUSE_STD) {
+		pause->rx_pause = 1;
+		pause->tx_pause = 1;
+	}
+}
+
+static int ql_set_pauseparam(struct net_device *netdev,
+			struct ethtool_pauseparam *pause)
+{
+	struct ql_adapter *qdev = netdev_priv(netdev);
+	int status = 0;
+
+	if ((pause->rx_pause) && (pause->tx_pause))
+		qdev->link_config |= CFG_PAUSE_STD;
+	else if (!pause->rx_pause && !pause->tx_pause)
+		qdev->link_config &= ~CFG_PAUSE_STD;
+	else
+		return -EINVAL;
+
+	status = ql_mb_set_port_cfg(qdev);
+	if (status)
+		return status;
+	return status;
+}
+
 static u32 ql_get_rx_csum(struct net_device *netdev)
 {
 	struct ql_adapter *qdev = netdev_priv(netdev);
@@ -465,9 +567,16 @@ static void ql_set_msglevel(struct net_device *ndev, u32 value)
 const struct ethtool_ops qlge_ethtool_ops = {
 	.get_settings = ql_get_settings,
 	.get_drvinfo = ql_get_drvinfo,
+	.get_wol = ql_get_wol,
+	.set_wol = ql_set_wol,
+	.get_regs_len	= ql_get_regs_len,
+	.get_regs = ql_get_regs,
 	.get_msglevel = ql_get_msglevel,
 	.set_msglevel = ql_set_msglevel,
 	.get_link = ethtool_op_get_link,
+	.phys_id		 = ql_phys_id,
+	.get_pauseparam		 = ql_get_pauseparam,
+	.set_pauseparam		 = ql_set_pauseparam,
 	.get_rx_csum = ql_get_rx_csum,
 	.set_rx_csum = ql_set_rx_csum,
 	.get_tx_csum = ethtool_op_get_tx_csum,
