@@ -34,6 +34,7 @@ endif
 obj-$(CONFIG_SENSORS_KXTF9)	+= kxtf9.o
 obj-$(CONFIG_SENSORS_AIRC)	+= airc.o
 
+obj-$(CONFIG_IWMC3200TOP)      += iwmc3200top/
 obj-y				+= eeprom/
 obj-y				+= ts27010mux/
 obj-$(CONFIG_VIB_PWM)		+= vib-pwm.o
