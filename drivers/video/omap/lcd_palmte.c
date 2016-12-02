@@ -22,9 +22,9 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/omapfb.h>
 
-#include <mach/fpga.h>
+#include <plat/fpga.h>
+#include <plat/omapfb.h>
 
 static int palmte_panel_init(struct lcd_panel *panel,
 				struct omapfb_device *fbdev)

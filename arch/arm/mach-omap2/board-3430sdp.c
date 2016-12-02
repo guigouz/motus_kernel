@@ -17,7 +17,6 @@
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/input.h>
-#include <linux/input/matrix_keypad.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/i2c/twl4030.h>
@@ -30,16 +29,17 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <mach/mcspi.h>
-#include <mach/mux.h>
-#include <mach/board.h>
-#include <mach/usb.h>
-#include <mach/common.h>
-#include <mach/dma.h>
-#include <mach/gpmc.h>
+#include <plat/mcspi.h>
+#include <plat/mux.h>
+#include <plat/board.h>
+#include <plat/usb.h>
+#include <plat/common.h>
+#include <plat/dma.h>
+#include <plat/gpmc.h>
 
-#include <mach/control.h>
-#include <mach/gpmc-smc91x.h>
+#include <plat/control.h>
+#include <plat/keypad.h>
+#include <plat/gpmc-smc91x.h>
 
 #include "sdram-qimonda-hyb18m512160af-6.h"
 #include "mmc-twl4030.h"

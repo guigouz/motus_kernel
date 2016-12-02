@@ -188,7 +188,6 @@ struct packet_sock {
 	struct packet_ring_buffer	tx_ring;
 	int			copy_thresh;
 #endif
-	struct packet_type	prot_hook;
 	spinlock_t		bind_lock;
 	struct mutex		pg_vec_lock;
 	unsigned int		running:1,	/* prot_hook is attached*/
@@ -204,6 +203,7 @@ struct packet_sock {
 	unsigned int		tp_reserve;
 	unsigned int		tp_loss:1;
 #endif
+	struct packet_type	prot_hook ____cacheline_aligned_in_smp;
 };
 
 struct packet_skb_cb {
@@ -1671,11 +1671,9 @@ static int packet_mc_drop(struct sock *sk, struct packet_mreq_max *mreq)
 			if (--ml->count == 0) {
 				struct net_device *dev;
 				*mlp = ml->next;
-				dev = dev_get_by_index(sock_net(sk), ml->ifindex);
-				if (dev) {
+				dev = __dev_get_by_index(sock_net(sk), ml->ifindex);
+				if (dev)
 					packet_dev_mc(dev, ml, -1);
-					dev_put(dev);
-				}
 				kfree(ml);
 			}
 			rtnl_unlock();
@@ -1699,11 +1697,9 @@ static void packet_flush_mclist(struct sock *sk)
 		struct net_device *dev;
 
 		po->mclist = ml->next;
-		dev = dev_get_by_index(sock_net(sk), ml->ifindex);
-		if (dev != NULL) {
+		dev = __dev_get_by_index(sock_net(sk), ml->ifindex);
+		if (dev != NULL)
 			packet_dev_mc(dev, ml, -1);
-			dev_put(dev);
-		}
 		kfree(ml);
 	}
 	rtnl_unlock();
