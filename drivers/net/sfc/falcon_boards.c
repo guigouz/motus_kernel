@@ -11,11 +11,10 @@
 
 #include "net_driver.h"
 #include "phy.h"
-#include "boards.h"
 #include "efx.h"
 #include "falcon.h"
-#include "falcon_hwdefs.h"
-#include "falcon_io.h"
+#include "regs.h"
+#include "io.h"
 #include "workarounds.h"
 
 /* Macros for unpacking the board revision */
@@ -36,30 +35,31 @@
 static void blink_led_timer(unsigned long context)
 {
 	struct efx_nic *efx = (struct efx_nic *)context;
-	struct efx_blinker *bl = &efx->board_info.blinker;
-	efx->board_info.set_id_led(efx, bl->state);
-	bl->state = !bl->state;
-	if (bl->resubmit)
-		mod_timer(&bl->timer, jiffies + BLINK_INTERVAL);
+	struct efx_board *board = &efx->board_info;
+
+	board->set_id_led(efx, board->blink_state);
+	board->blink_state = !board->blink_state;
+	if (board->blink_resubmit)
+		mod_timer(&board->blink_timer, jiffies + BLINK_INTERVAL);
 }
 
 static void board_blink(struct efx_nic *efx, bool blink)
 {
-	struct efx_blinker *blinker = &efx->board_info.blinker;
+	struct efx_board *board = &efx->board_info;
 
 	/* The rtnl mutex serialises all ethtool ioctls, so
 	 * nothing special needs doing here. */
 	if (blink) {
-		blinker->resubmit = true;
-		blinker->state = false;
-		setup_timer(&blinker->timer, blink_led_timer,
+		board->blink_resubmit = true;
+		board->blink_state = false;
+		setup_timer(&board->blink_timer, blink_led_timer,
 			    (unsigned long)efx);
-		mod_timer(&blinker->timer, jiffies + BLINK_INTERVAL);
+		mod_timer(&board->blink_timer, jiffies + BLINK_INTERVAL);
 	} else {
-		blinker->resubmit = false;
-		if (blinker->timer.function)
-			del_timer_sync(&blinker->timer);
-		efx->board_info.init_leds(efx);
+		board->blink_resubmit = false;
+		if (board->blink_timer.function)
+			del_timer_sync(&board->blink_timer);
+		board->init_leds(efx);
 	}
 }
 
@@ -333,14 +333,14 @@ static int sfn4111t_reset(struct efx_nic *efx)
 	 * FLASH_CFG_1 strap (GPIO 3) appropriately.  Only change the
 	 * output enables; the output levels should always be 0 (low)
 	 * and we rely on external pull-ups. */
-	falcon_read(efx, &reg, GPIO_CTL_REG_KER);
-	EFX_SET_OWORD_FIELD(reg, GPIO2_OEN, true);
-	falcon_write(efx, &reg, GPIO_CTL_REG_KER);
+	efx_reado(efx, &reg, FR_AB_GPIO_CTL);
+	EFX_SET_OWORD_FIELD(reg, FRF_AB_GPIO2_OEN, true);
+	efx_writeo(efx, &reg, FR_AB_GPIO_CTL);
 	msleep(1000);
-	EFX_SET_OWORD_FIELD(reg, GPIO2_OEN, false);
-	EFX_SET_OWORD_FIELD(reg, GPIO3_OEN,
+	EFX_SET_OWORD_FIELD(reg, FRF_AB_GPIO2_OEN, false);
+	EFX_SET_OWORD_FIELD(reg, FRF_AB_GPIO3_OEN,
 			    !!(efx->phy_mode & PHY_MODE_SPECIAL));
-	falcon_write(efx, &reg, GPIO_CTL_REG_KER);
+	efx_writeo(efx, &reg, FR_AB_GPIO_CTL);
 	msleep(1);
 
 	mutex_unlock(&efx->i2c_adap.bus_lock);
@@ -612,17 +612,17 @@ static void sfe4002_init_leds(struct efx_nic *efx)
 {
 	/* Set the TX and RX LEDs to reflect status and activity, and the
 	 * fault LED off */
-	xfp_set_led(efx, SFE4002_TX_LED,
-		    QUAKE_LED_TXLINK | QUAKE_LED_LINK_ACTSTAT);
-	xfp_set_led(efx, SFE4002_RX_LED,
-		    QUAKE_LED_RXLINK | QUAKE_LED_LINK_ACTSTAT);
-	xfp_set_led(efx, SFE4002_FAULT_LED, QUAKE_LED_OFF);
+	falcon_qt202x_set_led(efx, SFE4002_TX_LED,
+			      QUAKE_LED_TXLINK | QUAKE_LED_LINK_ACTSTAT);
+	falcon_qt202x_set_led(efx, SFE4002_RX_LED,
+			      QUAKE_LED_RXLINK | QUAKE_LED_LINK_ACTSTAT);
+	falcon_qt202x_set_led(efx, SFE4002_FAULT_LED, QUAKE_LED_OFF);
 }
 
 static void sfe4002_set_id_led(struct efx_nic *efx, bool state)
 {
-	xfp_set_led(efx, SFE4002_FAULT_LED, state ? QUAKE_LED_ON :
-			QUAKE_LED_OFF);
+	falcon_qt202x_set_led(efx, SFE4002_FAULT_LED, state ? QUAKE_LED_ON :
+			      QUAKE_LED_OFF);
 }
 
 static int sfe4002_check_hw(struct efx_nic *efx)
@@ -677,16 +677,16 @@ static struct i2c_board_info sfn4112f_hwmon_info = {
 
 static void sfn4112f_init_leds(struct efx_nic *efx)
 {
-	xfp_set_led(efx, SFN4112F_ACT_LED,
-		    QUAKE_LED_RXLINK | QUAKE_LED_LINK_ACT);
-	xfp_set_led(efx, SFN4112F_LINK_LED,
-		    QUAKE_LED_RXLINK | QUAKE_LED_LINK_STAT);
+	falcon_qt202x_set_led(efx, SFN4112F_ACT_LED,
+			      QUAKE_LED_RXLINK | QUAKE_LED_LINK_ACT);
+	falcon_qt202x_set_led(efx, SFN4112F_LINK_LED,
+			      QUAKE_LED_RXLINK | QUAKE_LED_LINK_STAT);
 }
 
 static void sfn4112f_set_id_led(struct efx_nic *efx, bool state)
 {
-	xfp_set_led(efx, SFN4112F_LINK_LED,
-		    state ? QUAKE_LED_ON : QUAKE_LED_OFF);
+	falcon_qt202x_set_led(efx, SFN4112F_LINK_LED,
+			      state ? QUAKE_LED_ON : QUAKE_LED_OFF);
 }
 
 static int sfn4112f_check_hw(struct efx_nic *efx)

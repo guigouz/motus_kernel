@@ -77,8 +77,17 @@ struct sit_net {
 	struct net_device *fb_tunnel_dev;
 };
 
-static DEFINE_RWLOCK(ipip6_lock);
+/*
+ * Locking : hash tables are protected by RCU and a spinlock
+ */
+static DEFINE_SPINLOCK(ipip6_lock);
 
+#define for_each_ip_tunnel_rcu(start) \
+	for (t = rcu_dereference(start); t; t = rcu_dereference(t->next))
+
+/*
+ * Must be invoked with rcu_read_lock
+ */
 static struct ip_tunnel * ipip6_tunnel_lookup(struct net *net,
 		struct net_device *dev, __be32 remote, __be32 local)
 {
@@ -87,26 +96,26 @@ static struct ip_tunnel * ipip6_tunnel_lookup(struct net *net,
 	struct ip_tunnel *t;
 	struct sit_net *sitn = net_generic(net, sit_net_id);
 
-	for (t = sitn->tunnels_r_l[h0^h1]; t; t = t->next) {
+	for_each_ip_tunnel_rcu(sitn->tunnels_r_l[h0 ^ h1]) {
 		if (local == t->parms.iph.saddr &&
 		    remote == t->parms.iph.daddr &&
 		    (!dev || !t->parms.link || dev->iflink == t->parms.link) &&
 		    (t->dev->flags & IFF_UP))
 			return t;
 	}
-	for (t = sitn->tunnels_r[h0]; t; t = t->next) {
+	for_each_ip_tunnel_rcu(sitn->tunnels_r[h0]) {
 		if (remote == t->parms.iph.daddr &&
 		    (!dev || !t->parms.link || dev->iflink == t->parms.link) &&
 		    (t->dev->flags & IFF_UP))
 			return t;
 	}
-	for (t = sitn->tunnels_l[h1]; t; t = t->next) {
+	for_each_ip_tunnel_rcu(sitn->tunnels_l[h1]) {
 		if (local == t->parms.iph.saddr &&
 		    (!dev || !t->parms.link || dev->iflink == t->parms.link) &&
 		    (t->dev->flags & IFF_UP))
 			return t;
 	}
-	t = sitn->tunnels_wc[0];
+	t = rcu_dereference(sitn->tunnels_wc[0]);
 	if ((t != NULL) && (t->dev->flags & IFF_UP))
 		return t;
 	return NULL;
@@ -143,9 +152,9 @@ static void ipip6_tunnel_unlink(struct sit_net *sitn, struct ip_tunnel *t)
 
 	for (tp = ipip6_bucket(sitn, t); *tp; tp = &(*tp)->next) {
 		if (t == *tp) {
-			write_lock_bh(&ipip6_lock);
+			spin_lock_bh(&ipip6_lock);
 			*tp = t->next;
-			write_unlock_bh(&ipip6_lock);
+			spin_unlock_bh(&ipip6_lock);
 			break;
 		}
 	}
@@ -155,10 +164,10 @@ static void ipip6_tunnel_link(struct sit_net *sitn, struct ip_tunnel *t)
 {
 	struct ip_tunnel **tp = ipip6_bucket(sitn, t);
 
+	spin_lock_bh(&ipip6_lock);
 	t->next = *tp;
-	write_lock_bh(&ipip6_lock);
-	*tp = t;
-	write_unlock_bh(&ipip6_lock);
+	rcu_assign_pointer(*tp, t);
+	spin_unlock_bh(&ipip6_lock);
 }
 
 static void ipip6_tunnel_clone_6rd(struct net_device *dev, struct sit_net *sitn)
@@ -240,15 +249,22 @@ failed:
 	return NULL;
 }
 
+static DEFINE_SPINLOCK(ipip6_prl_lock);
+
+#define for_each_prl_rcu(start)			\
+	for (prl = rcu_dereference(start);	\
+	     prl;				\
+	     prl = rcu_dereference(prl->next))
+
 static struct ip_tunnel_prl_entry *
 __ipip6_tunnel_locate_prl(struct ip_tunnel *t, __be32 addr)
 {
-	struct ip_tunnel_prl_entry *p = (struct ip_tunnel_prl_entry *)NULL;
+	struct ip_tunnel_prl_entry *prl;
 
-	for (p = t->prl; p; p = p->next)
-		if (p->addr == addr)
+	for_each_prl_rcu(t->prl)
+		if (prl->addr == addr)
 			break;
-	return p;
+	return prl;
 
 }
 
@@ -273,7 +289,7 @@ static int ipip6_tunnel_get_prl(struct ip_tunnel *t,
 		kcalloc(cmax, sizeof(*kp), GFP_KERNEL) :
 		NULL;
 
-	read_lock(&ipip6_lock);
+	rcu_read_lock();
 
 	ca = t->prl_count < cmax ? t->prl_count : cmax;
 
@@ -291,7 +307,7 @@ static int ipip6_tunnel_get_prl(struct ip_tunnel *t,
 	}
 
 	c = 0;
-	for (prl = t->prl; prl; prl = prl->next) {
+	for_each_prl_rcu(t->prl) {
 		if (c >= cmax)
 			break;
 		if (kprl.addr != htonl(INADDR_ANY) && prl->addr != kprl.addr)
@@ -303,7 +319,7 @@ static int ipip6_tunnel_get_prl(struct ip_tunnel *t,
 			break;
 	}
 out:
-	read_unlock(&ipip6_lock);
+	rcu_read_unlock();
 
 	len = sizeof(*kp) * c;
 	ret = 0;
@@ -324,12 +340,14 @@ ipip6_tunnel_add_prl(struct ip_tunnel *t, struct ip_tunnel_prl *a, int chg)
 	if (a->addr == htonl(INADDR_ANY))
 		return -EINVAL;
 
-	write_lock(&ipip6_lock);
+	spin_lock(&ipip6_prl_lock);
 
 	for (p = t->prl; p; p = p->next) {
 		if (p->addr == a->addr) {
-			if (chg)
-				goto update;
+			if (chg) {
+				p->flags = a->flags;
+				goto out;
+			}
 			err = -EEXIST;
 			goto out;
 		}
@@ -346,15 +364,32 @@ ipip6_tunnel_add_prl(struct ip_tunnel *t, struct ip_tunnel_prl *a, int chg)
 		goto out;
 	}
 
+	INIT_RCU_HEAD(&p->rcu_head);
 	p->next = t->prl;
-	t->prl = p;
-	t->prl_count++;
-update:
 	p->addr = a->addr;
 	p->flags = a->flags;
+	t->prl_count++;
+	rcu_assign_pointer(t->prl, p);
 out:
-	write_unlock(&ipip6_lock);
+	spin_unlock(&ipip6_prl_lock);
 	return err;
+}
+
+static void prl_entry_destroy_rcu(struct rcu_head *head)
+{
+	kfree(container_of(head, struct ip_tunnel_prl_entry, rcu_head));
+}
+
+static void prl_list_destroy_rcu(struct rcu_head *head)
+{
+	struct ip_tunnel_prl_entry *p, *n;
+
+	p = container_of(head, struct ip_tunnel_prl_entry, rcu_head);
+	do {
+		n = p->next;
+		kfree(p);
+		p = n;
+	} while (p);
 }
 
 static int
@@ -363,29 +398,29 @@ ipip6_tunnel_del_prl(struct ip_tunnel *t, struct ip_tunnel_prl *a)
 	struct ip_tunnel_prl_entry *x, **p;
 	int err = 0;
 
-	write_lock(&ipip6_lock);
+	spin_lock(&ipip6_prl_lock);
 
 	if (a && a->addr != htonl(INADDR_ANY)) {
 		for (p = &t->prl; *p; p = &(*p)->next) {
 			if ((*p)->addr == a->addr) {
 				x = *p;
 				*p = x->next;
-				kfree(x);
+				call_rcu(&x->rcu_head, prl_entry_destroy_rcu);
 				t->prl_count--;
 				goto out;
 			}
 		}
 		err = -ENXIO;
 	} else {
-		while (t->prl) {
+		if (t->prl) {
+			t->prl_count = 0;
 			x = t->prl;
-			t->prl = t->prl->next;
-			kfree(x);
-			t->prl_count--;
+			call_rcu(&x->rcu_head, prl_list_destroy_rcu);
+			t->prl = NULL;
 		}
 	}
 out:
-	write_unlock(&ipip6_lock);
+	spin_unlock(&ipip6_prl_lock);
 	return err;
 }
 
@@ -395,7 +430,7 @@ isatap_chksrc(struct sk_buff *skb, struct iphdr *iph, struct ip_tunnel *t)
 	struct ip_tunnel_prl_entry *p;
 	int ok = 1;
 
-	read_lock(&ipip6_lock);
+	rcu_read_lock();
 	p = __ipip6_tunnel_locate_prl(t, iph->saddr);
 	if (p) {
 		if (p->flags & PRL_DEFAULT)
@@ -411,7 +446,7 @@ isatap_chksrc(struct sk_buff *skb, struct iphdr *iph, struct ip_tunnel *t)
 		else
 			ok = 0;
 	}
-	read_unlock(&ipip6_lock);
+	rcu_read_unlock();
 	return ok;
 }
 
@@ -421,9 +456,9 @@ static void ipip6_tunnel_uninit(struct net_device *dev)
 	struct sit_net *sitn = net_generic(net, sit_net_id);
 
 	if (dev == sitn->fb_tunnel_dev) {
-		write_lock_bh(&ipip6_lock);
+		spin_lock_bh(&ipip6_lock);
 		sitn->tunnels_wc[0] = NULL;
-		write_unlock_bh(&ipip6_lock);
+		spin_unlock_bh(&ipip6_lock);
 		dev_put(dev);
 	} else {
 		ipip6_tunnel_unlink(sitn, netdev_priv(dev));
@@ -476,7 +511,7 @@ static int ipip6_err(struct sk_buff *skb, u32 info)
 
 	err = -ENOENT;
 
-	read_lock(&ipip6_lock);
+	rcu_read_lock();
 	t = ipip6_tunnel_lookup(dev_net(skb->dev),
 				skb->dev,
 				iph->daddr,
@@ -494,7 +529,7 @@ static int ipip6_err(struct sk_buff *skb, u32 info)
 		t->err_count = 1;
 	t->err_time = jiffies;
 out:
-	read_unlock(&ipip6_lock);
+	rcu_read_unlock();
 	return err;
 }
 
@@ -514,7 +549,7 @@ static int ipip6_rcv(struct sk_buff *skb)
 
 	iph = ip_hdr(skb);
 
-	read_lock(&ipip6_lock);
+	rcu_read_lock();
 	tunnel = ipip6_tunnel_lookup(dev_net(skb->dev), skb->dev,
 				     iph->saddr, iph->daddr);
 	if (tunnel != NULL) {
@@ -528,7 +563,7 @@ static int ipip6_rcv(struct sk_buff *skb)
 		if ((tunnel->dev->priv_flags & IFF_ISATAP) &&
 		    !isatap_chksrc(skb, iph, tunnel)) {
 			tunnel->dev->stats.rx_errors++;
-			read_unlock(&ipip6_lock);
+			rcu_read_unlock();
 			kfree_skb(skb);
 			return 0;
 		}
@@ -539,12 +574,12 @@ static int ipip6_rcv(struct sk_buff *skb)
 		nf_reset(skb);
 		ipip6_ecn_decapsulate(iph, skb);
 		netif_rx(skb);
-		read_unlock(&ipip6_lock);
+		rcu_read_unlock();
 		return 0;
 	}
 
 	icmp_send(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH, 0);
-	read_unlock(&ipip6_lock);
+	rcu_read_unlock();
 out:
 	kfree_skb(skb);
 	return 0;
@@ -1192,6 +1227,7 @@ static void __exit sit_cleanup(void)
 	xfrm4_tunnel_deregister(&sit_handler, AF_INET6);
 
 	unregister_pernet_gen_device(sit_net_id, &sit_net_ops);
+	rcu_barrier(); /* Wait for completion of call_rcu()'s */
 }
 
 static int __init sit_init(void)

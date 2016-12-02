@@ -327,7 +327,7 @@ enum efx_rx_alloc_method {
  * @used_flags: Channel is used by net driver
  * @enabled: Channel enabled indicator
  * @irq: IRQ number (MSI and MSI-X only)
- * @irq_moderation: IRQ moderation value (in us)
+ * @irq_moderation: IRQ moderation value (in hardware ticks)
  * @napi_dev: Net device used with NAPI
  * @napi_str: NAPI control structure
  * @reset_work: Scheduled reset work thread
@@ -389,19 +389,6 @@ struct efx_channel {
 };
 
 /**
- * struct efx_blinker - S/W LED blinking context
- * @state: Current state - on or off
- * @resubmit: Timer resubmission flag
- * @timer: Control timer for blinking
- */
-struct efx_blinker {
-	bool state;
-	bool resubmit;
-	struct timer_list timer;
-};
-
-
-/**
  * struct efx_board - board information
  * @type: Board model type
  * @major: Major rev. ('A', 'B' ...)
@@ -412,7 +399,9 @@ struct efx_blinker {
  * @blink: Starts/stops blinking
  * @monitor: Board-specific health check function
  * @fini: Cleanup function
- * @blinker: used to blink LEDs in software
+ * @blink_state: Current blink state
+ * @blink_resubmit: Blink timer resubmission flag
+ * @blink_timer: Blink timer
  * @hwmon_client: I2C client for hardware monitor
  * @ioexp_client: I2C client for power/port control
  */
@@ -429,7 +418,9 @@ struct efx_board {
 	int (*monitor) (struct efx_nic *nic);
 	void (*blink) (struct efx_nic *efx, bool start);
 	void (*fini) (struct efx_nic *nic);
-	struct efx_blinker blinker;
+	bool blink_state;
+	bool blink_resubmit;
+	struct timer_list blink_timer;
 	struct i2c_client *hwmon_client, *ioexp_client;
 };
 
@@ -506,17 +497,6 @@ enum efx_mac_type {
 	EFX_XMAC = 2,
 };
 
-static inline enum efx_fc_type efx_fc_resolve(enum efx_fc_type wanted_fc,
-					      unsigned int lpa)
-{
-	BUILD_BUG_ON(EFX_FC_AUTO & (EFX_FC_RX | EFX_FC_TX));
-
-	if (!(wanted_fc & EFX_FC_AUTO))
-		return wanted_fc;
-
-	return mii_resolve_flowctrl_fdx(mii_advertise_flowctrl(wanted_fc), lpa);
-}
-
 /**
  * struct efx_mac_operations - Efx MAC operations table
  * @reconfigure: Reconfigure MAC. Serialised by the mac_lock
@@ -537,7 +517,6 @@ struct efx_mac_operations {
  * @fini: Shut down PHY
  * @reconfigure: Reconfigure PHY (e.g. for new link parameters)
  * @clear_interrupt: Clear down interrupt
- * @blink: Blink LEDs
  * @poll: Poll for hardware state. Serialised by the mac_lock.
  * @get_settings: Get ethtool settings. Serialised by the mac_lock.
  * @set_settings: Set ethtool settings. Serialised by the mac_lock.
@@ -697,10 +676,13 @@ union efx_multicast_hash {
  * @tx_queue: TX DMA queues
  * @rx_queue: RX DMA queues
  * @channel: Channels
+ * @next_buffer_table: First available buffer table id
  * @n_rx_queues: Number of RX queues
  * @n_channels: Number of channels in use
  * @rx_buffer_len: RX buffer length
  * @rx_buffer_order: Order (log2) of number of pages for each RX buffer
+ * @int_error_count: Number of internal errors seen recently
+ * @int_error_expire: Time at which error count will be expired
  * @irq_status: Interrupt status buffer
  * @last_irq_cpu: Last CPU to handle interrupt.
  *	This register is written with the SMP processor ID whenever an
@@ -784,10 +766,14 @@ struct efx_nic {
 	struct efx_rx_queue rx_queue[EFX_MAX_RX_QUEUES];
 	struct efx_channel channel[EFX_MAX_CHANNELS];
 
+	unsigned next_buffer_table;
 	int n_rx_queues;
 	int n_channels;
 	unsigned int rx_buffer_len;
 	unsigned int rx_buffer_order;
+
+	unsigned int_error_count;
+	unsigned long int_error_expire;
 
 	struct efx_buffer irq_status;
 	volatile signed int last_irq_cpu;
@@ -869,14 +855,7 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
  * @buf_tbl_base: Buffer table base address
  * @evq_ptr_tbl_base: Event queue pointer table base address
  * @evq_rptr_tbl_base: Event queue read-pointer table base address
- * @txd_ring_mask: TX descriptor ring size - 1 (must be a power of two - 1)
- * @rxd_ring_mask: RX descriptor ring size - 1 (must be a power of two - 1)
- * @evq_size: Event queue size (must be a power of two)
  * @max_dma_mask: Maximum possible DMA mask
- * @tx_dma_mask: TX DMA mask
- * @bug5391_mask: Address mask for bug 5391 workaround
- * @rx_xoff_thresh: RX FIFO XOFF watermark (bytes)
- * @rx_xon_thresh: RX FIFO XON watermark (bytes)
  * @rx_buffer_padding: Padding added to each RX buffer
  * @max_interrupt_mode: Highest capability interrupt mode supported
  *	from &enum efx_init_mode.
@@ -892,15 +871,8 @@ struct efx_nic_type {
 	unsigned int evq_ptr_tbl_base;
 	unsigned int evq_rptr_tbl_base;
 
-	unsigned int txd_ring_mask;
-	unsigned int rxd_ring_mask;
-	unsigned int evq_size;
 	u64 max_dma_mask;
-	unsigned int tx_dma_mask;
-	unsigned bug5391_mask;
 
-	int rx_xoff_thresh;
-	int rx_xon_thresh;
 	unsigned int rx_buffer_padding;
 	unsigned int max_interrupt_mode;
 	unsigned int phys_addr_channels;
