@@ -15,62 +15,14 @@
 #include <mach/irqs.h>
 #include <asm/hardware/gic.h>
 
-#if defined(CONFIG_ARCH_OMAP1)
-
-#if (defined(CONFIG_ARCH_OMAP730)||defined(CONFIG_ARCH_OMAP850)) && \
-	(defined(CONFIG_ARCH_OMAP15XX) || defined(CONFIG_ARCH_OMAP16XX))
-#error "FIXME: OMAP7XX doesn't support multiple-OMAP"
-#elif defined(CONFIG_ARCH_OMAP730) || defined(CONFIG_ARCH_OMAP850)
-#define INT_IH2_IRQ		INT_7XX_IH2_IRQ
-#elif defined(CONFIG_ARCH_OMAP15XX)
-#define INT_IH2_IRQ		INT_1510_IH2_IRQ
-#elif defined(CONFIG_ARCH_OMAP16XX)
-#define INT_IH2_IRQ		INT_1610_IH2_IRQ
-#else
-#warning "IH2 IRQ defaulted"
-#define INT_IH2_IRQ		INT_1510_IH2_IRQ
-#endif
-
- 		.macro	disable_fiq
-		.endm
-
-		.macro  get_irqnr_preamble, base, tmp
-		.endm
-
-		.macro  arch_ret_to_user, tmp1, tmp2
-		.endm
-
-		.macro	get_irqnr_and_base, irqnr, irqstat, base, tmp
-		ldr	\base, =OMAP1_IO_ADDRESS(OMAP_IH1_BASE)
-		ldr	\irqnr, [\base, #IRQ_ITR_REG_OFFSET]
-		ldr	\tmp, [\base, #IRQ_MIR_REG_OFFSET]
-		mov	\irqstat, #0xffffffff
-		bic	\tmp, \irqstat, \tmp
-		tst	\irqnr, \tmp
-		beq	1510f
-
-		ldr	\irqnr, [\base, #IRQ_SIR_FIQ_REG_OFFSET]
-		cmp	\irqnr, #0
-		ldreq	\irqnr, [\base, #IRQ_SIR_IRQ_REG_OFFSET]
-		cmpeq	\irqnr, #INT_IH2_IRQ
-		ldreq	\base, =OMAP1_IO_ADDRESS(OMAP_IH2_BASE)
-		ldreq	\irqnr, [\base, #IRQ_SIR_IRQ_REG_OFFSET]
-		addeqs	\irqnr, \irqnr, #32
-1510:
-		.endm
-
-#endif
-#if defined(CONFIG_ARCH_OMAP24XX) || defined(CONFIG_ARCH_OMAP34XX) || \
-			defined(CONFIG_ARCH_OMAP4)
-
 #include <mach/omap24xx.h>
 #include <mach/omap34xx.h>
 
 /* REVISIT: This should be set dynamically if CONFIG_MULTI_OMAP2 is selected */
 #if defined(CONFIG_ARCH_OMAP2420) || defined(CONFIG_ARCH_OMAP2430)
-#define OMAP2_VA_IC_BASE		OMAP2_IO_ADDRESS(OMAP24XX_IC_BASE)
+#define OMAP2_VA_IC_BASE		OMAP2_L4_IO_ADDRESS(OMAP24XX_IC_BASE)
 #elif defined(CONFIG_ARCH_OMAP34XX)
-#define OMAP2_VA_IC_BASE		OMAP2_IO_ADDRESS(OMAP34XX_IC_BASE)
+#define OMAP2_VA_IC_BASE		OMAP2_L4_IO_ADDRESS(OMAP34XX_IC_BASE)
 #endif
 #if defined(CONFIG_ARCH_OMAP4)
 #include <mach/omap44xx.h>
@@ -104,6 +56,8 @@
 
 		.endm
 #else
+#define OMAP44XX_VA_GIC_CPU_BASE	OMAP2_L4_IO_ADDRESS(OMAP44XX_GIC_CPU_BASE)
+
 		/*
 		 * The interrupt numbering scheme is defined in the
 		 * interrupt controller spec.  To wit:
@@ -168,5 +122,3 @@
 
 		.macro	irq_prio_table
 		.endm
-
-#endif
