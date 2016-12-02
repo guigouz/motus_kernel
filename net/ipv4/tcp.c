@@ -2043,7 +2043,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	__skb_queue_purge(&sk->sk_async_wait_queue);
 #endif
 
-	inet->dport = 0;
+	inet->inet_dport = 0;
 
 	if (!(sk->sk_userlocks & SOCK_BINDADDR_LOCK))
 		inet_reset_saddr(sk);
@@ -2067,7 +2067,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	memset(&tp->rx_opt, 0, sizeof(tp->rx_opt));
 	__sk_dst_reset(sk);
 
-	WARN_ON(inet->num && !icsk->icsk_bind_hash);
+	WARN_ON(inet->inet_num && !icsk->icsk_bind_hash);
 
 	sk->sk_error_report(sk);
 	return err;
@@ -2885,7 +2885,7 @@ void __init tcp_init(void)
 {
 	struct sk_buff *skb = NULL;
 	unsigned long nr_pages, limit;
-	int i, max_share, cnt;
+	int order, i, max_share;
 
 	BUILD_BUG_ON(sizeof(struct tcp_skb_cb) > sizeof(skb->cb));
 
@@ -2933,12 +2933,22 @@ void __init tcp_init(void)
 		INIT_HLIST_HEAD(&tcp_hashinfo.bhash[i].chain);
 	}
 
-
-	cnt = tcp_hashinfo.ehash_size;
-
-	tcp_death_row.sysctl_max_tw_buckets = cnt / 2;
-	sysctl_tcp_max_orphans = cnt / 2;
-	sysctl_max_syn_backlog = max(128, cnt / 256);
+	/* Try to be a bit smarter and adjust defaults depending
+	 * on available memory.
+	 */
+	for (order = 0; ((1 << order) << PAGE_SHIFT) <
+			(tcp_hashinfo.bhash_size * sizeof(struct inet_bind_hashbucket));
+			order++)
+		;
+	if (order >= 4) {
+		tcp_death_row.sysctl_max_tw_buckets = 180000;
+		sysctl_tcp_max_orphans = 4096 << (order - 4);
+		sysctl_max_syn_backlog = 1024;
+	} else if (order < 3) {
+		tcp_death_row.sysctl_max_tw_buckets >>= (3 - order);
+		sysctl_tcp_max_orphans >>= (3 - order);
+		sysctl_max_syn_backlog = 128;
+	}
 
 	/* Set the pressure threshold to be a fraction of global memory that
 	 * is up to 1/2 at 256 MB, decreasing toward zero with the amount of

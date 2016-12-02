@@ -361,7 +361,7 @@ static void icmp_reply(struct icmp_bxm *icmp_param, struct sk_buff *skb)
 	struct inet_sock *inet;
 	__be32 daddr;
 
-	if (ip_options_echo(&icmp_param->replyopts.opt.opt, skb))
+	if (ip_options_echo(&icmp_param->replyopts.opt, skb))
 		return;
 
 	sk = icmp_xmit_lock(net);
@@ -375,10 +375,10 @@ static void icmp_reply(struct icmp_bxm *icmp_param, struct sk_buff *skb)
 	daddr = ipc.addr = rt->rt_src;
 	ipc.opt = NULL;
 	ipc.shtx.flags = 0;
-	if (icmp_param->replyopts.opt.opt.optlen) {
+	if (icmp_param->replyopts.opt.optlen) {
 		ipc.opt = &icmp_param->replyopts.opt;
-		if (ipc.opt->opt.srr)
-			daddr = icmp_param->replyopts.opt.opt.faddr;
+		if (ipc.opt->srr)
+			daddr = icmp_param->replyopts.opt.faddr;
 	}
 	{
 		struct flowi fl = { .nl_u = { .ip4_u =
@@ -515,7 +515,7 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 					   IPTOS_PREC_INTERNETCONTROL) :
 					  iph->tos;
 
-	if (ip_options_echo(&icmp_param.replyopts.opt.opt, skb_in))
+	if (ip_options_echo(&icmp_param.replyopts.opt, skb_in))
 		goto out_unlock;
 
 
@@ -538,8 +538,8 @@ void icmp_send(struct sk_buff *skb_in, int type, int code, __be32 info)
 		struct flowi fl = {
 			.nl_u = {
 				.ip4_u = {
-					.daddr = icmp_param.replyopts.opt.opt.srr ?
-						icmp_param.replyopts.opt.opt.faddr :
+					.daddr = icmp_param.replyopts.opt.srr ?
+						icmp_param.replyopts.opt.faddr :
 						iph->saddr,
 					.saddr = saddr,
 					.tos = RT_TOS(tos)
@@ -628,7 +628,7 @@ route_done:
 	room = dst_mtu(&rt->u.dst);
 	if (room > 576)
 		room = 576;
-	room -= sizeof(struct iphdr) + icmp_param.replyopts.opt.opt.optlen;
+	room -= sizeof(struct iphdr) + icmp_param.replyopts.opt.optlen;
 	room -= sizeof(struct icmphdr);
 
 	icmp_param.data_len = skb_in->len - icmp_param.offset;

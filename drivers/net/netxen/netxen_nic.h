@@ -53,8 +53,8 @@
 
 #define _NETXEN_NIC_LINUX_MAJOR 4
 #define _NETXEN_NIC_LINUX_MINOR 0
-#define _NETXEN_NIC_LINUX_SUBVERSION 50
-#define NETXEN_NIC_LINUX_VERSIONID  "4.0.50"
+#define _NETXEN_NIC_LINUX_SUBVERSION 62
+#define NETXEN_NIC_LINUX_VERSIONID  "4.0.62"
 
 #define NETXEN_VERSION_CODE(a, b, c)	(((a) << 24) + ((b) << 16) + (c))
 #define _major(v)	(((v) >> 24) & 0xff)
@@ -1050,6 +1050,9 @@ typedef struct {
 
 #define LINKEVENT_LINKSPEED_MBPS	0
 #define LINKEVENT_LINKSPEED_ENCODED	1
+
+#define AUTO_FW_RESET_ENABLED	0xEF10AF12
+#define AUTO_FW_RESET_DISABLED	0xDCBAAF12
 
 /* firmware response header:
  *	63:58 - message type

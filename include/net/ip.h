@@ -54,7 +54,7 @@ struct ipcm_cookie
 {
 	__be32			addr;
 	int			oif;
-	struct ip_options_rcu	*opt;
+	struct ip_options	*opt;
 	union skb_shared_tx	shtx;
 };
 
@@ -240,8 +240,8 @@ static inline void ip_select_ident(struct iphdr *iph, struct dst_entry *dst, str
 		 * does not change, they drop every other packet in
 		 * a TCP stream using header compression.
 		 */
-		iph->id = (sk && inet_sk(sk)->daddr) ?
-					htons(inet_sk(sk)->id++) : 0;
+		iph->id = (sk && inet_sk(sk)->inet_daddr) ?
+					htons(inet_sk(sk)->inet_id++) : 0;
 	} else
 		__ip_select_ident(iph, dst, 0);
 }
@@ -249,9 +249,9 @@ static inline void ip_select_ident(struct iphdr *iph, struct dst_entry *dst, str
 static inline void ip_select_ident_more(struct iphdr *iph, struct dst_entry *dst, struct sock *sk, int more)
 {
 	if (iph->frag_off & htons(IP_DF)) {
-		if (sk && inet_sk(sk)->daddr) {
-			iph->id = htons(inet_sk(sk)->id);
-			inet_sk(sk)->id += 1 + more;
+		if (sk && inet_sk(sk)->inet_daddr) {
+			iph->id = htons(inet_sk(sk)->inet_id);
+			inet_sk(sk)->inet_id += 1 + more;
 		} else
 			iph->id = 0;
 	} else
@@ -317,7 +317,7 @@ static inline void ip_ib_mc_map(__be32 naddr, const unsigned char *broadcast, ch
 
 static __inline__ void inet_reset_saddr(struct sock *sk)
 {
-	inet_sk(sk)->rcv_saddr = inet_sk(sk)->saddr = 0;
+	inet_sk(sk)->inet_rcv_saddr = inet_sk(sk)->inet_saddr = 0;
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	if (sk->sk_family == PF_INET6) {
 		struct ipv6_pinfo *np = inet6_sk(sk);
@@ -368,9 +368,9 @@ extern int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb);
 extern void ip_options_fragment(struct sk_buff *skb);
 extern int ip_options_compile(struct net *net,
 			      struct ip_options *opt, struct sk_buff *skb);
-extern int ip_options_get(struct net *net, struct ip_options_rcu **optp,
+extern int ip_options_get(struct net *net, struct ip_options **optp,
 			  unsigned char *data, int optlen);
-extern int ip_options_get_from_user(struct net *net, struct ip_options_rcu **optp,
+extern int ip_options_get_from_user(struct net *net, struct ip_options **optp,
 				    unsigned char __user *data, int optlen);
 extern void ip_options_undo(struct ip_options * opt);
 extern void ip_forward_options(struct sk_buff *skb);

@@ -31,6 +31,7 @@
 #define MASK(n) ((1ULL<<(n))-1)
 #define MN_WIN(addr) (((addr & 0x1fc0000) >> 1) | ((addr >> 25) & 0x3ff))
 #define OCM_WIN(addr) (((addr & 0x1ff0000) >> 1) | ((addr >> 25) & 0x3ff))
+#define OCM_WIN_P3P(addr) (addr & 0xffc0000)
 #define MS_WIN(addr) (addr & 0x0ffc0000)
 
 #define GET_MEM_OFFS_2M(addr) (addr & MASK(18))
@@ -331,7 +332,7 @@ netxen_pcie_sem_lock(struct netxen_adapter *adapter, int sem, u32 id_reg)
 		if (done == 1)
 			break;
 		if (++timeout >= NETXEN_PCIE_SEM_TIMEOUT)
-			return -1;
+			return -EIO;
 		msleep(1);
 	}
 
@@ -1112,7 +1113,7 @@ netxen_nic_pci_set_crbwindow_128M(struct netxen_adapter *adapter,
 }
 
 /*
- * Return -1 if off is not valid,
+ * Returns < 0 if off is not valid,
  *	 1 if window access is needed. 'off' is set to offset from
  *	   CRB space in 128M pci map
  *	 0 if no window access is needed. 'off' is set to 2M addr
@@ -1125,7 +1126,7 @@ netxen_nic_pci_get_crb_addr_2M(struct netxen_adapter *adapter, ulong *off)
 
 
 	if (*off >= NETXEN_CRB_MAX)
-		return -1;
+		return -EINVAL;
 
 	if (*off >= NETXEN_PCI_CAMQM && (*off < NETXEN_PCI_CAMQM_2M_END)) {
 		*off = (*off - NETXEN_PCI_CAMQM) + NETXEN_PCI_CAMQM_2M_BASE +
@@ -1134,7 +1135,7 @@ netxen_nic_pci_get_crb_addr_2M(struct netxen_adapter *adapter, ulong *off)
 	}
 
 	if (*off < NETXEN_PCI_CRBSPACE)
-		return -1;
+		return -EINVAL;
 
 	*off -= NETXEN_PCI_CRBSPACE;
 
@@ -1249,25 +1250,26 @@ netxen_nic_hw_write_wx_2M(struct netxen_adapter *adapter, ulong off, u32 data)
 
 	rv = netxen_nic_pci_get_crb_addr_2M(adapter, &off);
 
-	if (rv == -1) {
-		printk(KERN_ERR "%s: invalid offset: 0x%016lx\n",
-				__func__, off);
-		dump_stack();
-		return -1;
+	if (rv == 0) {
+		writel(data, (void __iomem *)off);
+		return 0;
 	}
 
-	if (rv == 1) {
+	if (rv > 0) {
+		/* indirect access */
 		write_lock_irqsave(&adapter->ahw.crb_lock, flags);
 		crb_win_lock(adapter);
 		netxen_nic_pci_set_crbwindow_2M(adapter, &off);
 		writel(data, (void __iomem *)off);
 		crb_win_unlock(adapter);
 		write_unlock_irqrestore(&adapter->ahw.crb_lock, flags);
-	} else
-		writel(data, (void __iomem *)off);
+		return 0;
+	}
 
-
-	return 0;
+	dev_err(&adapter->pdev->dev,
+			"%s: invalid offset: 0x%016lx\n", __func__, off);
+	dump_stack();
+	return -EIO;
 }
 
 static u32
@@ -1279,24 +1281,24 @@ netxen_nic_hw_read_wx_2M(struct netxen_adapter *adapter, ulong off)
 
 	rv = netxen_nic_pci_get_crb_addr_2M(adapter, &off);
 
-	if (rv == -1) {
-		printk(KERN_ERR "%s: invalid offset: 0x%016lx\n",
-				__func__, off);
-		dump_stack();
-		return -1;
-	}
+	if (rv == 0)
+		return readl((void __iomem *)off);
 
-	if (rv == 1) {
+	if (rv > 0) {
+		/* indirect access */
 		write_lock_irqsave(&adapter->ahw.crb_lock, flags);
 		crb_win_lock(adapter);
 		netxen_nic_pci_set_crbwindow_2M(adapter, &off);
 		data = readl((void __iomem *)off);
 		crb_win_unlock(adapter);
 		write_unlock_irqrestore(&adapter->ahw.crb_lock, flags);
-	} else
-		data = readl((void __iomem *)off);
+		return data;
+	}
 
-	return data;
+	dev_err(&adapter->pdev->dev,
+			"%s: invalid offset: 0x%016lx\n", __func__, off);
+	dump_stack();
+	return -1;
 }
 
 /* window 1 registers only */
@@ -1368,7 +1370,7 @@ static int
 netxen_nic_pci_set_window_2M(struct netxen_adapter *adapter,
 		u64 addr, u32 *start)
 {
-	u32 win_read, window;
+	u32 window;
 	struct pci_dev *pdev = adapter->pdev;
 
 	if ((addr & 0x00ff800) == 0xff800) {
@@ -1377,14 +1379,14 @@ netxen_nic_pci_set_window_2M(struct netxen_adapter *adapter,
 		return -EIO;
 	}
 
-	window = OCM_WIN(addr);
+	if (NX_IS_REVISION_P3P(adapter->ahw.revision_id))
+		window = OCM_WIN_P3P(addr);
+	else
+		window = OCM_WIN(addr);
+
 	writel(window, adapter->ahw.ocm_win_crb);
-	win_read = readl(adapter->ahw.ocm_win_crb);
-	if ((win_read >> 7) != window) {
-		if (printk_ratelimit())
-			dev_warn(&pdev->dev, "failed to set OCM window\n");
-		return -EIO;
-	}
+	/* read back to flush */
+	readl(adapter->ahw.ocm_win_crb);
 
 	adapter->ahw.ocm_win = window;
 	*start = NETXEN_PCI_OCM0_2M + GET_MEM_OFFS_2M(addr);

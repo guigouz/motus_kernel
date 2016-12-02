@@ -889,7 +889,7 @@ lcs_send_lancmd(struct lcs_card *card, struct lcs_buffer *buffer,
 	rc = lcs_ready_buffer(&card->write, buffer);
 	if (rc)
 		return rc;
-	init_timer(&timer);
+	init_timer_on_stack(&timer);
 	timer.function = lcs_lancmd_timeout;
 	timer.data = (unsigned long) reply;
 	timer.expires = jiffies + HZ*card->lancmd_timeout;
@@ -2130,8 +2130,12 @@ lcs_new_device(struct ccwgroup_device *ccwgdev)
 	card->write.ccwdev = ccwgdev->cdev[1];
 
 	recover_state = card->state;
-	ccw_device_set_online(card->read.ccwdev);
-	ccw_device_set_online(card->write.ccwdev);
+	rc = ccw_device_set_online(card->read.ccwdev);
+	if (rc)
+		goto out_err;
+	rc = ccw_device_set_online(card->write.ccwdev);
+	if (rc)
+		goto out_werr;
 
 	LCS_DBF_TEXT(3, setup, "lcsnewdv");
 
@@ -2210,8 +2214,10 @@ netdev_out:
 	return 0;
 out:
 
-	ccw_device_set_offline(card->read.ccwdev);
 	ccw_device_set_offline(card->write.ccwdev);
+out_werr:
+	ccw_device_set_offline(card->read.ccwdev);
+out_err:
 	return -ENODEV;
 }
 

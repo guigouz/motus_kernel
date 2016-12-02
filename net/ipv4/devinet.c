@@ -807,10 +807,6 @@ int devinet_ioctl(struct net *net, unsigned int cmd, void __user *arg)
 			inet_insert_ifa(ifa);
 		}
 		break;
-	case SIOCKILLADDR:	/* Nuke all connections on this address */
-		ret = 0;
-		tcp_v4_nuke_addr(sin->sin_addr.s_addr);
-		break;
 	}
 done:
 	rtnl_unlock();

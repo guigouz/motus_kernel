@@ -1,7 +1,6 @@
 #ifndef NET_COMPAT_H
 #define NET_COMPAT_H
 
-
 struct sock;
 
 #if defined(CONFIG_COMPAT)
@@ -33,7 +32,11 @@ extern int compat_sock_get_timestamp(struct sock *, struct timeval __user *);
 extern int compat_sock_get_timestampns(struct sock *, struct timespec __user *);
 
 #else /* defined(CONFIG_COMPAT) */
-#define compat_msghdr	msghdr		/* to avoid compiler warnings */
+/*
+ * To avoid compiler warnings:
+ */
+#define compat_msghdr	msghdr
+#define compat_mmsghdr	mmsghdr
 #endif /* defined(CONFIG_COMPAT) */
 
 extern int get_compat_msghdr(struct msghdr *, struct compat_msghdr __user *);

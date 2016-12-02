@@ -55,6 +55,8 @@ static int use_msi = 1;
 
 static int use_msi_x = 1;
 
+static unsigned long auto_fw_reset = AUTO_FW_RESET_ENABLED;
+
 /* Local functions to NetXen NIC driver */
 static int __devinit netxen_nic_probe(struct pci_dev *pdev,
 		const struct pci_device_id *ent);
@@ -654,7 +656,11 @@ netxen_setup_pci_map(struct netxen_adapter *adapter)
 	adapter->ahw.pci_base1 = mem_ptr1;
 	adapter->ahw.pci_base2 = mem_ptr2;
 
-	if (!NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
+	if (NX_IS_REVISION_P3P(adapter->ahw.revision_id)) {
+		adapter->ahw.ocm_win_crb = netxen_get_ioaddr(adapter,
+			NETXEN_PCIX_PS_REG(PCIX_OCM_WINDOW_REG(pci_func)));
+
+	} else if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
 		adapter->ahw.ocm_win_crb = netxen_get_ioaddr(adapter,
 			NETXEN_PCIX_PS_REG(PCIE_MN_WINDOW_REG(pci_func)));
 	}
@@ -2266,7 +2272,8 @@ netxen_check_health(struct netxen_adapter *adapter)
 	dev_info(&netdev->dev, "firmware hang detected\n");
 
 detach:
-	if (!test_and_set_bit(__NX_RESETTING, &adapter->state))
+	if ((auto_fw_reset == AUTO_FW_RESET_ENABLED) &&
+			!test_and_set_bit(__NX_RESETTING, &adapter->state))
 		netxen_schedule_work(adapter, netxen_detach_work, 0);
 	return 1;
 }
@@ -2498,6 +2505,41 @@ static struct bin_attribute bin_attr_mem = {
 	.write = netxen_sysfs_write_mem,
 };
 
+static ssize_t
+netxen_store_auto_fw_reset(struct module_attribute *mattr,
+		struct module *mod, const char *buf, size_t count)
+
+{
+	unsigned long new;
+
+	if (strict_strtoul(buf, 16, &new))
+		return -EINVAL;
+
+	if ((new == AUTO_FW_RESET_ENABLED) || (new == AUTO_FW_RESET_DISABLED)) {
+		auto_fw_reset = new;
+		return count;
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t
+netxen_show_auto_fw_reset(struct module_attribute *mattr,
+		struct module *mod, char *buf)
+
+{
+	if (auto_fw_reset == AUTO_FW_RESET_ENABLED)
+		return sprintf(buf, "enabled\n");
+	else
+		return sprintf(buf, "disabled\n");
+}
+
+static struct module_attribute mod_attr_fw_reset = {
+	.attr = {.name = "auto_fw_reset", .mode = (S_IRUGO | S_IWUSR)},
+	.show = netxen_show_auto_fw_reset,
+	.store = netxen_store_auto_fw_reset,
+};
+
 static void
 netxen_create_sysfs_entries(struct netxen_adapter *adapter)
 {
@@ -2702,12 +2744,18 @@ static struct pci_driver netxen_driver = {
 
 static int __init netxen_init_module(void)
 {
+	struct module *mod = THIS_MODULE;
+
 	printk(KERN_INFO "%s\n", netxen_nic_driver_string);
 
 #ifdef CONFIG_INET
 	register_netdevice_notifier(&netxen_netdev_cb);
 	register_inetaddr_notifier(&netxen_inetaddr_cb);
 #endif
+
+	if (sysfs_create_file(&mod->mkobj.kobj, &mod_attr_fw_reset.attr))
+		printk(KERN_ERR "%s: Failed to create auto_fw_reset "
+				"sysfs entry.", netxen_nic_driver_name);
 
 	return pci_register_driver(&netxen_driver);
 }
@@ -2716,6 +2764,10 @@ module_init(netxen_init_module);
 
 static void __exit netxen_exit_module(void)
 {
+	struct module *mod = THIS_MODULE;
+
+	sysfs_remove_file(&mod->mkobj.kobj, &mod_attr_fw_reset.attr);
+
 	pci_unregister_driver(&netxen_driver);
 
 #ifdef CONFIG_INET

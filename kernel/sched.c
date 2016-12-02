@@ -2710,7 +2710,6 @@ void wake_up_new_task(struct task_struct *p, unsigned long clone_flags)
 {
 	unsigned long flags;
 	struct rq *rq;
-	int cpu = get_cpu();
 
 #ifdef CONFIG_SMP
 	rq = task_rq_lock(p, &flags);
@@ -10997,7 +10996,6 @@ static void cpuacct_update_stats(struct task_struct *tsk,
 		enum cpuacct_stat_index idx, cputime_t val)
 {
 	struct cpuacct *ca;
-	int batch = CPUACCT_BATCH;
 
 	if (unlikely(!cpuacct_subsys.active))
 		return;

@@ -312,7 +312,7 @@ int ip_queue_xmit(struct sk_buff *skb, int ipfragok)
 {
 	struct sock *sk = skb->sk;
 	struct inet_sock *inet = inet_sk(sk);
-	struct ip_options_rcu *inet_opt = NULL;
+	struct ip_options *opt = inet->opt;
 	struct rtable *rt;
 	struct iphdr *iph;
 	int res;
@@ -327,27 +327,26 @@ int ip_queue_xmit(struct sk_buff *skb, int ipfragok)
 
 	/* Make sure we can route this packet. */
 	rt = (struct rtable *)__sk_dst_check(sk, 0);
-	inet_opt = rcu_dereference(inet->inet_opt);
 	if (rt == NULL) {
 		__be32 daddr;
 
 		/* Use correct destination address if we have options. */
-		daddr = inet->daddr;
-		if (inet_opt && inet_opt->opt.srr)
-			daddr = inet_opt->opt.faddr;
+		daddr = inet->inet_daddr;
+		if(opt && opt->srr)
+			daddr = opt->faddr;
 
 		{
 			struct flowi fl = { .oif = sk->sk_bound_dev_if,
 					    .mark = sk->sk_mark,
 					    .nl_u = { .ip4_u =
 						      { .daddr = daddr,
-							.saddr = inet->saddr,
+							.saddr = inet->inet_saddr,
 							.tos = RT_CONN_FLAGS(sk) } },
 					    .proto = sk->sk_protocol,
 					    .flags = inet_sk_flowi_flags(sk),
 					    .uli_u = { .ports =
-						       { .sport = inet->sport,
-							 .dport = inet->dport } } };
+						       { .sport = inet->inet_sport,
+							 .dport = inet->inet_dport } } };
 
 			/* If this fails, retransmit mechanism of transport layer will
 			 * keep trying until route appears or the connection times
@@ -362,11 +361,11 @@ int ip_queue_xmit(struct sk_buff *skb, int ipfragok)
 	skb_dst_set(skb, dst_clone(&rt->u.dst));
 
 packet_routed:
-	if (inet_opt && inet_opt->opt.is_strictroute && rt->rt_dst != rt->rt_gateway)
+	if (opt && opt->is_strictroute && rt->rt_dst != rt->rt_gateway)
 		goto no_route;
 
 	/* OK, we know where to send it, allocate and build IP header. */
-	skb_push(skb, sizeof(struct iphdr) + (inet_opt ? inet_opt->opt.optlen : 0));
+	skb_push(skb, sizeof(struct iphdr) + (opt ? opt->optlen : 0));
 	skb_reset_network_header(skb);
 	iph = ip_hdr(skb);
 	*((__be16 *)iph) = htons((4 << 12) | (5 << 8) | (inet->tos & 0xff));
@@ -380,9 +379,9 @@ packet_routed:
 	iph->daddr    = rt->rt_dst;
 	/* Transport layer set skb->h.foo itself. */
 
-	if (inet_opt && inet_opt->opt.optlen) {
-		iph->ihl += inet_opt->opt.optlen >> 2;
-		ip_options_build(skb, &inet_opt->opt, inet->daddr, rt, 0);
+	if (opt && opt->optlen) {
+		iph->ihl += opt->optlen >> 2;
+		ip_options_build(skb, opt, inet->inet_daddr, rt, 0);
 	}
 
 	ip_select_ident_more(iph, &rt->u.dst, sk,
@@ -814,7 +813,7 @@ int ip_append_data(struct sock *sk,
 		/*
 		 * setup for corking.
 		 */
-		opt = ipc->opt ? &ipc->opt->opt : NULL;
+		opt = ipc->opt;
 		if (opt) {
 			if (inet->cork.opt == NULL) {
 				inet->cork.opt = kmalloc(sizeof(struct ip_options) + 40, sk->sk_allocation);
@@ -858,7 +857,8 @@ int ip_append_data(struct sock *sk,
 	maxfraglen = ((mtu - fragheaderlen) & ~7) + fragheaderlen;
 
 	if (inet->cork.length + length > 0xFFFF - fragheaderlen) {
-		ip_local_error(sk, EMSGSIZE, rt->rt_dst, inet->dport, mtu-exthdrlen);
+		ip_local_error(sk, EMSGSIZE, rt->rt_dst, inet->inet_dport,
+			       mtu-exthdrlen);
 		return -EMSGSIZE;
 	}
 
@@ -1114,7 +1114,7 @@ ssize_t	ip_append_page(struct sock *sk, struct page *page,
 	maxfraglen = ((mtu - fragheaderlen) & ~7) + fragheaderlen;
 
 	if (inet->cork.length + size > 0xFFFF - fragheaderlen) {
-		ip_local_error(sk, EMSGSIZE, rt->rt_dst, inet->dport, mtu);
+		ip_local_error(sk, EMSGSIZE, rt->rt_dst, inet->inet_dport, mtu);
 		return -EMSGSIZE;
 	}
 
@@ -1377,18 +1377,18 @@ void ip_send_reply(struct sock *sk, struct sk_buff *skb, struct ip_reply_arg *ar
 	__be32 daddr;
 	struct rtable *rt = skb_rtable(skb);
 
-	if (ip_options_echo(&replyopts.opt.opt, skb))
+	if (ip_options_echo(&replyopts.opt, skb))
 		return;
 
 	daddr = ipc.addr = rt->rt_src;
 	ipc.opt = NULL;
 	ipc.shtx.flags = 0;
 
-	if (replyopts.opt.opt.optlen) {
+	if (replyopts.opt.optlen) {
 		ipc.opt = &replyopts.opt;
 
-		if (replyopts.opt.opt.srr)
-			daddr = replyopts.opt.opt.faddr;
+		if (ipc.opt->srr)
+			daddr = replyopts.opt.faddr;
 	}
 
 	{

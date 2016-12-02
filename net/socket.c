@@ -2078,38 +2078,15 @@ static int __sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
 	/* Save the user-mode address (verify_iovec will change the
 	 * kernel msghdr to use the kernel address space)
 	 */
-<<<<<<< HEAD
-	uaddr = (__force void __user *)msg_sys.msg_name;
-||||||| parent of a2e2725... net: Introduce recvmmsg socket syscall
-
-	uaddr = (__force void __user *)msg_sys.msg_name;
-=======
 
 	uaddr = (__force void __user *)msg_sys->msg_name;
->>>>>>> a2e2725... net: Introduce recvmmsg socket syscall
 	uaddr_len = COMPAT_NAMELEN(msg);
-<<<<<<< HEAD
-	if (MSG_CMSG_COMPAT & flags)
-		err = verify_compat_iovec(&msg_sys, iov,
-||||||| parent of a2e2725... net: Introduce recvmmsg socket syscall
-	if (MSG_CMSG_COMPAT & flags) {
-		err = verify_compat_iovec(&msg_sys, iov,
-=======
 	if (MSG_CMSG_COMPAT & flags) {
 		err = verify_compat_iovec(msg_sys, iov,
->>>>>>> a2e2725... net: Introduce recvmmsg socket syscall
 					  (struct sockaddr *)&addr,
 					  VERIFY_WRITE);
-<<<<<<< HEAD
-	else
-		err = verify_iovec(&msg_sys, iov,
-||||||| parent of a2e2725... net: Introduce recvmmsg socket syscall
-	} else
-		err = verify_iovec(&msg_sys, iov,
-=======
 	} else
 		err = verify_iovec(msg_sys, iov,
->>>>>>> a2e2725... net: Introduce recvmmsg socket syscall
 				   (struct sockaddr *)&addr,
 				   VERIFY_WRITE);
 	if (err < 0)
@@ -2118,9 +2095,6 @@ static int __sys_recvmsg(struct socket *sock, struct msghdr __user *msg,
 
 	cmsg_ptr = (unsigned long)msg_sys->msg_control;
 	msg_sys->msg_flags = flags & (MSG_CMSG_CLOEXEC|MSG_CMSG_COMPAT);
-
-	/* We assume all kernel code knows the size of sockaddr_storage */
-	msg_sys.msg_namelen = 0;
 
 	if (sock->file->f_flags & O_NONBLOCK)
 		flags |= MSG_DONTWAIT;

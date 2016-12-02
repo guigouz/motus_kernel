@@ -205,7 +205,7 @@ int ip_cmsg_send(struct net *net, struct msghdr *msg, struct ipcm_cookie *ipc)
 		case IP_RETOPTS:
 			err = cmsg->cmsg_len - CMSG_ALIGN(sizeof(struct cmsghdr));
 			err = ip_options_get(net, &ipc->opt, CMSG_DATA(cmsg),
-					     err < 40 ? err : 40);
+					     (err < 40) ? err : 40);
 			if (err)
 				return err;
 			break;
@@ -245,7 +245,7 @@ int ip_ra_control(struct sock *sk, unsigned char on,
 {
 	struct ip_ra_chain *ra, *new_ra, **rap;
 
-	if (sk->sk_type != SOCK_RAW || inet_sk(sk)->num == IPPROTO_RAW)
+	if (sk->sk_type != SOCK_RAW || inet_sk(sk)->inet_num == IPPROTO_RAW)
 		return -EINVAL;
 
 	new_ra = on ? kmalloc(sizeof(*new_ra), GFP_KERNEL) : NULL;
@@ -435,11 +435,6 @@ out:
 }
 
 
-static void opt_kfree_rcu(struct rcu_head *head)
-{
-	kfree(container_of(head, struct ip_options_rcu, rcu));
-}
-
 /*
  *	Socket option code for IP. This is the end of the line after any
  *	TCP,UDP etc options on an IP socket.
@@ -485,7 +480,7 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 	switch (optname) {
 	case IP_OPTIONS:
 	{
-		struct ip_options_rcu *old, *opt = NULL;
+		struct ip_options *opt = NULL;
 
 		if (optlen > 40 || optlen < 0)
 			goto e_inval;
@@ -493,27 +488,25 @@ static int do_ip_setsockopt(struct sock *sk, int level,
 					       optval, optlen);
 		if (err)
 			break;
-		old = inet->inet_opt;
 		if (inet->is_icsk) {
 			struct inet_connection_sock *icsk = inet_csk(sk);
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 			if (sk->sk_family == PF_INET ||
 			    (!((1 << sk->sk_state) &
 			       (TCPF_LISTEN | TCPF_CLOSE)) &&
-			     inet->daddr != LOOPBACK4_IPV6)) {
+			     inet->inet_daddr != LOOPBACK4_IPV6)) {
 #endif
-				if (old)
-					icsk->icsk_ext_hdr_len -= old->opt.optlen;
+				if (inet->opt)
+					icsk->icsk_ext_hdr_len -= inet->opt->optlen;
 				if (opt)
-					icsk->icsk_ext_hdr_len += opt->opt.optlen;
+					icsk->icsk_ext_hdr_len += opt->optlen;
 				icsk->icsk_sync_mss(sk, icsk->icsk_pmtu_cookie);
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 			}
 #endif
 		}
-		rcu_assign_pointer(inet->inet_opt, opt);
-		if (old)
-			call_rcu(&old->rcu, opt_kfree_rcu);
+		opt = xchg(&inet->opt, opt);
+		kfree(opt);
 		break;
 	}
 	case IP_PKTINFO:
@@ -1042,14 +1035,11 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 	{
 		unsigned char optbuf[sizeof(struct ip_options)+40];
 		struct ip_options *opt = (struct ip_options *)optbuf;
-		struct ip_options_rcu *inet_opt;
-
-		inet_opt = inet->inet_opt;
 		opt->optlen = 0;
-		if (inet_opt)
-			memcpy(optbuf, &inet_opt->opt,
+		if (inet->opt)
+			memcpy(optbuf, &inet->opt,
 			       sizeof(struct ip_options) +
-			       inet_opt->opt.optlen);
+			       inet->opt->optlen);
 		release_sock(sk);
 
 		if (opt->optlen == 0)
@@ -1192,8 +1182,8 @@ static int do_ip_getsockopt(struct sock *sk, int level, int optname,
 		if (inet->cmsg_flags & IP_CMSG_PKTINFO) {
 			struct in_pktinfo info;
 
-			info.ipi_addr.s_addr = inet->rcv_saddr;
-			info.ipi_spec_dst.s_addr = inet->rcv_saddr;
+			info.ipi_addr.s_addr = inet->inet_rcv_saddr;
+			info.ipi_spec_dst.s_addr = inet->inet_rcv_saddr;
 			info.ipi_ifindex = inet->mc_index;
 			put_cmsg(&msg, SOL_IP, IP_PKTINFO, sizeof(info), &info);
 		}

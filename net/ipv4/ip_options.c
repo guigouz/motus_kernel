@@ -501,19 +501,19 @@ void ip_options_undo(struct ip_options * opt)
 	}
 }
 
-static struct ip_options_rcu *ip_options_get_alloc(const int optlen)
+static struct ip_options *ip_options_get_alloc(const int optlen)
 {
-	return kzalloc(sizeof(struct ip_options_rcu) + ((optlen + 3) & ~3),
+	return kzalloc(sizeof(struct ip_options) + ((optlen + 3) & ~3),
 		       GFP_KERNEL);
 }
 
-static int ip_options_get_finish(struct net *net, struct ip_options_rcu **optp,
-				 struct ip_options_rcu *opt, int optlen)
+static int ip_options_get_finish(struct net *net, struct ip_options **optp,
+				 struct ip_options *opt, int optlen)
 {
 	while (optlen & 3)
-		opt->opt.__data[optlen++] = IPOPT_END;
-	opt->opt.optlen = optlen;
-	if (optlen && ip_options_compile(net, &opt->opt, NULL)) {
+		opt->__data[optlen++] = IPOPT_END;
+	opt->optlen = optlen;
+	if (optlen && ip_options_compile(net, opt, NULL)) {
 		kfree(opt);
 		return -EINVAL;
 	}
@@ -522,29 +522,29 @@ static int ip_options_get_finish(struct net *net, struct ip_options_rcu **optp,
 	return 0;
 }
 
-int ip_options_get_from_user(struct net *net, struct ip_options_rcu **optp,
+int ip_options_get_from_user(struct net *net, struct ip_options **optp,
 			     unsigned char __user *data, int optlen)
 {
-	struct ip_options_rcu *opt = ip_options_get_alloc(optlen);
+	struct ip_options *opt = ip_options_get_alloc(optlen);
 
 	if (!opt)
 		return -ENOMEM;
-	if (optlen && copy_from_user(opt->opt.__data, data, optlen)) {
+	if (optlen && copy_from_user(opt->__data, data, optlen)) {
 		kfree(opt);
 		return -EFAULT;
 	}
 	return ip_options_get_finish(net, optp, opt, optlen);
 }
 
-int ip_options_get(struct net *net, struct ip_options_rcu **optp,
+int ip_options_get(struct net *net, struct ip_options **optp,
 		   unsigned char *data, int optlen)
 {
-	struct ip_options_rcu *opt = ip_options_get_alloc(optlen);
+	struct ip_options *opt = ip_options_get_alloc(optlen);
 
 	if (!opt)
 		return -ENOMEM;
 	if (optlen)
-		memcpy(opt->opt.__data, data, optlen);
+		memcpy(opt->__data, data, optlen);
 	return ip_options_get_finish(net, optp, opt, optlen);
 }
 
