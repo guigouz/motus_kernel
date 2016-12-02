@@ -99,7 +99,7 @@ ssize_t i2400mu_tx_bulk_out(struct i2400mu *i2400mu, void *buf, size_t buf_size)
 		dev_err(dev, "BM-CMD: can't get autopm: %d\n", result);
 		do_autopm = 0;
 	}
-	epd = usb_get_epd(i2400mu->usb_iface, I2400MU_EP_BULK_OUT);
+	epd = usb_get_epd(i2400mu->usb_iface, i2400mu->endpoint_cfg.bulk_out);
 	pipe = usb_sndbulkpipe(i2400mu->usb_dev, epd->bEndpointAddress);
 retry:
 	result = usb_bulk_msg(i2400mu->usb_dev, pipe, buf, buf_size, &len, HZ);
@@ -172,7 +172,8 @@ ssize_t i2400mu_bus_bm_cmd_send(struct i2400m *i2400m,
 	result = -E2BIG;
 	if (cmd_size > I2400M_BM_CMD_BUF_SIZE)
 		goto error_too_big;
-	memcpy(i2400m->bm_cmd_buf, _cmd, cmd_size);
+	if (_cmd != i2400m->bm_cmd_buf)
+		memmove(i2400m->bm_cmd_buf, _cmd, cmd_size);
 	cmd = i2400m->bm_cmd_buf;
 	if (cmd_size_a > cmd_size)			/* Zero pad space */
 		memset(i2400m->bm_cmd_buf + cmd_size, 0, cmd_size_a - cmd_size);
@@ -226,7 +227,8 @@ int i2400mu_notif_submit(struct i2400mu *i2400mu, struct urb *urb,
 	struct usb_endpoint_descriptor *epd;
 	int pipe;
 
-	epd = usb_get_epd(i2400mu->usb_iface, I2400MU_EP_NOTIFICATION);
+	epd = usb_get_epd(i2400mu->usb_iface,
+			  i2400mu->endpoint_cfg.notification);
 	pipe = usb_rcvintpipe(i2400mu->usb_dev, epd->bEndpointAddress);
 	usb_fill_int_urb(urb, i2400mu->usb_dev, pipe,
 			 i2400m->bm_ack_buf, I2400M_BM_ACK_BUF_SIZE,
@@ -328,8 +330,8 @@ error_dev_gone:
 out:
 	if (do_autopm)
 		usb_autopm_put_interface(i2400mu->usb_iface);
-	d_fnend(8, dev, "(i2400m %p ack %p size %zu) = %zd\n",
-		i2400m, ack, ack_size, result);
+	d_fnend(8, dev, "(i2400m %p ack %p size %zu) = %ld\n",
+		i2400m, ack, ack_size, (long) result);
 	return result;
 
 error_exceeded:

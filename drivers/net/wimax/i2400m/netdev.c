@@ -74,6 +74,7 @@
  */
 #include <linux/if_arp.h>
 #include <linux/netdevice.h>
+#include <linux/ethtool.h>
 #include "i2400m.h"
 
 
@@ -101,22 +102,19 @@ int i2400m_open(struct net_device *net_dev)
 	struct device *dev = i2400m_dev(i2400m);
 
 	d_fnstart(3, dev, "(net_dev %p [i2400m %p])\n", net_dev, i2400m);
-	if (i2400m->ready == 0) {
-		dev_err(dev, "Device is still initializing\n");
-		result = -EBUSY;
-	} else
+	/* Make sure we wait until init is complete... */
+	mutex_lock(&i2400m->init_mutex);
+	if (i2400m->updown)
 		result = 0;
+	else
+		result = -EBUSY;
+	mutex_unlock(&i2400m->init_mutex);
 	d_fnend(3, dev, "(net_dev %p [i2400m %p]) = %d\n",
 		net_dev, i2400m, result);
 	return result;
 }
 
 
-/*
- *
- * On kernel versions where cancel_work_sync() didn't return anything,
- * we rely on wake_tx_skb() being non-NULL.
- */
 static
 int i2400m_stop(struct net_device *net_dev)
 {
@@ -124,21 +122,7 @@ int i2400m_stop(struct net_device *net_dev)
 	struct device *dev = i2400m_dev(i2400m);
 
 	d_fnstart(3, dev, "(net_dev %p [i2400m %p])\n", net_dev, i2400m);
-	/* See i2400m_hard_start_xmit(), references are taken there
-	 * and here we release them if the work was still
-	 * pending. Note we can't differentiate work not pending vs
-	 * never scheduled, so the NULL check does that. */
-	if (cancel_work_sync(&i2400m->wake_tx_ws) == 0
-	    && i2400m->wake_tx_skb != NULL) {
-		unsigned long flags;
-		struct sk_buff *wake_tx_skb;
-		spin_lock_irqsave(&i2400m->tx_lock, flags);
-		wake_tx_skb = i2400m->wake_tx_skb;	/* compat help */
-		i2400m->wake_tx_skb = NULL;	/* compat help */
-		spin_unlock_irqrestore(&i2400m->tx_lock, flags);
-		i2400m_put(i2400m);
-		kfree_skb(wake_tx_skb);
-	}
+	i2400m_net_wake_stop(i2400m);
 	d_fnend(3, dev, "(net_dev %p [i2400m %p]) = 0\n", net_dev, i2400m);
 	return 0;
 }
@@ -226,6 +210,38 @@ void i2400m_tx_prep_header(struct sk_buff *skb)
 	skb_pull(skb, ETH_HLEN);
 	pl_hdr = (struct i2400m_pl_data_hdr *) skb_push(skb, sizeof(*pl_hdr));
 	pl_hdr->reserved = 0;
+}
+
+
+
+/*
+ * Cleanup resources acquired during i2400m_net_wake_tx()
+ *
+ * This is called by __i2400m_dev_stop and means we have to make sure
+ * the workqueue is flushed from any pending work.
+ */
+void i2400m_net_wake_stop(struct i2400m *i2400m)
+{
+	struct device *dev = i2400m_dev(i2400m);
+
+	d_fnstart(3, dev, "(i2400m %p)\n", i2400m);
+	/* See i2400m_hard_start_xmit(), references are taken there
+	 * and here we release them if the work was still
+	 * pending. Note we can't differentiate work not pending vs
+	 * never scheduled, so the NULL check does that. */
+	if (cancel_work_sync(&i2400m->wake_tx_ws) == 0
+	    && i2400m->wake_tx_skb != NULL) {
+		unsigned long flags;
+		struct sk_buff *wake_tx_skb;
+		spin_lock_irqsave(&i2400m->tx_lock, flags);
+		wake_tx_skb = i2400m->wake_tx_skb;	/* compat help */
+		i2400m->wake_tx_skb = NULL;	/* compat help */
+		spin_unlock_irqrestore(&i2400m->tx_lock, flags);
+		i2400m_put(i2400m);
+		kfree_skb(wake_tx_skb);
+	}
+	d_fnend(3, dev, "(i2400m %p) = void\n", i2400m);
+	return;
 }
 
 
@@ -342,6 +358,20 @@ netdev_tx_t i2400m_hard_start_xmit(struct sk_buff *skb,
 	int result;
 
 	d_fnstart(3, dev, "(skb %p net_dev %p)\n", skb, net_dev);
+	if (skb_header_cloned(skb)) {
+		/*
+		 * Make tcpdump/wireshark happy -- if they are
+		 * running, the skb is cloned and we will overwrite
+		 * the mac fields in i2400m_tx_prep_header. Expand
+		 * seems to fix this...
+		 */
+		result = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+		if (result) {
+			result = NETDEV_TX_BUSY;
+			goto error_expand;
+		}
+	}
+
 	if (i2400m->state == I2400M_SS_IDLE)
 		result = i2400m_net_wake_tx(i2400m, net_dev, skb);
 	else
@@ -352,10 +382,11 @@ netdev_tx_t i2400m_hard_start_xmit(struct sk_buff *skb,
 		net_dev->stats.tx_packets++;
 		net_dev->stats.tx_bytes += skb->len;
 	}
+	result = NETDEV_TX_OK;
+error_expand:
 	kfree_skb(skb);
-
-	d_fnend(3, dev, "(skb %p net_dev %p)\n", skb, net_dev);
-	return NETDEV_TX_OK;
+	d_fnend(3, dev, "(skb %p net_dev %p) = %d\n", skb, net_dev, result);
+	return result;
 }
 
 
@@ -559,6 +590,22 @@ static const struct net_device_ops i2400m_netdev_ops = {
 	.ndo_change_mtu = i2400m_change_mtu,
 };
 
+static void i2400m_get_drvinfo(struct net_device *net_dev,
+			       struct ethtool_drvinfo *info)
+{
+	struct i2400m *i2400m = net_dev_to_i2400m(net_dev);
+
+	strncpy(info->driver, KBUILD_MODNAME, sizeof(info->driver) - 1);
+	strncpy(info->fw_version, i2400m->fw_name, sizeof(info->fw_version) - 1);
+	if (net_dev->dev.parent)
+		strncpy(info->bus_info, dev_name(net_dev->dev.parent),
+			sizeof(info->bus_info) - 1);
+}
+
+static const struct ethtool_ops i2400m_ethtool_ops = {
+	.get_drvinfo = i2400m_get_drvinfo,
+	.get_link = ethtool_op_get_link,
+};
 
 /**
  * i2400m_netdev_setup - Setup setup @net_dev's i2400m private data
@@ -580,6 +627,7 @@ void i2400m_netdev_setup(struct net_device *net_dev)
 		   & ~IFF_MULTICAST);
 	net_dev->watchdog_timeo = I2400M_TX_TIMEOUT;
 	net_dev->netdev_ops = &i2400m_netdev_ops;
+	net_dev->ethtool_ops = &i2400m_ethtool_ops;
 	d_fnend(3, NULL, "(net_dev %p) = void\n", net_dev);
 }
 EXPORT_SYMBOL_GPL(i2400m_netdev_setup);

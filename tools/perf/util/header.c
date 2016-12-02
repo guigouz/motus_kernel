@@ -48,24 +48,16 @@ void perf_header_attr__add_id(struct perf_header_attr *self, u64 id)
  */
 struct perf_header *perf_header__new(void)
 {
-	struct perf_header *self = malloc(sizeof(*self));
+	struct perf_header *self = calloc(sizeof(*self), 1);
 
 	if (!self)
 		die("nomem");
 
-	self->frozen = 0;
-
-	self->attrs = 0;
 	self->size = 1;
 	self->attr = malloc(sizeof(void *));
 
 	if (!self->attr)
 		die("nomem");
-
-	self->data_offset = 0;
-	self->data_size = 0;
-	self->trace_info_offset = 0;
-	self->trace_info_size = 0;
 
 	return self;
 }
@@ -149,14 +141,12 @@ struct perf_file_header {
 	struct perf_file_section	attrs;
 	struct perf_file_section	data;
 	struct perf_file_section	event_types;
-	struct perf_file_section	trace_info;
+	DECLARE_BITMAP(adds_features, HEADER_FEAT_BITS);
 };
 
-static int trace_info;
-
-void perf_header__set_trace_info(void)
+void perf_header__feat_trace_info(struct perf_header *header)
 {
-	trace_info = 1;
+	set_bit(HEADER_TRACE_INFO, header->adds_features);
 }
 
 static void do_write(int fd, void *buf, size_t size)
@@ -171,6 +161,32 @@ static void do_write(int fd, void *buf, size_t size)
 		buf += ret;
 	}
 }
+
+static void perf_header__adds_write(struct perf_header *self, int fd)
+{
+	struct perf_file_section trace_sec;
+	u64 cur_offset = lseek(fd, 0, SEEK_CUR);
+	unsigned long *feat_mask = self->adds_features;
+
+	if (test_bit(HEADER_TRACE_INFO, feat_mask)) {
+		/* Write trace info */
+		trace_sec.offset = lseek(fd, sizeof(trace_sec), SEEK_CUR);
+		read_tracing_data(fd, attrs, nr_counters);
+		trace_sec.size = lseek(fd, 0, SEEK_CUR) - trace_sec.offset;
+
+		/* Write trace info headers */
+		lseek(fd, cur_offset, SEEK_SET);
+		do_write(fd, &trace_sec, sizeof(trace_sec));
+
+		/*
+		 * Update cur_offset. So that other (future)
+		 * features can set their own infos in this place. But if we are
+		 * the only feature, at least that seeks to the place the data
+		 * should begin.
+		 */
+		cur_offset = lseek(fd, trace_sec.offset + trace_sec.size, SEEK_SET);
+	}
+};
 
 void perf_header__write(struct perf_header *self, int fd)
 {
@@ -210,23 +226,7 @@ void perf_header__write(struct perf_header *self, int fd)
 	if (events)
 		do_write(fd, events, self->event_size);
 
-	if (trace_info) {
-		static int trace_info_written;
-
-		/*
-		 * Write it only once
-		 */
-		if (!trace_info_written) {
-			self->trace_info_offset = lseek(fd, 0, SEEK_CUR);
-			read_tracing_data(fd, attrs, nr_counters);
-			self->trace_info_size = lseek(fd, 0, SEEK_CUR) -
-						self->trace_info_offset;
-			trace_info_written = 1;
-		} else {
-			lseek(fd, self->trace_info_offset +
-				self->trace_info_size, SEEK_SET);
-		}
-	}
+	perf_header__adds_write(self, fd);
 
 	self->data_offset = lseek(fd, 0, SEEK_CUR);
 
@@ -246,11 +246,9 @@ void perf_header__write(struct perf_header *self, int fd)
 			.offset = self->event_offset,
 			.size	= self->event_size,
 		},
-		.trace_info = {
-			.offset = self->trace_info_offset,
-			.size = self->trace_info_size,
-		},
 	};
+
+	memcpy(&f_header.adds_features, &self->adds_features, sizeof(self->adds_features));
 
 	lseek(fd, 0, SEEK_SET);
 	do_write(fd, &f_header, sizeof(f_header));
@@ -274,6 +272,20 @@ static void do_read(int fd, void *buf, size_t size)
 	}
 }
 
+static void perf_header__adds_read(struct perf_header *self, int fd)
+{
+	const unsigned long *feat_mask = self->adds_features;
+
+	if (test_bit(HEADER_TRACE_INFO, feat_mask)) {
+		struct perf_file_section trace_sec;
+
+		do_read(fd, &trace_sec, sizeof(trace_sec));
+		lseek(fd, trace_sec.offset, SEEK_SET);
+		trace_report(fd);
+		lseek(fd, trace_sec.offset + trace_sec.size, SEEK_SET);
+	}
+};
+
 struct perf_header *perf_header__read(int fd)
 {
 	struct perf_header	*self = perf_header__new();
@@ -292,8 +304,8 @@ struct perf_header *perf_header__read(int fd)
 
 	if (f_header.size != sizeof(f_header)) {
 		/* Support the previous format */
-		if (f_header.size == offsetof(typeof(f_header), trace_info))
-			f_header.trace_info.size = 0;
+		if (f_header.size == offsetof(typeof(f_header), adds_features))
+			bitmap_zero(f_header.adds_features, HEADER_FEAT_BITS);
 		else
 			die("incompatible file format");
 	}
@@ -330,13 +342,9 @@ struct perf_header *perf_header__read(int fd)
 		event_count =  f_header.event_types.size / sizeof(struct perf_trace_event_type);
 	}
 
-	self->trace_info_offset = f_header.trace_info.offset;
-	self->trace_info_size = f_header.trace_info.size;
+	memcpy(&self->adds_features, &f_header.adds_features, sizeof(f_header.adds_features));
 
-	if (self->trace_info_size) {
-		lseek(fd, self->trace_info_offset, SEEK_SET);
-		trace_report(fd);
-	}
+	perf_header__adds_read(self, fd);
 
 	self->event_offset = f_header.event_types.offset;
 	self->event_size   = f_header.event_types.size;
