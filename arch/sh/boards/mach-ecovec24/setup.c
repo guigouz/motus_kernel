@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/usb/r8a66597.h>
 #include <linux/i2c.h>
-#include <linux/i2c/tsc2007.h>
 #include <linux/input.h>
 #include <video/sh_mobile_lcdc.h>
 #include <media/sh_mobile_ceu.h>
@@ -37,20 +36,6 @@
  *  0x0400_0000  Internal I/O     16/32bit
  *  0x0800_0000  DRAM             32bit
  *  0x1800_0000  MFI              16bit
- */
-
-/* SWITCH
- *------------------------------
- * DS2[1] = FlashROM write protect  ON     : write protect
- *                                  OFF    : No write protect
- * DS2[2] = RMII / TS, SCIF         ON     : RMII
- *                                  OFF    : TS, SCIF3
- * DS2[3] = Camera / Video          ON     : Camera
- *                                  OFF    : NTSC/PAL (IN)
- * DS2[5] = NTSC_OUT Clock          ON     : On board OSC
- *                                  OFF    : SH7724 DV_CLK
- * DS2[6-7] = MMC / SD              ON-OFF : SD
- *                                  OFF-ON : MMC
  */
 
 /* Heartbeat */
@@ -85,7 +70,7 @@ static struct mtd_partition nor_flash_partitions[] = {
 		.name = "boot loader",
 		.offset = 0,
 		.size = (5 * 1024 * 1024),
-		.mask_flags = MTD_WRITEABLE,  /* force read-only */
+		.mask_flags = MTD_CAP_ROM,
 	}, {
 		.name = "free-area",
 		.offset = MTDPART_OFS_APPEND,
@@ -391,41 +376,52 @@ static struct platform_device keysc_device = {
 	},
 };
 
-/* TouchScreen */
-#define IRQ0 32
-static int ts_get_pendown_state(void)
-{
-	int val = 0;
-	gpio_free(GPIO_FN_INTC_IRQ0);
-	gpio_request(GPIO_PTZ0, NULL);
-	gpio_direction_input(GPIO_PTZ0);
-
-	val = gpio_get_value(GPIO_PTZ0);
-
-	gpio_free(GPIO_PTZ0);
-	gpio_request(GPIO_FN_INTC_IRQ0, NULL);
-
-	return val ? 0 : 1;
-}
-
-static int ts_init(void)
-{
-	gpio_request(GPIO_FN_INTC_IRQ0, NULL);
-	return 0;
-}
-
-struct tsc2007_platform_data tsc2007_info = {
-	.model			= 2007,
-	.x_plate_ohms		= 180,
-	.get_pendown_state	= ts_get_pendown_state,
-	.init_platform_hw	= ts_init,
+/* SHDI0 */
+static struct resource sdhi0_resources[] = {
+	[0] = {
+		.name	= "SDHI0",
+		.start  = 0x04ce0000,
+		.end    = 0x04ce01ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 101,
+		.flags  = IORESOURCE_IRQ,
+	},
 };
 
-static struct i2c_board_info ts_i2c_clients = {
-	I2C_BOARD_INFO("tsc2007", 0x48),
-	.type		= "tsc2007",
-	.platform_data	= &tsc2007_info,
-	.irq		= IRQ0,
+static struct platform_device sdhi0_device = {
+	.name           = "sh_mobile_sdhi",
+	.num_resources  = ARRAY_SIZE(sdhi0_resources),
+	.resource       = sdhi0_resources,
+	.id             = 0,
+	.archdata = {
+		.hwblk_id = HWBLK_SDHI0,
+	},
+};
+
+/* SHDI1 */
+static struct resource sdhi1_resources[] = {
+	[0] = {
+		.name	= "SDHI1",
+		.start  = 0x04cf0000,
+		.end    = 0x04cf01ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 24,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sdhi1_device = {
+	.name           = "sh_mobile_sdhi",
+	.num_resources  = ARRAY_SIZE(sdhi1_resources),
+	.resource       = sdhi1_resources,
+	.id             = 1,
+	.archdata = {
+		.hwblk_id = HWBLK_SDHI1,
+	},
 };
 
 static struct platform_device *ecovec_devices[] __initdata = {
@@ -438,6 +434,8 @@ static struct platform_device *ecovec_devices[] __initdata = {
 	&ceu0_device,
 	&ceu1_device,
 	&keysc_device,
+	&sdhi0_device,
+	&sdhi1_device,
 };
 
 #define EEPROM_ADDR 0x50
@@ -512,11 +510,6 @@ static void __init sh_eth_init(void)
 #define IODRIVEA  0xA405018A
 static int __init arch_setup(void)
 {
-	/* enable STATUS0, STATUS2 and PDSTATUS */
-	gpio_request(GPIO_FN_STATUS0, NULL);
-	gpio_request(GPIO_FN_STATUS2, NULL);
-	gpio_request(GPIO_FN_PDSTATUS, NULL);
-
 	/* enable SCIFA0 */
 	gpio_request(GPIO_FN_SCIF0_TXD, NULL);
 	gpio_request(GPIO_FN_SCIF0_RXD, NULL);
@@ -647,10 +640,6 @@ static int __init arch_setup(void)
 		 */
 		gpio_request(GPIO_PTF4, NULL);
 		gpio_direction_output(GPIO_PTF4, 1);
-
-		/* enable TouchScreen */
-		i2c_register_board_info(0, &ts_i2c_clients, 1);
-		set_irq_type(IRQ0, IRQ_TYPE_LEVEL_LOW);
 	}
 
 	/* enable CEU0 */
@@ -709,6 +698,34 @@ static int __init arch_setup(void)
 	gpio_direction_input(GPIO_PTR4);
 	gpio_direction_input(GPIO_PTR5);
 	gpio_direction_input(GPIO_PTR6);
+
+	/* enable SDHI0 */
+	gpio_request(GPIO_FN_SDHI0CD,  NULL);
+	gpio_request(GPIO_FN_SDHI0WP,  NULL);
+	gpio_request(GPIO_FN_SDHI0CMD, NULL);
+	gpio_request(GPIO_FN_SDHI0CLK, NULL);
+	gpio_request(GPIO_FN_SDHI0D3,  NULL);
+	gpio_request(GPIO_FN_SDHI0D2,  NULL);
+	gpio_request(GPIO_FN_SDHI0D1,  NULL);
+	gpio_request(GPIO_FN_SDHI0D0,  NULL);
+
+	/* enable SDHI1 */
+	gpio_request(GPIO_FN_SDHI1CD,  NULL);
+	gpio_request(GPIO_FN_SDHI1WP,  NULL);
+	gpio_request(GPIO_FN_SDHI1CMD, NULL);
+	gpio_request(GPIO_FN_SDHI1CLK, NULL);
+	gpio_request(GPIO_FN_SDHI1D3,  NULL);
+	gpio_request(GPIO_FN_SDHI1D2,  NULL);
+	gpio_request(GPIO_FN_SDHI1D1,  NULL);
+	gpio_request(GPIO_FN_SDHI1D0,  NULL);
+
+	gpio_request(GPIO_PTB6, NULL);
+	gpio_request(GPIO_PTB7, NULL);
+	gpio_direction_output(GPIO_PTB6, 1);
+	gpio_direction_output(GPIO_PTB7, 1);
+
+	/* I/O buffer drive ability is high for SDHI1 */
+	ctrl_outw((ctrl_inw(IODRIVEA) & ~0x3000) | 0x2000 , IODRIVEA);
 
 	/* enable I2C device */
 	i2c_register_board_info(1, i2c1_devices,
