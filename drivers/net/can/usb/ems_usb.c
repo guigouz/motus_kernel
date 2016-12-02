@@ -311,15 +311,11 @@ static void ems_usb_rx_can_msg(struct ems_usb *dev, struct ems_cpc_msg *msg)
 	int i;
 	struct net_device_stats *stats = &dev->netdev->stats;
 
-	skb = netdev_alloc_skb(dev->netdev, sizeof(struct can_frame));
+	skb = alloc_can_skb(dev->netdev, &cf);
 	if (skb == NULL)
 		return;
 
-	skb->protocol = htons(ETH_P_CAN);
-
-	cf = (struct can_frame *)skb_put(skb, sizeof(struct can_frame));
-
-	cf->can_id = le32_to_cpu(msg->msg.can_msg.id);
+	cf->can_id = msg->msg.can_msg.id;
 	cf->can_dlc = min_t(u8, msg->msg.can_msg.length, 8);
 
 	if (msg->type == CPC_MSG_TYPE_EXT_CAN_FRAME
@@ -346,17 +342,9 @@ static void ems_usb_rx_err(struct ems_usb *dev, struct ems_cpc_msg *msg)
 	struct sk_buff *skb;
 	struct net_device_stats *stats = &dev->netdev->stats;
 
-	skb = netdev_alloc_skb(dev->netdev, sizeof(struct can_frame));
+	skb = alloc_can_err_skb(dev->netdev, &cf);
 	if (skb == NULL)
 		return;
-
-	skb->protocol = htons(ETH_P_CAN);
-
-	cf = (struct can_frame *)skb_put(skb, sizeof(struct can_frame));
-	memset(cf, 0, sizeof(struct can_frame));
-
-	cf->can_id = CAN_ERR_FLAG;
-	cf->can_dlc = CAN_ERR_DLC;
 
 	if (msg->type == CPC_MSG_TYPE_CAN_STATE) {
 		u8 state = msg->msg.can_state;
@@ -812,9 +800,6 @@ static netdev_tx_t ems_usb_start_xmit(struct sk_buff *skb, struct net_device *ne
 
 		msg->length = CPC_CAN_MSG_MIN_SIZE + cf->can_dlc;
 	}
-
-	/* Respect byte order */
-	msg->msg.can_msg.id = cpu_to_le32(msg->msg.can_msg.id);
 
 	for (i = 0; i < MAX_TX_URBS; i++) {
 		if (dev->tx_contexts[i].echo_index == MAX_TX_URBS) {
