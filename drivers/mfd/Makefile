@@ -26,6 +26,7 @@ obj-$(CONFIG_MENELAUS)		+= menelaus.o
 
 obj-$(CONFIG_TWL4030_CORE)	+= twl4030-core.o twl4030-irq.o
 obj-$(CONFIG_TWL4030_POWER)    += twl4030-power.o
+obj-$(CONFIG_TWL4030_CODEC)	+= twl4030-codec.o
 
 obj-$(CONFIG_MARIMBA_CORE)	+= marimba-core.o
 obj-$(CONFIG_MARIMBA_TSADC)	+= marimba-tsadc.o
