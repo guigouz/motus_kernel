@@ -429,6 +429,14 @@ struct drm_buf_entry {
 	struct drm_freelist freelist;
 };
 
+/* Event queued up for userspace to read */
+struct drm_pending_event {
+	struct drm_event *event;
+	struct list_head link;
+	struct drm_file *file_priv;
+	void (*destroy)(struct drm_pending_event *event);
+};
+
 /** File private data */
 struct drm_file {
 	int authenticated;
@@ -452,6 +460,10 @@ struct drm_file {
 	struct drm_master *master; /* master this node is currently associated with
 				      N.B. not always minor->master */
 	struct list_head fbs;
+
+	wait_queue_head_t event_wait;
+	struct list_head event_list;
+	int event_space;
 };
 
 /** Wait queue */
@@ -904,6 +916,12 @@ struct drm_minor {
 	struct drm_mode_group mode_group;
 };
 
+struct drm_pending_vblank_event {
+	struct drm_pending_event base;
+	int pipe;
+	struct drm_event_vblank event;
+};
+
 /**
  * DRM device structure. This structure represent a complete card that
  * may contain multiple heads.
@@ -1002,6 +1020,12 @@ struct drm_device {
 	struct timer_list vblank_disable_timer;
 
 	u32 max_vblank_count;           /**< size of vblank counter register */
+
+	/**
+	 * List of events
+	 */
+	struct list_head vblank_event_list;
+	spinlock_t event_lock;
 
 	/*@} */
 	cycles_t ctx_start;
@@ -1146,6 +1170,8 @@ extern int drm_lastclose(struct drm_device *dev);
 extern int drm_open(struct inode *inode, struct file *filp);
 extern int drm_stub_open(struct inode *inode, struct file *filp);
 extern int drm_fasync(int fd, struct file *filp, int on);
+extern ssize_t drm_read(struct file *filp, char __user *buffer,
+			size_t count, loff_t *offset);
 extern int drm_release(struct inode *inode, struct file *filp);
 
 				/* Mapping support (drm_vm.h) */
