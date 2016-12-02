@@ -2732,7 +2732,7 @@ static int falcon_probe_nvconfig(struct efx_nic *efx)
 
 	EFX_LOG(efx, "PHY is %d phy_id %d\n", efx->phy_type, efx->mdio.prtad);
 
-	efx_set_board_info(efx, board_rev);
+	falcon_probe_board(efx, board_rev);
 
 	kfree(nvconfig);
 	return 0;
@@ -2932,10 +2932,6 @@ int falcon_init_nic(struct efx_nic *efx)
 		EFX_SET_OWORD_FIELD(temp, GPIO_USE_NIC_CLK, true);
 		falcon_write(efx, &temp, GPIO_CTL_REG_KER);
 	}
-
-	/* Set buffer table mode */
-	EFX_POPULATE_OWORD_1(temp, BUF_TBL_MODE, BUF_TBL_MODE_FULL);
-	falcon_write(efx, &temp, BUF_TBL_CFG_REG_KER);
 
 	rc = falcon_reset_sram(efx);
 	if (rc)
