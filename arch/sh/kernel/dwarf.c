@@ -25,7 +25,6 @@
 #include <asm/unwinder.h>
 #include <asm/sections.h>
 #include <asm/unaligned.h>
-#include <asm/dwarf.h>
 #include <asm/stacktrace.h>
 
 /* Reserve enough memory for two stack frames */
@@ -902,8 +901,8 @@ static int dwarf_parse_section(char *eh_frame_start, char *eh_frame_end,
 {
 	u32 entry_type;
 	void *p, *entry;
-	int count, err;
-	unsigned long len;
+	int count, err = 0;
+	unsigned long len = 0;
 	unsigned int c_entries, f_entries;
 	unsigned char *end;
 
@@ -1057,9 +1056,12 @@ static int __init dwarf_unwinder_init(void)
 	INIT_LIST_HEAD(&dwarf_fde_list);
 
 	dwarf_frame_cachep = kmem_cache_create("dwarf_frames",
-			sizeof(struct dwarf_frame), 0, SLAB_PANIC, NULL);
+			sizeof(struct dwarf_frame), 0,
+			SLAB_PANIC | SLAB_HWCACHE_ALIGN | SLAB_NOTRACK, NULL);
+
 	dwarf_reg_cachep = kmem_cache_create("dwarf_regs",
-			sizeof(struct dwarf_reg), 0, SLAB_PANIC, NULL);
+			sizeof(struct dwarf_reg), 0,
+			SLAB_PANIC | SLAB_HWCACHE_ALIGN | SLAB_NOTRACK, NULL);
 
 	dwarf_frame_pool = mempool_create(DWARF_FRAME_MIN_REQ,
 					  mempool_alloc_slab,
