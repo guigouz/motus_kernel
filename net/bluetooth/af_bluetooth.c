@@ -135,29 +135,8 @@ int bt_sock_unregister(int proto)
 }
 EXPORT_SYMBOL(bt_sock_unregister);
 
-#ifdef CONFIG_ANDROID_PARANOID_NETWORK
-static inline int current_has_bt_admin(void)
-{
-	return (!current_euid() || in_egroup_p(AID_NET_BT_ADMIN));
-}
-
-static inline int current_has_bt(void)
-{
-	return (current_has_bt_admin() || in_egroup_p(AID_NET_BT));
-}
-# else
-static inline int current_has_bt_admin(void)
-{
-	return 1;
-}
-
-static inline int current_has_bt(void)
-{
-	return 1;
-}
-#endif
-
-static int bt_sock_create(struct net *net, struct socket *sock, int proto)
+static int bt_sock_create(struct net *net, struct socket *sock, int proto,
+			  int kern)
 {
 	int err;
 
@@ -182,7 +161,7 @@ static int bt_sock_create(struct net *net, struct socket *sock, int proto)
 	read_lock(&bt_proto_lock);
 
 	if (bt_proto[proto] && try_module_get(bt_proto[proto]->owner)) {
-		err = bt_proto[proto]->create(net, sock, proto);
+		err = bt_proto[proto]->create(net, sock, proto, kern);
 		bt_sock_reclassify_lock(sock, proto);
 		module_put(bt_proto[proto]->owner);
 	}
