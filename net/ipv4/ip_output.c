@@ -137,14 +137,14 @@ static inline int ip_select_ttl(struct inet_sock *inet, struct dst_entry *dst)
  *
  */
 int ip_build_and_send_pkt(struct sk_buff *skb, struct sock *sk,
-			  __be32 saddr, __be32 daddr, struct ip_options_rcu *opt)
+			  __be32 saddr, __be32 daddr, struct ip_options *opt)
 {
 	struct inet_sock *inet = inet_sk(sk);
 	struct rtable *rt = skb_rtable(skb);
 	struct iphdr *iph;
 
 	/* Build the IP header. */
-	skb_push(skb, sizeof(struct iphdr) + (opt ? opt->opt.optlen : 0));
+	skb_push(skb, sizeof(struct iphdr) + (opt ? opt->optlen : 0));
 	skb_reset_network_header(skb);
 	iph = ip_hdr(skb);
 	iph->version  = 4;
@@ -160,9 +160,9 @@ int ip_build_and_send_pkt(struct sk_buff *skb, struct sock *sk,
 	iph->protocol = sk->sk_protocol;
 	ip_select_ident(iph, &rt->u.dst, sk);
 
-	if (opt && opt->opt.optlen) {
-		iph->ihl += opt->opt.optlen>>2;
-		ip_options_build(skb, &opt->opt, daddr, rt, 0);
+	if (opt && opt->optlen) {
+		iph->ihl += opt->optlen>>2;
+		ip_options_build(skb, opt, daddr, rt, 0);
 	}
 
 	skb->priority = sk->sk_priority;

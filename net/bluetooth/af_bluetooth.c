@@ -140,13 +140,6 @@ static int bt_sock_create(struct net *net, struct socket *sock, int proto,
 {
 	int err;
 
-	if (proto == BTPROTO_RFCOMM || proto == BTPROTO_SCO ||
-			proto == BTPROTO_L2CAP) {
-		if (!current_has_bt())
-			return -EPERM;
-	} else if (!current_has_bt_admin())
-		return -EPERM;
-
 	if (net != &init_net)
 		return -EAFNOSUPPORT;
 

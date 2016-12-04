@@ -503,7 +503,7 @@ void avc_audit(u32 ssid, u32 tsid,
 	if (!a) {
 		a = &stack_data;
 		memset(a, 0, sizeof(*a));
-		a->type = LSM_AUDIT_NO_AUDIT;
+		a->type = LSM_AUDIT_DATA_NONE;
 	}
 	a->selinux_audit_data.tclass = tclass;
 	a->selinux_audit_data.requested = requested;

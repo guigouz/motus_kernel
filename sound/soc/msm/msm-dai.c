@@ -105,16 +105,8 @@ int msm_pcm_probe(struct platform_device *devptr)
 		goto __nopcm;
 	}
 
-	ret = snd_soc_init_card(socdev);
-	if (ret < 0) {
-		printk(KERN_ERR "msm_soc: failed to register card\n");
-		goto __nodev;
-	}
-
 	return 0;
 
-__nodev:
-	snd_soc_free_pcms(socdev);
 __nopcm:
 	kfree(codec);
 	return ret;

@@ -42,11 +42,6 @@ static int cap_binder_transfer_file(struct task_struct *from, struct task_struct
 	return 0;
 }
 
-static int cap_syslog(int type)
-{
-	return 0;
-}
-
 static int cap_quotactl(int cmds, int type, int id, struct super_block *sb)
 {
 	return 0;

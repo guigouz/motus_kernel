@@ -111,6 +111,8 @@
 #include <linux/sockios.h>
 #include <linux/atalk.h>
 
+#include <linux/uid_stat.h>
+
 static int sock_no_open(struct inode *irrelevant, struct file *dontcare);
 static ssize_t sock_aio_read(struct kiocb *iocb, const struct iovec *iov,
 			 unsigned long nr_segs, loff_t pos);
@@ -2264,25 +2266,25 @@ out_put:
 }
 
 SYSCALL_DEFINE5(recvmmsg, int, fd, struct mmsghdr __user *, mmsg,
-		unsigned int, vlen, unsigned int, flags,
-		struct timespec __user *, timeout)
+               unsigned int, vlen, unsigned int, flags,
+               struct timespec __user *, timeout)
 {
-	int datagrams;
-	struct timespec timeout_sys;
+       int datagrams;
+       struct timespec timeout_sys;
 
-	if (!timeout)
-		return __sys_recvmmsg(fd, mmsg, vlen, flags, NULL);
+       if (!timeout)
+               return __sys_recvmmsg(fd, mmsg, vlen, flags, NULL);
 
-	if (copy_from_user(&timeout_sys, timeout, sizeof(timeout_sys)))
-		return -EFAULT;
+       if (copy_from_user(&timeout_sys, timeout, sizeof(timeout_sys)))
+               return -EFAULT;
 
-	datagrams = __sys_recvmmsg(fd, mmsg, vlen, flags, &timeout_sys);
+       datagrams = __sys_recvmmsg(fd, mmsg, vlen, flags, &timeout_sys);
 
-	if (datagrams > 0 &&
-	    copy_to_user(timeout, &timeout_sys, sizeof(timeout_sys)))
-		datagrams = -EFAULT;
+       if (datagrams > 0 &&
+           copy_to_user(timeout, &timeout_sys, sizeof(timeout_sys)))
+               datagrams = -EFAULT;
 
-	return datagrams;
+       return datagrams;
 }
 
 #ifdef __ARCH_WANT_SYS_SOCKETCALL

@@ -49,7 +49,6 @@
 #include <linux/init_task.h>
 #include <linux/perf_event.h>
 #include <trace/events/sched.h>
-#include <linux/hw_breakpoint.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -994,10 +993,6 @@ NORET_TYPE void do_exit(long code)
 
 	proc_exit_connector(tsk);
 
-	/*
-	 * FIXME: do that only when needed, using sched_exit tracepoint
-	 */
-	flush_ptrace_hw_breakpoint(tsk);
 	/*
 	 * Flush inherited counters to the parent - before the parent
 	 * gets woken up by child-exit notifications.
