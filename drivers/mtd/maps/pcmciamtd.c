@@ -393,6 +393,7 @@ static int pcmciamtd_cistpl_device(struct pcmcia_device *p_dev,
 	struct pcmciamtd_dev *dev = priv_data;
 	cisparse_t parse;
 	cistpl_device_t *t = &parse.device;
+	int i;
 
 	if (pcmcia_parse_tuple(tuple, &parse))
 		return -EINVAL;
@@ -416,6 +417,7 @@ static int pcmciamtd_cistpl_geo(struct pcmcia_device *p_dev,
 	struct pcmciamtd_dev *dev = priv_data;
 	cisparse_t parse;
 	cistpl_device_geo_t *t = &parse.device_geo;
+	int i;
 
 	if (pcmcia_parse_tuple(tuple, &parse))
 		return -EINVAL;

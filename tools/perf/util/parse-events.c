@@ -7,6 +7,7 @@
 #include "string.h"
 #include "cache.h"
 #include "header.h"
+#include "debugfs.h"
 
 int				nr_counters;
 
@@ -153,16 +154,6 @@ static int tp_event_has_id(struct dirent *sys_dir, struct dirent *evt_dir)
 
 #define MAX_EVENT_LENGTH 512
 
-int valid_debugfs_mount(const char *debugfs)
-{
-	struct statfs st_fs;
-
-	if (statfs(debugfs, &st_fs) < 0)
-		return -ENOENT;
-	else if (st_fs.f_type != (long) DEBUGFS_MAGIC)
-		return -ENOENT;
-	return 0;
-}
 
 struct tracepoint_path *tracepoint_id_to_path(u64 config)
 {
@@ -175,7 +166,7 @@ struct tracepoint_path *tracepoint_id_to_path(u64 config)
 	char evt_path[MAXPATHLEN];
 	char dir_path[MAXPATHLEN];
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return NULL;
 
 	sys_dir = opendir(debugfs_path);
@@ -514,7 +505,7 @@ static enum event_result parse_tracepoint_event(const char **strp,
 	char sys_name[MAX_EVENT_LENGTH];
 	unsigned int sys_length, evt_length;
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return 0;
 
 	evt_name = strchr(*strp, ':');
@@ -792,7 +783,7 @@ static void print_tracepoint_events(void)
 	char evt_path[MAXPATHLEN];
 	char dir_path[MAXPATHLEN];
 
-	if (valid_debugfs_mount(debugfs_path))
+	if (debugfs_valid_mountpoint(debugfs_path))
 		return;
 
 	sys_dir = opendir(debugfs_path);
