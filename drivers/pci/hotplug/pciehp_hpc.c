@@ -427,27 +427,24 @@ int pciehp_set_attention_status(struct slot *slot, u8 value)
 	struct controller *ctrl = slot->ctrl;
 	u16 slot_cmd;
 	u16 cmd_mask;
-	int rc;
 
 	cmd_mask = PCI_EXP_SLTCTL_AIC;
 	switch (value) {
-		case 0 :	/* turn off */
-			slot_cmd = 0x00C0;
-			break;
-		case 1:		/* turn on */
-			slot_cmd = 0x0040;
-			break;
-		case 2:		/* turn blink */
-			slot_cmd = 0x0080;
-			break;
-		default:
-			return -1;
+	case 0 :	/* turn off */
+		slot_cmd = 0x00C0;
+		break;
+	case 1:		/* turn on */
+		slot_cmd = 0x0040;
+		break;
+	case 2:		/* turn blink */
+		slot_cmd = 0x0080;
+		break;
+	default:
+		return -EINVAL;
 	}
-	rc = pcie_write_cmd(ctrl, slot_cmd, cmd_mask);
 	ctrl_dbg(ctrl, "%s: SLOTCTRL %x write cmd %x\n",
 		 __func__, ctrl->cap_base + PCI_EXP_SLTCTL, slot_cmd);
-
-	return rc;
+	return pcie_write_cmd(ctrl, slot_cmd, cmd_mask);
 }
 
 void pciehp_green_led_on(struct slot *slot)
@@ -535,54 +532,12 @@ int pciehp_power_on_slot(struct slot * slot)
 	return retval;
 }
 
-static inline int pcie_mask_bad_dllp(struct controller *ctrl)
-{
-	struct pci_dev *dev = ctrl->pcie->port;
-	int pos;
-	u32 reg;
-
-	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
-	if (!pos)
-		return 0;
-	pci_read_config_dword(dev, pos + PCI_ERR_COR_MASK, &reg);
-	if (reg & PCI_ERR_COR_BAD_DLLP)
-		return 0;
-	reg |= PCI_ERR_COR_BAD_DLLP;
-	pci_write_config_dword(dev, pos + PCI_ERR_COR_MASK, reg);
-	return 1;
-}
-
-static inline void pcie_unmask_bad_dllp(struct controller *ctrl)
-{
-	struct pci_dev *dev = ctrl->pcie->port;
-	u32 reg;
-	int pos;
-
-	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
-	if (!pos)
-		return;
-	pci_read_config_dword(dev, pos + PCI_ERR_COR_MASK, &reg);
-	if (!(reg & PCI_ERR_COR_BAD_DLLP))
-		return;
-	reg &= ~PCI_ERR_COR_BAD_DLLP;
-	pci_write_config_dword(dev, pos + PCI_ERR_COR_MASK, reg);
-}
-
 int pciehp_power_off_slot(struct slot * slot)
 {
 	struct controller *ctrl = slot->ctrl;
 	u16 slot_cmd;
 	u16 cmd_mask;
-	int retval = 0;
-	int changed;
-
-	/*
-	 * Set Bad DLLP Mask bit in Correctable Error Mask
-	 * Register. This is the workaround against Bad DLLP error
-	 * that sometimes happens during turning power off the slot
-	 * which conforms to PCI Express 1.0a spec.
-	 */
-	changed = pcie_mask_bad_dllp(ctrl);
+	int retval;
 
 	slot_cmd = POWER_OFF;
 	cmd_mask = PCI_EXP_SLTCTL_PCC;
@@ -595,16 +550,11 @@ int pciehp_power_off_slot(struct slot * slot)
 	retval = pcie_write_cmd(ctrl, slot_cmd, cmd_mask);
 	if (retval) {
 		ctrl_err(ctrl, "Write command failed!\n");
-		retval = -1;
-		goto out;
+		return retval;
 	}
 	ctrl_dbg(ctrl, "%s: SLOTCTRL %x write cmd %x\n",
 		 __func__, ctrl->cap_base + PCI_EXP_SLTCTL, slot_cmd);
- out:
-	if (changed)
-		pcie_unmask_bad_dllp(ctrl);
-
-	return retval;
+	return 0;
 }
 
 static irqreturn_t pcie_isr(int irq, void *dev_id)
@@ -866,7 +816,8 @@ static void pcie_disable_notification(struct controller *ctrl)
 	u16 mask;
 	mask = (PCI_EXP_SLTCTL_PDCE | PCI_EXP_SLTCTL_ABPE |
 		PCI_EXP_SLTCTL_MRLSCE | PCI_EXP_SLTCTL_PFDE |
-		PCI_EXP_SLTCTL_HPIE | PCI_EXP_SLTCTL_CCIE);
+		PCI_EXP_SLTCTL_HPIE | PCI_EXP_SLTCTL_CCIE |
+		PCI_EXP_SLTCTL_DLLSCE);
 	if (pcie_write_cmd(ctrl, 0, mask))
 		ctrl_warn(ctrl, "Cannot disable software notification\n");
 }
