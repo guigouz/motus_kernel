@@ -7,8 +7,9 @@
  *
  * Author: Andy Fleming
  * Maintainer: Kumar Gala
+ * Modifier: Sandeep Gopalpet <sandeep.kumar@freescale.com>
  *
- * Copyright (c) 2002-2004 Freescale Semiconductor, Inc.
+ * Copyright 2002-2009 Freescale Semiconductor, Inc.
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -699,6 +700,102 @@ struct gfar {
 #define FSL_GIANFAR_DEV_HAS_BD_STASHING		0x00000200
 #define FSL_GIANFAR_DEV_HAS_BUF_STASHING	0x00000400
 
+/**
+ *	struct gfar_priv_tx_q - per tx queue structure
+ *	@txlock: per queue tx spin lock
+ *	@tx_skbuff:skb pointers
+ *	@skb_curtx: to be used skb pointer
+ *	@skb_dirtytx:the last used skb pointer
+ *	@qindex: index of this queue
+ *	@dev: back pointer to the dev structure
+ *	@grp: back pointer to the group to which this queue belongs
+ *	@tx_bd_base: First tx buffer descriptor
+ *	@cur_tx: Next free ring entry
+ *	@dirty_tx: First buffer in line to be transmitted
+ *	@tx_ring_size: Tx ring size
+ *	@num_txbdfree: number of free TxBds
+ *	@txcoalescing: enable/disable tx coalescing
+ *	@txic: transmit interrupt coalescing value
+ *	@txcount: coalescing value if based on tx frame count
+ *	@txtime: coalescing value if based on time
+ */
+struct gfar_priv_tx_q {
+	spinlock_t txlock __attribute__ ((aligned (SMP_CACHE_BYTES)));
+	struct sk_buff ** tx_skbuff;
+	/* Buffer descriptor pointers */
+	dma_addr_t tx_bd_dma_base;
+	struct	txbd8 *tx_bd_base;
+	struct	txbd8 *cur_tx;
+	struct	txbd8 *dirty_tx;
+	struct	net_device *dev;
+	u16	skb_curtx;
+	u16	skb_dirtytx;
+	u16	qindex;
+	unsigned int tx_ring_size;
+	unsigned int num_txbdfree;
+	/* Configuration info for the coalescing features */
+	unsigned char txcoalescing;
+	unsigned long txic;
+	unsigned short txcount;
+	unsigned short txtime;
+};
+
+/**
+ *	struct gfar_priv_rx_q - per rx queue structure
+ *	@rxlock: per queue rx spin lock
+ *	@napi: the napi poll function
+ *	@rx_skbuff: skb pointers
+ *	@skb_currx: currently use skb pointer
+ *	@rx_bd_base: First rx buffer descriptor
+ *	@cur_rx: Next free rx ring entry
+ *	@qindex: index of this queue
+ *	@dev: back pointer to the dev structure
+ *	@rx_ring_size: Rx ring size
+ *	@rxcoalescing: enable/disable rx-coalescing
+ *	@rxic: receive interrupt coalescing vlaue
+ */
+
+struct gfar_priv_rx_q {
+	spinlock_t rxlock __attribute__ ((aligned (SMP_CACHE_BYTES)));
+	struct	napi_struct napi;
+	struct	sk_buff ** rx_skbuff;
+	struct	rxbd8 *rx_bd_base;
+	struct	rxbd8 *cur_rx;
+	struct	net_device *dev;
+	u16	skb_currx;
+	u16	qindex;
+	unsigned int	rx_ring_size;
+	/* RX Coalescing values */
+	unsigned char rxcoalescing;
+	unsigned long rxic;
+};
+
+/**
+ *	struct gfar_priv_grp - per group structure
+ *	@priv: back pointer to the priv structure
+ *	@regs: the ioremapped register space for this group
+ *	@grp_id: group id for this group
+ *	@interruptTransmit: The TX interrupt number for this group
+ *	@interruptReceive: The RX interrupt number for this group
+ *	@interruptError: The ERROR interrupt number for this group
+ *	@int_name_tx: tx interrupt name for this group
+ *	@int_name_rx: rx interrupt name for this group
+ *	@int_name_er: er interrupt name for this group
+ */
+
+struct gfar_priv_grp {
+	spinlock_t grplock __attribute__ ((aligned (SMP_CACHE_BYTES)));
+	struct gfar_private *priv;
+	struct gfar __iomem *regs;
+	unsigned int interruptTransmit;
+	unsigned int interruptReceive;
+	unsigned int interruptError;
+
+	char int_name_tx[GFAR_INT_NAME_MAX];
+	char int_name_rx[GFAR_INT_NAME_MAX];
+	char int_name_er[GFAR_INT_NAME_MAX];
+};
+
 /* Struct stolen almost completely (and shamelessly) from the FCC enet source
  * (Ok, that's not so true anymore, but there is a family resemblence)
  * The GFAR buffer descriptors track the ring buffers.  The rx_bd_base
@@ -709,52 +806,16 @@ struct gfar {
  * the buffer descriptor determines the actual condition.
  */
 struct gfar_private {
-	/* Fields controlled by TX lock */
-	spinlock_t txlock;
-
-	/* Pointer to the array of skbuffs */
-	struct sk_buff ** tx_skbuff;
-
-	/* next free skb in the array */
-	u16 skb_curtx;
-
-	/* First skb in line to be transmitted */
-	u16 skb_dirtytx;
-
-	/* Configuration info for the coalescing features */
-	unsigned char txcoalescing;
-	unsigned long txic;
-
-	/* Buffer descriptor pointers */
-	dma_addr_t tx_bd_dma_base;
-	struct txbd8 *tx_bd_base;	/* First tx buffer descriptor */
-	struct txbd8 *cur_tx;	        /* Next free ring entry */
-	struct txbd8 *dirty_tx;		/* First buffer in line
-					   to be transmitted */
-	unsigned int tx_ring_size;
-	unsigned int num_txbdfree;	/* number of TxBDs free */
-
-	/* RX Locked fields */
-	spinlock_t rxlock;
 
 	struct device_node *node;
 	struct net_device *ndev;
 	struct of_device *ofdev;
-	struct napi_struct napi;
 
-	/* skb array and index */
-	struct sk_buff ** rx_skbuff;
-	u16 skb_currx;
+	struct gfar_priv_grp gfargrp;
+	struct gfar_priv_tx_q *tx_queue;
+	struct gfar_priv_rx_q *rx_queue;
 
-	/* RX Coalescing values */
-	unsigned char rxcoalescing;
-	unsigned long rxic;
-
-	struct rxbd8 *rx_bd_base;	/* First Rx buffers */
-	struct rxbd8 *cur_rx;           /* Next free rx ring entry */
-
-	/* RX parameters */
-	unsigned int rx_ring_size;
+	/* RX per device parameters */
 	unsigned int rx_buffer_size;
 	unsigned int rx_stash_size;
 	unsigned int rx_stash_index;
@@ -763,9 +824,6 @@ struct gfar_private {
 
 	struct vlan_group *vlgrp;
 
-	/* Unprotected fields */
-	/* Pointer to the GFAR memory mapped Registers */
-	struct gfar __iomem *regs;
 
 	/* Hash registers and their width */
 	u32 __iomem *hash_regs[16];
@@ -789,10 +847,6 @@ struct gfar_private {
 		wol_en:1; /* Wake-on-LAN enabled */
 	unsigned short padding;
 
-	unsigned int interruptTransmit;
-	unsigned int interruptReceive;
-	unsigned int interruptError;
-
 	/* PHY stuff */
 	struct phy_device *phydev;
 	struct mii_bus *mii_bus;
@@ -803,10 +857,6 @@ struct gfar_private {
 	uint32_t msg_enable;
 
 	struct work_struct reset_task;
-
-	char int_name_tx[GFAR_INT_NAME_MAX];
-	char int_name_rx[GFAR_INT_NAME_MAX];
-	char int_name_er[GFAR_INT_NAME_MAX];
 
 	/* Network Statistics */
 	struct gfar_extra_stats extra_stats;
