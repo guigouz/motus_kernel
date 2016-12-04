@@ -437,7 +437,8 @@ static int packet_sendmsg_spkt(struct kiocb *iocb, struct socket *sock,
 	 */
 
 	saddr->spkt_device[13] = 0;
-	dev = dev_get_by_name(sock_net(sk), saddr->spkt_device);
+	rcu_read_lock();
+	dev = dev_get_by_name_rcu(sock_net(sk), saddr->spkt_device);
 	err = -ENODEV;
 	if (dev == NULL)
 		goto out_unlock;
@@ -500,14 +501,13 @@ static int packet_sendmsg_spkt(struct kiocb *iocb, struct socket *sock,
 	 */
 
 	dev_queue_xmit(skb);
-	dev_put(dev);
+	rcu_read_unlock();
 	return len;
 
 out_free:
 	kfree_skb(skb);
 out_unlock:
-	if (dev)
-		dev_put(dev);
+	rcu_read_unlock();
 	return err;
 }
 
@@ -1527,12 +1527,13 @@ static int packet_getname_spkt(struct socket *sock, struct sockaddr *uaddr,
 		return -EOPNOTSUPP;
 
 	uaddr->sa_family = AF_PACKET;
-	memset(uaddr->sa_data, 0, sizeof(uaddr->sa_data));
-	dev = dev_get_by_index(sock_net(sk), pkt_sk(sk)->ifindex);
-	if (dev) {
-		strlcpy(uaddr->sa_data, dev->name, sizeof(uaddr->sa_data));
-		dev_put(dev);
-	}
+	rcu_read_lock();
+	dev = dev_get_by_index_rcu(sock_net(sk), pkt_sk(sk)->ifindex);
+	if (dev)
+		strlcpy(uaddr->sa_data, dev->name, 15);
+	else
+		memset(uaddr->sa_data, 0, 14);
+	rcu_read_unlock();
 	*uaddr_len = sizeof(*uaddr);
 
 	return 0;
@@ -1552,17 +1553,17 @@ static int packet_getname(struct socket *sock, struct sockaddr *uaddr,
 	sll->sll_family = AF_PACKET;
 	sll->sll_ifindex = po->ifindex;
 	sll->sll_protocol = po->num;
-	sll->sll_pkttype = 0;
-	dev = dev_get_by_index(sock_net(sk), po->ifindex);
+	rcu_read_lock();
+	dev = dev_get_by_index_rcu(sock_net(sk), po->ifindex);
 	if (dev) {
 		sll->sll_hatype = dev->type;
 		sll->sll_halen = dev->addr_len;
 		memcpy(sll->sll_addr, dev->dev_addr, dev->addr_len);
-		dev_put(dev);
 	} else {
 		sll->sll_hatype = 0;	/* Bad: we have no ARPHRD_UNSPEC */
 		sll->sll_halen = 0;
 	}
+	rcu_read_unlock();
 	*uaddr_len = offsetof(struct sockaddr_ll, sll_addr) + sll->sll_halen;
 
 	return 0;
