@@ -52,7 +52,7 @@ const char *default_search_path[NR_SEARCH_PATH] = {
 #define MAX_PATH_LEN 256
 #define MAX_PROBES 128
 #define MAX_PROBE_ARGS 128
-#define PERFPROBE_GROUP "perfprobe"
+#define PERFPROBE_GROUP "probe"
 
 /* Session management structure */
 static struct {
@@ -189,7 +189,7 @@ static void parse_probe_event(const char *str)
 	/* Parse probe point */
 	parse_probe_point(argv[0], pp);
 	free(argv[0]);
-	if (pp->file)
+	if (pp->file || pp->line)
 		session.need_dwarf = 1;
 
 	/* Copy arguments */
@@ -294,10 +294,11 @@ static int write_new_event(int fd, const char *buf)
 {
 	int ret;
 
-	printf("Adding new event: %s\n", buf);
 	ret = write(fd, buf, strlen(buf));
 	if (ret <= 0)
-		die("failed to create event.");
+		die("Failed to create event.");
+	else
+		printf("Added new event: %s\n", buf);
 
 	return ret;
 }
@@ -310,7 +311,7 @@ static int synthesize_probe_event(struct probe_point *pp)
 	int i, len, ret;
 	pp->probes[0] = buf = (char *)calloc(MAX_CMDLEN, sizeof(char));
 	if (!buf)
-		die("calloc");
+		die("Failed to allocate memory by calloc.");
 	ret = snprintf(buf, MAX_CMDLEN, "%s+%d", pp->function, pp->offset);
 	if (ret <= 0 || ret >= MAX_CMDLEN)
 		goto error;
@@ -346,36 +347,24 @@ int cmd_probe(int argc, const char **argv, const char *prefix __used)
 	if (session.nr_probe == 0)
 		usage_with_options(probe_usage, options);
 
-#ifdef NO_LIBDWARF
 	if (session.need_dwarf)
-		semantic_error("Dwarf-analysis is not supported");
-#endif
-
-	/* Synthesize probes without dwarf */
-	for (j = 0; j < session.nr_probe; j++) {
-#ifndef NO_LIBDWARF
-		if (!session.probes[j].retprobe) {
-			session.need_dwarf = 1;
-			continue;
-		}
-#endif
-		ret = synthesize_probe_event(&session.probes[j]);
-		if (ret == -E2BIG)
-			semantic_error("probe point is too long.");
-		else if (ret < 0)
-			die("snprintf");
-	}
-
-#ifndef NO_LIBDWARF
-	if (!session.need_dwarf)
-		goto setup_probes;
+#ifdef NO_LIBDWARF
+		semantic_error("Debuginfo-analysis is not supported");
+#else	/* !NO_LIBDWARF */
+		pr_info("Some probes require debuginfo.\n");
 
 	if (session.vmlinux)
 		fd = open(session.vmlinux, O_RDONLY);
 	else
 		fd = open_default_vmlinux();
-	if (fd < 0)
-		die("vmlinux/module file open");
+	if (fd < 0) {
+		if (session.need_dwarf)
+			die("Could not open vmlinux/module file.");
+
+		pr_warning("Could not open vmlinux/module file."
+			   " Try to use symbols.\n");
+		goto end_dwarf;
+	}
 
 	/* Searching probe points */
 	for (j = 0; j < session.nr_probe; j++) {
@@ -385,19 +374,44 @@ int cmd_probe(int argc, const char **argv, const char *prefix __used)
 
 		lseek(fd, SEEK_SET, 0);
 		ret = find_probepoint(fd, pp);
-		if (ret <= 0)
-			die("No probe point found.\n");
+		if (ret < 0) {
+			if (session.need_dwarf)
+				die("Could not analyze debuginfo.");
+
+			pr_warning("An error occurred in debuginfo analysis. Try to use symbols.\n");
+			break;
+		}
+		if (ret == 0)	/* No error but failed to find probe point. */
+			die("No probe point found.");
 	}
 	close(fd);
 
-setup_probes:
+end_dwarf:
 #endif /* !NO_LIBDWARF */
+
+	/* Synthesize probes without dwarf */
+	for (j = 0; j < session.nr_probe; j++) {
+		pp = &session.probes[j];
+		if (pp->found)	/* This probe is already found. */
+			continue;
+
+		ret = synthesize_probe_event(pp);
+		if (ret == -E2BIG)
+			semantic_error("probe point is too long.");
+		else if (ret < 0)
+			die("Failed to synthesize a probe point.");
+	}
 
 	/* Settng up probe points */
 	snprintf(buf, MAX_CMDLEN, "%s/../kprobe_events", debugfs_path);
 	fd = open(buf, O_WRONLY, O_APPEND);
-	if (fd < 0)
-		die("kprobe_events open");
+	if (fd < 0) {
+		if (errno == ENOENT)
+			die("kprobe_events file does not exist - please rebuild with CONFIG_KPROBE_TRACER.");
+		else
+			die("Could not open kprobe_events file: %s",
+			    strerror(errno));
+	}
 	for (j = 0; j < session.nr_probe; j++) {
 		pp = &session.probes[j];
 		if (pp->found == 1) {
