@@ -18,6 +18,7 @@
 #include <linux/delay.h>
 #include <linux/usb/r8a66597.h>
 #include <linux/i2c.h>
+#include <linux/i2c/tsc2007.h>
 #include <linux/input.h>
 #include <video/sh_mobile_lcdc.h>
 #include <media/sh_mobile_ceu.h>
@@ -25,6 +26,7 @@
 #include <asm/sh_eth.h>
 #include <asm/sh_keysc.h>
 #include <asm/clock.h>
+#include <asm/suspend.h>
 #include <cpu/sh7724.h>
 
 /*
@@ -36,6 +38,20 @@
  *  0x0400_0000  Internal I/O     16/32bit
  *  0x0800_0000  DRAM             32bit
  *  0x1800_0000  MFI              16bit
+ */
+
+/* SWITCH
+ *------------------------------
+ * DS2[1] = FlashROM write protect  ON     : write protect
+ *                                  OFF    : No write protect
+ * DS2[2] = RMII / TS, SCIF         ON     : RMII
+ *                                  OFF    : TS, SCIF3
+ * DS2[3] = Camera / Video          ON     : Camera
+ *                                  OFF    : NTSC/PAL (IN)
+ * DS2[5] = NTSC_OUT Clock          ON     : On board OSC
+ *                                  OFF    : SH7724 DV_CLK
+ * DS2[6-7] = MMC / SD              ON-OFF : SD
+ *                                  OFF-ON : MMC
  */
 
 /* Heartbeat */
@@ -70,7 +86,7 @@ static struct mtd_partition nor_flash_partitions[] = {
 		.name = "boot loader",
 		.offset = 0,
 		.size = (5 * 1024 * 1024),
-		.mask_flags = MTD_CAP_ROM,
+		.mask_flags = MTD_WRITEABLE,  /* force read-only */
 	}, {
 		.name = "free-area",
 		.offset = MTDPART_OFS_APPEND,
@@ -367,6 +383,43 @@ static struct platform_device keysc_device = {
 	},
 };
 
+/* TouchScreen */
+#define IRQ0 32
+static int ts_get_pendown_state(void)
+{
+	int val = 0;
+	gpio_free(GPIO_FN_INTC_IRQ0);
+	gpio_request(GPIO_PTZ0, NULL);
+	gpio_direction_input(GPIO_PTZ0);
+
+	val = gpio_get_value(GPIO_PTZ0);
+
+	gpio_free(GPIO_PTZ0);
+	gpio_request(GPIO_FN_INTC_IRQ0, NULL);
+
+	return val ? 0 : 1;
+}
+
+static int ts_init(void)
+{
+	gpio_request(GPIO_FN_INTC_IRQ0, NULL);
+	return 0;
+}
+
+struct tsc2007_platform_data tsc2007_info = {
+	.model			= 2007,
+	.x_plate_ohms		= 180,
+	.get_pendown_state	= ts_get_pendown_state,
+	.init_platform_hw	= ts_init,
+};
+
+static struct i2c_board_info ts_i2c_clients = {
+	I2C_BOARD_INFO("tsc2007", 0x48),
+	.type		= "tsc2007",
+	.platform_data	= &tsc2007_info,
+	.irq		= IRQ0,
+};
+
 /* SHDI0 */
 static struct resource sdhi0_resources[] = {
 	[0] = {
@@ -474,8 +527,26 @@ static void __init sh_eth_init(struct sh_eth_plat_data *pd)
 
 #define PORT_HIZA 0xA4050158
 #define IODRIVEA  0xA405018A
+
+extern char ecovec24_sdram_enter_start;
+extern char ecovec24_sdram_enter_end;
+extern char ecovec24_sdram_leave_start;
+extern char ecovec24_sdram_leave_end;
+
 static int __init arch_setup(void)
 {
+	/* register board specific self-refresh code */
+	sh_mobile_register_self_refresh(SUSP_SH_STANDBY | SUSP_SH_SF,
+					&ecovec24_sdram_enter_start,
+					&ecovec24_sdram_enter_end,
+					&ecovec24_sdram_leave_start,
+					&ecovec24_sdram_leave_end);
+
+	/* enable STATUS0, STATUS2 and PDSTATUS */
+	gpio_request(GPIO_FN_STATUS0, NULL);
+	gpio_request(GPIO_FN_STATUS2, NULL);
+	gpio_request(GPIO_FN_PDSTATUS, NULL);
+
 	/* enable SCIFA0 */
 	gpio_request(GPIO_FN_SCIF0_TXD, NULL);
 	gpio_request(GPIO_FN_SCIF0_RXD, NULL);
@@ -614,6 +685,10 @@ static int __init arch_setup(void)
 		 */
 		gpio_request(GPIO_PTF4, NULL);
 		gpio_direction_output(GPIO_PTF4, 1);
+
+		/* enable TouchScreen */
+		i2c_register_board_info(0, &ts_i2c_clients, 1);
+		set_irq_type(IRQ0, IRQ_TYPE_LEVEL_LOW);
 	}
 
 	/* enable CEU0 */
@@ -716,7 +791,6 @@ static int __init devices_setup(void)
 	return 0;
 }
 device_initcall(devices_setup);
-
 
 static struct sh_machine_vector mv_ecovec __initmv = {
 	.mv_name	= "R0P7724 (EcoVec)",
