@@ -218,12 +218,15 @@ static void fw_fill_request(struct fw_packet *packet, int tcode, int tlabel,
 		packet->header_length = 16;
 		packet->payload_length = 0;
 		break;
+
+	default:
+		WARN(1, KERN_ERR "wrong tcode %d", tcode);
 	}
  common:
 	packet->speed = speed;
 	packet->generation = generation;
 	packet->ack = 0;
-	packet->payload_bus = 0;
+	packet->payload_mapped = false;
 }
 
 /**
@@ -595,11 +598,10 @@ void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		break;
 
 	default:
-		BUG();
-		return;
+		WARN(1, KERN_ERR "wrong tcode %d", tcode);
 	}
 
-	response->payload_bus = 0;
+	response->payload_mapped = false;
 }
 EXPORT_SYMBOL(fw_fill_response);
 
