@@ -586,10 +586,6 @@ struct rq {
 	u64 avg_idle;
 #endif
 
-#ifdef CONFIG_IRQ_TIME_ACCOUNTING
-	u64 prev_irq_time;
-#endif
-
 	/* calc_load related fields */
 	unsigned long calc_load_update;
 	long calc_load_active;
@@ -2516,13 +2512,17 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	spin_lock(&rq->lock);
 	update_rq_clock(rq);
 
-	/*
-	 * We migrated the task without holding either rq->lock, however
-	 * since the task is not on the task list itself, nobody else
-	 * will try and migrate the task, hence the rq should match the
-	 * cpu we just moved it to.
-	 */
-	WARN_ON(task_cpu(p) != cpu);
+	if (rq->idle_stamp) {
+		u64 delta = rq->clock - rq->idle_stamp;
+		u64 max = 2*sysctl_sched_migration_cost;
+
+		if (delta > max)
+			rq->avg_idle = max;
+		else
+			update_avg(&rq->avg_idle, delta);
+		rq->idle_stamp = 0;
+	}
+
 	WARN_ON(p->state != TASK_WAKING);
 
 #ifdef CONFIG_SCHEDSTATS
