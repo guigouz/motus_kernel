@@ -463,10 +463,34 @@ static struct resource sdhi0_cn7_resources[] = {
 
 static struct platform_device sdhi0_cn7_device = {
 	.name           = "sh_mobile_sdhi",
+	.id		= 0,
 	.num_resources  = ARRAY_SIZE(sdhi0_cn7_resources),
 	.resource       = sdhi0_cn7_resources,
 	.archdata = {
 		.hwblk_id = HWBLK_SDHI0,
+	},
+};
+
+static struct resource sdhi1_cn8_resources[] = {
+	[0] = {
+		.name	= "SDHI1",
+		.start  = 0x04cf0000,
+		.end    = 0x04cf01ff,
+		.flags  = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 24,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device sdhi1_cn8_device = {
+	.name           = "sh_mobile_sdhi",
+	.id		= 1,
+	.num_resources  = ARRAY_SIZE(sdhi1_cn8_resources),
+	.resource       = sdhi1_cn8_resources,
+	.archdata = {
+		.hwblk_id = HWBLK_SDHI1,
 	},
 };
 
@@ -483,6 +507,7 @@ static struct platform_device *ms7724se_devices[] __initdata = {
 	&sh7724_usb1_gadget_device,
 	&fsi_device,
 	&sdhi0_cn7_device,
+	&sdhi1_cn8_device,
 };
 
 #define EEPROM_OP   0xBA206000
@@ -507,7 +532,7 @@ static int __init sh_eth_is_eeprom_ready(void)
 static void __init sh_eth_init(void)
 {
 	int i;
-	u16 mac[3];
+	u16 mac;
 
 	/* check EEPROM status */
 	if (!sh_eth_is_eeprom_ready())
@@ -521,16 +546,10 @@ static void __init sh_eth_init(void)
 		if (!sh_eth_is_eeprom_ready())
 			return;
 
-		mac[i] = ctrl_inw(EEPROM_DATA);
-		mac[i] = ((mac[i] & 0xFF) << 8) | (mac[i] >> 8); /* swap */
+		mac = ctrl_inw(EEPROM_DATA);
+		sh_eth_plat.mac_addr[i << 1] = mac & 0xff;
+		sh_eth_plat.mac_addr[(i << 1) + 1] = mac >> 8;
 	}
-
-	/* reset sh-eth */
-	ctrl_outl(0x1, SH_ETH_ADDR + 0x0);
-
-	/* set MAC addr */
-	ctrl_outl(((mac[0] << 16) | (mac[1])), SH_ETH_MAHR);
-	ctrl_outl((mac[2]), SH_ETH_MALR);
 }
 
 #define SW4140    0xBA201000
@@ -730,6 +749,16 @@ static int __init devices_setup(void)
 	gpio_request(GPIO_FN_SDHI0D0, NULL);
 	gpio_request(GPIO_FN_SDHI0CMD, NULL);
 	gpio_request(GPIO_FN_SDHI0CLK, NULL);
+
+	/* SDHI1 connected to cn8 */
+	gpio_request(GPIO_FN_SDHI1CD, NULL);
+	gpio_request(GPIO_FN_SDHI1WP, NULL);
+	gpio_request(GPIO_FN_SDHI1D3, NULL);
+	gpio_request(GPIO_FN_SDHI1D2, NULL);
+	gpio_request(GPIO_FN_SDHI1D1, NULL);
+	gpio_request(GPIO_FN_SDHI1D0, NULL);
+	gpio_request(GPIO_FN_SDHI1CMD, NULL);
+	gpio_request(GPIO_FN_SDHI1CLK, NULL);
 
 	/*
 	 * enable SH-Eth
