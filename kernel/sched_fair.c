@@ -1520,6 +1520,8 @@ select_task_rq_fair(struct rq *rq, struct task_struct *p, int sd_flag, int wake_
 
 				if (candidate == -1 || candidate == cpu) {
 					for_each_cpu(i, sched_domain_span(tmp)) {
+						if (!cpumask_test_cpu(i, &p->cpus_allowed))
+							continue;
 						if (!cpu_rq(i)->cfs.nr_running) {
 							candidate = i;
 							break;
