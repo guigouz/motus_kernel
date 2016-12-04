@@ -20,14 +20,26 @@ static int strcommon(const char *pathname, char *cwd, int cwdlen)
 	return n;
 }
 
-struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen,
-		     unsigned int sym_priv_size)
+void map__init(struct map *self, u64 start, u64 end, u64 pgoff,
+	       struct dso *dso)
+{
+	self->start    = start;
+	self->end      = end;
+	self->pgoff    = pgoff;
+	self->dso      = dso;
+	self->map_ip   = map__map_ip;
+	self->unmap_ip = map__unmap_ip;
+	RB_CLEAR_NODE(&self->rb_node);
+}
+
+struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen)
 {
 	struct map *self = malloc(sizeof(*self));
 
 	if (self != NULL) {
 		const char *filename = event->filename;
 		char newfilename[PATH_MAX];
+		struct dso *dso;
 		int anon;
 
 		if (cwd) {
@@ -47,26 +59,23 @@ struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen,
 			filename = newfilename;
 		}
 
-		self->start = event->start;
-		self->end   = event->start + event->len;
-		self->pgoff = event->pgoff;
-
-		self->dso = dsos__findnew(filename, sym_priv_size);
-		if (self->dso == NULL)
+		dso = dsos__findnew(filename);
+		if (dso == NULL)
 			goto out_delete;
+
+		map__init(self, event->start, event->start + event->len,
+			  event->pgoff, dso);
 
 		if (self->dso == vdso || anon)
 			self->map_ip = self->unmap_ip = identity__map_ip;
-		else {
-			self->map_ip = map__map_ip;
-			self->unmap_ip = map__unmap_ip;
-		}
 	}
 	return self;
 out_delete:
 	free(self);
 	return NULL;
 }
+
+#define DSO__DELETED "(deleted)"
 
 struct symbol *
 map__find_symbol(struct map *self, u64 ip, symbol_filter_t filter)
@@ -79,8 +88,17 @@ map__find_symbol(struct map *self, u64 ip, symbol_filter_t filter)
 				   self->dso->long_name);
 			return NULL;
 		} else if (nr == 0) {
-			pr_warning("No symbols found in %s, maybe install a debug package?\n",
-				   self->dso->long_name);
+			const char *name = self->dso->long_name;
+			const size_t len = strlen(name);
+			const size_t real_len = len - sizeof(DSO__DELETED);
+
+			if (len > sizeof(DSO__DELETED) &&
+			    strcmp(name + real_len + 1, DSO__DELETED) == 0) {
+				pr_warning("%.*s was updated, restart the long running apps that use it!\n",
+					   (int)real_len, name);
+			} else {
+				pr_warning("no symbols found in %s, maybe install a debug package?\n", name);
+			}
 			return NULL;
 		}
 	}

@@ -1680,6 +1680,13 @@ static void ql_process_mac_rx_intr(struct ql_adapter *qdev,
 		return;
 	}
 
+	/* loopback self test for ethtool */
+	if (test_bit(QL_SELFTEST, &qdev->flags)) {
+		ql_check_lb_frame(qdev, skb);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
 	prefetch(skb->data);
 	skb->dev = ndev;
 	if (ib_mac_rsp->flags1 & IB_MAC_IOCB_RSP_M_MASK) {
@@ -1978,7 +1985,7 @@ static int ql_napi_poll_msix(struct napi_struct *napi, int budget)
 	return work_done;
 }
 
-static void ql_vlan_rx_register(struct net_device *ndev, struct vlan_group *grp)
+static void qlge_vlan_rx_register(struct net_device *ndev, struct vlan_group *grp)
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
 
@@ -1994,7 +2001,7 @@ static void ql_vlan_rx_register(struct net_device *ndev, struct vlan_group *grp)
 	}
 }
 
-static void ql_vlan_rx_add_vid(struct net_device *ndev, u16 vid)
+static void qlge_vlan_rx_add_vid(struct net_device *ndev, u16 vid)
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
 	u32 enable_bit = MAC_ADDR_E;
@@ -2010,7 +2017,7 @@ static void ql_vlan_rx_add_vid(struct net_device *ndev, u16 vid)
 	ql_sem_unlock(qdev, SEM_MAC_ADDR_MASK);
 }
 
-static void ql_vlan_rx_kill_vid(struct net_device *ndev, u16 vid)
+static void qlge_vlan_rx_kill_vid(struct net_device *ndev, u16 vid)
 {
 	struct ql_adapter *qdev = netdev_priv(ndev);
 	u32 enable_bit = 0;
@@ -2247,6 +2254,7 @@ static netdev_tx_t qlge_send(struct sk_buff *skb, struct net_device *ndev)
 	atomic_dec(&tx_ring->tx_count);
 	return NETDEV_TX_OK;
 }
+
 
 static void ql_free_shadow_space(struct ql_adapter *qdev)
 {
@@ -4173,7 +4181,6 @@ err_out:
 	return err;
 }
 
-
 static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_open		= qlge_open,
 	.ndo_stop		= qlge_close,
@@ -4184,9 +4191,9 @@ static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_set_mac_address	= qlge_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_tx_timeout		= qlge_tx_timeout,
-	.ndo_vlan_rx_register	= ql_vlan_rx_register,
-	.ndo_vlan_rx_add_vid	= ql_vlan_rx_add_vid,
-	.ndo_vlan_rx_kill_vid	= ql_vlan_rx_kill_vid,
+	.ndo_vlan_rx_register	= qlge_vlan_rx_register,
+	.ndo_vlan_rx_add_vid	= qlge_vlan_rx_add_vid,
+	.ndo_vlan_rx_kill_vid	= qlge_vlan_rx_kill_vid,
 };
 
 static int __devinit qlge_probe(struct pci_dev *pdev,
@@ -4242,8 +4249,19 @@ static int __devinit qlge_probe(struct pci_dev *pdev,
 	}
 	ql_link_off(qdev);
 	ql_display_dev_info(ndev);
+	atomic_set(&qdev->lb_count, 0);
 	cards_found++;
 	return 0;
+}
+
+netdev_tx_t ql_lb_send(struct sk_buff *skb, struct net_device *ndev)
+{
+	return qlge_send(skb, ndev);
+}
+
+int ql_clean_lb_rx_ring(struct rx_ring *rx_ring, int budget)
+{
+	return ql_clean_inbound_rx_ring(rx_ring, budget);
 }
 
 static void __devexit qlge_remove(struct pci_dev *pdev)

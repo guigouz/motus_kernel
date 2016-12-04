@@ -331,6 +331,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		if (addr_type != IPV6_ADDR_ANY) {
 			struct net_device *dev = NULL;
 
+			rcu_read_lock();
 			if (addr_type & IPV6_ADDR_LINKLOCAL) {
 				if (addr_len >= sizeof(struct sockaddr_in6) &&
 				    addr->sin6_scope_id) {
@@ -343,12 +344,12 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 				/* Binding to link-local address requires an interface */
 				if (!sk->sk_bound_dev_if) {
 					err = -EINVAL;
-					goto out;
+					goto out_unlock;
 				}
-				dev = dev_get_by_index(net, sk->sk_bound_dev_if);
+				dev = dev_get_by_index_rcu(net, sk->sk_bound_dev_if);
 				if (!dev) {
 					err = -ENODEV;
-					goto out;
+					goto out_unlock;
 				}
 			}
 
@@ -359,14 +360,11 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 			if (!(addr_type & IPV6_ADDR_MULTICAST))	{
 				if (!ipv6_chk_addr(net, &addr->sin6_addr,
 						   dev, 0)) {
-					if (dev)
-						dev_put(dev);
 					err = -EADDRNOTAVAIL;
-					goto out;
+					goto out_unlock;
 				}
 			}
-			if (dev)
-				dev_put(dev);
+			rcu_read_unlock();
 		}
 	}
 
@@ -398,6 +396,9 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 out:
 	release_sock(sk);
 	return err;
+out_unlock:
+	rcu_read_unlock();
+	goto out;
 }
 
 EXPORT_SYMBOL(inet6_bind);

@@ -277,17 +277,18 @@ static inline pgprot_t static_protections(pgprot_t prot, unsigned long address,
 		   __pa((unsigned long)__end_rodata) >> PAGE_SHIFT))
 		pgprot_val(forbidden) |= _PAGE_RW;
 
-#if defined(CONFIG_X86_64) && defined(CONFIG_DEBUG_RODATA) && \
-	!defined(CONFIG_DYNAMIC_FTRACE)
+#if defined(CONFIG_X86_64) && defined(CONFIG_DEBUG_RODATA)
 	/*
-	 * Kernel text mappings for the large page aligned .rodata section
-	 * will be read-only. For the kernel identity mappings covering
-	 * the holes caused by this alignment can be anything.
+	 * Once the kernel maps the text as RO (kernel_set_to_readonly is set),
+	 * kernel text mappings for the large page aligned text, rodata sections
+	 * will be always read-only. For the kernel identity mappings covering
+	 * the holes caused by this alignment can be anything that user asks.
 	 *
 	 * This will preserve the large page mappings for kernel text/data
 	 * at no extra cost.
 	 */
-	if (within(address, (unsigned long)_text,
+	if (kernel_set_to_readonly &&
+	    within(address, (unsigned long)_text,
 		   (unsigned long)__end_rodata_hpage_align))
 		pgprot_val(forbidden) |= _PAGE_RW;
 #endif
