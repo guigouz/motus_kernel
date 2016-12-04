@@ -168,14 +168,6 @@ static inline void ignore_cstruct_param(struct cardstate *cs, _cstruct param,
 			 msgname, paramname);
 }
 
-static inline void ignore_cmstruct_param(struct cardstate *cs, _cmstruct param,
-				       char *msgname, char *paramname)
-{
-	if (param != CAPI_DEFAULT)
-		dev_warn(cs->dev, "%s: ignoring unsupported parameter: %s\n",
-			 msgname, paramname);
-}
-
 /*
  * check for legal hex digit
  */
@@ -370,6 +362,7 @@ void gigaset_skb_sent(struct bc_state *bcs, struct sk_buff *dskb)
 	struct cardstate *cs = bcs->cs;
 	struct gigaset_capi_ctr *iif = cs->iif;
 	struct gigaset_capi_appl *ap = bcs->ap;
+	unsigned char *req = skb_mac_header(dskb);
 	struct sk_buff *cskb;
 	u16 flags;
 
@@ -388,7 +381,7 @@ void gigaset_skb_sent(struct bc_state *bcs, struct sk_buff *dskb)
 	}
 
 	/* ToDo: honor unset "delivery confirmation" bit */
-	flags = CAPIMSG_FLAGS(dskb->head);
+	flags = CAPIMSG_FLAGS(req);
 
 	/* build DATA_B3_CONF message */
 	cskb = alloc_skb(CAPI_DATA_B3_CONF_LEN, GFP_ATOMIC);
@@ -401,11 +394,11 @@ void gigaset_skb_sent(struct bc_state *bcs, struct sk_buff *dskb)
 	CAPIMSG_SETAPPID(cskb->data, ap->id);
 	CAPIMSG_SETCOMMAND(cskb->data, CAPI_DATA_B3);
 	CAPIMSG_SETSUBCOMMAND(cskb->data,  CAPI_CONF);
-	CAPIMSG_SETMSGID(cskb->data, CAPIMSG_MSGID(dskb->head));
+	CAPIMSG_SETMSGID(cskb->data, CAPIMSG_MSGID(req));
 	CAPIMSG_SETCONTROLLER(cskb->data, iif->ctr.cnr);
 	CAPIMSG_SETPLCI_PART(cskb->data, bcs->channel + 1);
 	CAPIMSG_SETNCCI_PART(cskb->data, 1);
-	CAPIMSG_SETHANDLE_CONF(cskb->data, CAPIMSG_HANDLE_REQ(dskb->head));
+	CAPIMSG_SETHANDLE_CONF(cskb->data, CAPIMSG_HANDLE_REQ(req));
 	if (flags & ~CAPI_FLAGS_DELIVERY_CONFIRMATION)
 		CAPIMSG_SETINFO_CONF(cskb->data,
 				     CapiFlagsNotSupportedByProtocol);
@@ -445,7 +438,7 @@ void gigaset_skb_rcvd(struct bc_state *bcs, struct sk_buff *skb)
 	/* don't send further B3 messages if disconnected */
 	if (ap->connected < APCONN_ACTIVE) {
 		gig_dbg(DEBUG_LLDATA, "disconnected, discarding data");
-		dev_kfree_skb(skb);
+		dev_kfree_skb_any(skb);
 		return;
 	}
 
@@ -1062,6 +1055,7 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 			    struct sk_buff *skb)
 {
 	struct cardstate *cs = iif->ctr.driverdata;
+	_cmsg *cmsg = &iif->acmsg;
 	struct sk_buff *cskb;
 	u8 *pparam;
 	unsigned int msgsize = CAPI_FACILITY_CONF_BASELEN;
@@ -1069,14 +1063,14 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 	static u8 confparam[10];	/* max. 9 octets + length byte */
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/*
 	 * Facility Request Parameter is not decoded by capi_message2cmsg()
 	 * encoding depends on Facility Selector
 	 */
-	switch (iif->acmsg.FacilitySelector) {
+	switch (cmsg->FacilitySelector) {
 	case CAPI_FACILITY_DTMF:	/* ToDo */
 		info = CapiFacilityNotSupported;
 		confparam[0] = 2;	/* length */
@@ -1093,7 +1087,7 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 
 	case CAPI_FACILITY_SUPPSVC:
 		/* decode Function parameter */
-		pparam = iif->acmsg.FacilityRequestParameter;
+		pparam = cmsg->FacilityRequestParameter;
 		if (pparam == NULL || *pparam < 2) {
 			dev_notice(cs->dev, "%s: %s missing\n", "FACILITY_REQ",
 				   "Facility Request Parameter");
@@ -1141,18 +1135,18 @@ static void do_facility_req(struct gigaset_capi_ctr *iif,
 	}
 
 	/* send FACILITY_CONF with given Info and confirmation parameter */
-	capi_cmsg_answer(&iif->acmsg);
-	iif->acmsg.Info = info;
-	iif->acmsg.FacilityConfirmationParameter = confparam;
+	capi_cmsg_answer(cmsg);
+	cmsg->Info = info;
+	cmsg->FacilityConfirmationParameter = confparam;
 	msgsize += confparam[0];	/* length */
 	cskb = alloc_skb(msgsize, GFP_ATOMIC);
 	if (!cskb) {
 		dev_err(cs->dev, "%s: out of memory\n", __func__);
 		return;
 	}
-	capi_cmsg2message(&iif->acmsg, __skb_put(cskb, msgsize));
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
-		capi_ctr_handle_message(&iif->ctr, ap->id, cskb);
+	capi_cmsg2message(cmsg, __skb_put(cskb, msgsize));
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
+	capi_ctr_handle_message(&iif->ctr, ap->id, cskb);
 }
 
 
@@ -1207,8 +1201,8 @@ static void do_connect_req(struct gigaset_capi_ctr *iif,
 	u16 info;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/* get free B channel & construct PLCI */
 	bcs = gigaset_get_free_channel(cs);
@@ -1261,7 +1255,7 @@ static void do_connect_req(struct gigaset_capi_ctr *iif,
 	commands[AT_DIAL] = kmalloc(l+3, GFP_KERNEL);
 	if (!commands[AT_DIAL])
 		goto oom;
-	snprintf(commands[AT_DIAL], l+3, "D%*s\r", l, pp);
+	snprintf(commands[AT_DIAL], l+3, "D%.*s\r", l, pp);
 
 	/* encode parameter: Calling party number */
 	pp = cmsg->CallingPartyNumber;
@@ -1411,8 +1405,16 @@ static void do_connect_req(struct gigaset_capi_ctr *iif,
 					"CONNECT_REQ", "Calling pty subaddr");
 	ignore_cstruct_param(cs, cmsg->LLC,
 					"CONNECT_REQ", "LLC");
-	ignore_cmstruct_param(cs, cmsg->AdditionalInfo,
-					"CONNECT_REQ", "Additional Info");
+	if (cmsg->AdditionalInfo != CAPI_DEFAULT) {
+		ignore_cstruct_param(cs, cmsg->BChannelinformation,
+					"CONNECT_REQ", "B Channel Information");
+		ignore_cstruct_param(cs, cmsg->Keypadfacility,
+					"CONNECT_REQ", "Keypad Facility");
+		ignore_cstruct_param(cs, cmsg->Useruserdata,
+					"CONNECT_REQ", "User-User Data");
+		ignore_cstruct_param(cs, cmsg->Facilitydataarray,
+					"CONNECT_REQ", "Facility Data Array");
+	}
 
 	/* encode parameter: B channel to use */
 	commands[AT_ISO] = kmalloc(9, GFP_KERNEL);
@@ -1458,9 +1460,9 @@ static void do_connect_resp(struct gigaset_capi_ctr *iif,
 	int channel;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
-	dev_kfree_skb(skb);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
+	dev_kfree_skb_any(skb);
 
 	/* extract and check channel number from PLCI */
 	channel = (cmsg->adr.adrPLCI >> 8) & 0xff;
@@ -1524,8 +1526,16 @@ static void do_connect_resp(struct gigaset_capi_ctr *iif,
 					"CONNECT_RESP", "Connected Subaddress");
 		ignore_cstruct_param(cs, cmsg->LLC,
 					"CONNECT_RESP", "LLC");
-		ignore_cmstruct_param(cs, cmsg->AdditionalInfo,
-					"CONNECT_RESP", "Additional Info");
+		if (cmsg->AdditionalInfo != CAPI_DEFAULT) {
+			ignore_cstruct_param(cs, cmsg->BChannelinformation,
+					"CONNECT_RESP", "BChannel Information");
+			ignore_cstruct_param(cs, cmsg->Keypadfacility,
+					"CONNECT_RESP", "Keypad Facility");
+			ignore_cstruct_param(cs, cmsg->Useruserdata,
+					"CONNECT_RESP", "User-User Data");
+			ignore_cstruct_param(cs, cmsg->Facilitydataarray,
+					"CONNECT_RESP", "Facility Data Array");
+		}
 
 		/* Accept call */
 		if (!gigaset_add_event(cs, &cs->bcs[channel-1].at_state,
@@ -1587,17 +1597,18 @@ static void do_connect_b3_req(struct gigaset_capi_ctr *iif,
 			      struct sk_buff *skb)
 {
 	struct cardstate *cs = iif->ctr.driverdata;
+	_cmsg *cmsg = &iif->acmsg;
 	int channel;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/* extract and check channel number from PLCI */
-	channel = (iif->acmsg.adr.adrPLCI >> 8) & 0xff;
+	channel = (cmsg->adr.adrPLCI >> 8) & 0xff;
 	if (!channel || channel > cs->channels) {
 		dev_notice(cs->dev, "%s: invalid %s 0x%02x\n",
-			   "CONNECT_B3_REQ", "PLCI", iif->acmsg.adr.adrPLCI);
+			   "CONNECT_B3_REQ", "PLCI", cmsg->adr.adrPLCI);
 		send_conf(iif, ap, skb, CapiIllContrPlciNcci);
 		return;
 	}
@@ -1606,14 +1617,12 @@ static void do_connect_b3_req(struct gigaset_capi_ctr *iif,
 	ap->connected = APCONN_ACTIVE;
 
 	/* build NCCI: always 1 (one B3 connection only) */
-	iif->acmsg.adr.adrNCCI |= 1 << 16;
+	cmsg->adr.adrNCCI |= 1 << 16;
 
 	/* NCPI parameter: not applicable for B3 Transparent */
-	ignore_cstruct_param(cs, iif->acmsg.NCPI,
-				"CONNECT_B3_REQ", "NCPI");
-	send_conf(iif, ap, skb,
-		  (iif->acmsg.NCPI && iif->acmsg.NCPI[0]) ?
-			CapiNcpiNotSupportedByProtocol : CapiSuccess);
+	ignore_cstruct_param(cs, cmsg->NCPI, "CONNECT_B3_REQ", "NCPI");
+	send_conf(iif, ap, skb, (cmsg->NCPI && cmsg->NCPI[0]) ?
+				CapiNcpiNotSupportedByProtocol : CapiSuccess);
 }
 
 /*
@@ -1628,27 +1637,28 @@ static void do_connect_b3_resp(struct gigaset_capi_ctr *iif,
 			       struct sk_buff *skb)
 {
 	struct cardstate *cs = iif->ctr.driverdata;
-	struct bc_state *bcs = NULL;
+	_cmsg *cmsg = &iif->acmsg;
+	struct bc_state *bcs;
 	int channel;
 	unsigned int msgsize;
 	u8 command;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/* extract and check channel number and NCCI */
-	channel = (iif->acmsg.adr.adrNCCI >> 8) & 0xff;
+	channel = (cmsg->adr.adrNCCI >> 8) & 0xff;
 	if (!channel || channel > cs->channels ||
-	    ((iif->acmsg.adr.adrNCCI >> 16) & 0xffff) != 1) {
+	    ((cmsg->adr.adrNCCI >> 16) & 0xffff) != 1) {
 		dev_notice(cs->dev, "%s: invalid %s 0x%02x\n",
-			   "CONNECT_B3_RESP", "NCCI", iif->acmsg.adr.adrNCCI);
-		dev_kfree_skb(skb);
+			   "CONNECT_B3_RESP", "NCCI", cmsg->adr.adrNCCI);
+		dev_kfree_skb_any(skb);
 		return;
 	}
 	bcs = &cs->bcs[channel-1];
 
-	if (iif->acmsg.Reject) {
+	if (cmsg->Reject) {
 		/* Reject: clear B3 connect received flag */
 		ap->connected = APCONN_SETUP;
 
@@ -1656,7 +1666,7 @@ static void do_connect_b3_resp(struct gigaset_capi_ctr *iif,
 		if (!gigaset_add_event(cs, &bcs->at_state,
 				       EV_HUP, NULL, 0, NULL)) {
 			dev_err(cs->dev, "%s: out of memory\n", __func__);
-			dev_kfree_skb(skb);
+			dev_kfree_skb_any(skb);
 			return;
 		}
 		gig_dbg(DEBUG_CMD, "scheduling HUP");
@@ -1673,11 +1683,11 @@ static void do_connect_b3_resp(struct gigaset_capi_ctr *iif,
 		command = CAPI_CONNECT_B3_ACTIVE;
 		msgsize = CAPI_CONNECT_B3_ACTIVE_IND_BASELEN;
 	}
-	capi_cmsg_header(&iif->acmsg, ap->id, command, CAPI_IND,
-			 ap->nextMessageNumber++, iif->acmsg.adr.adrNCCI);
+	capi_cmsg_header(cmsg, ap->id, command, CAPI_IND,
+			 ap->nextMessageNumber++, cmsg->adr.adrNCCI);
 	__skb_trim(skb, msgsize);
-	capi_cmsg2message(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_cmsg2message(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 	capi_ctr_handle_message(&iif->ctr, ap->id, skb);
 }
 
@@ -1691,28 +1701,37 @@ static void do_disconnect_req(struct gigaset_capi_ctr *iif,
 			      struct sk_buff *skb)
 {
 	struct cardstate *cs = iif->ctr.driverdata;
+	_cmsg *cmsg = &iif->acmsg;
 	struct bc_state *bcs;
 	_cmsg *b3cmsg;
 	struct sk_buff *b3skb;
 	int channel;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/* extract and check channel number from PLCI */
-	channel = (iif->acmsg.adr.adrPLCI >> 8) & 0xff;
+	channel = (cmsg->adr.adrPLCI >> 8) & 0xff;
 	if (!channel || channel > cs->channels) {
 		dev_notice(cs->dev, "%s: invalid %s 0x%02x\n",
-			   "DISCONNECT_REQ", "PLCI", iif->acmsg.adr.adrPLCI);
+			   "DISCONNECT_REQ", "PLCI", cmsg->adr.adrPLCI);
 		send_conf(iif, ap, skb, CapiIllContrPlciNcci);
 		return;
 	}
 	bcs = cs->bcs + channel - 1;
 
 	/* ToDo: process parameter: Additional info */
-	ignore_cmstruct_param(cs, iif->acmsg.AdditionalInfo,
-			      "DISCONNECT_REQ", "Additional Info");
+	if (cmsg->AdditionalInfo != CAPI_DEFAULT) {
+		ignore_cstruct_param(cs, cmsg->BChannelinformation,
+				     "DISCONNECT_REQ", "B Channel Information");
+		ignore_cstruct_param(cs, cmsg->Keypadfacility,
+				     "DISCONNECT_REQ", "Keypad Facility");
+		ignore_cstruct_param(cs, cmsg->Useruserdata,
+				     "DISCONNECT_REQ", "User-User Data");
+		ignore_cstruct_param(cs, cmsg->Facilitydataarray,
+				     "DISCONNECT_REQ", "Facility Data Array");
+	}
 
 	/* skip if DISCONNECT_IND already sent */
 	if (!ap->connected)
@@ -1733,7 +1752,7 @@ static void do_disconnect_req(struct gigaset_capi_ctr *iif,
 		}
 		capi_cmsg_header(b3cmsg, ap->id, CAPI_DISCONNECT_B3, CAPI_IND,
 				 ap->nextMessageNumber++,
-				 iif->acmsg.adr.adrPLCI | (1 << 16));
+				 cmsg->adr.adrPLCI | (1 << 16));
 		b3cmsg->Reason_B3 = CapiProtocolErrorLayer1;
 		b3skb = alloc_skb(CAPI_DISCONNECT_B3_IND_BASELEN, GFP_KERNEL);
 		if (b3skb == NULL) {
@@ -1769,18 +1788,19 @@ static void do_disconnect_b3_req(struct gigaset_capi_ctr *iif,
 				 struct sk_buff *skb)
 {
 	struct cardstate *cs = iif->ctr.driverdata;
+	_cmsg *cmsg = &iif->acmsg;
 	int channel;
 
 	/* decode message */
-	capi_message2cmsg(&iif->acmsg, skb->data);
-	dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
+	capi_message2cmsg(cmsg, skb->data);
+	dump_cmsg(DEBUG_CMD, __func__, cmsg);
 
 	/* extract and check channel number and NCCI */
-	channel = (iif->acmsg.adr.adrNCCI >> 8) & 0xff;
+	channel = (cmsg->adr.adrNCCI >> 8) & 0xff;
 	if (!channel || channel > cs->channels ||
-	    ((iif->acmsg.adr.adrNCCI >> 16) & 0xffff) != 1) {
+	    ((cmsg->adr.adrNCCI >> 16) & 0xffff) != 1) {
 		dev_notice(cs->dev, "%s: invalid %s 0x%02x\n",
-			   "DISCONNECT_B3_REQ", "NCCI", iif->acmsg.adr.adrNCCI);
+			   "DISCONNECT_B3_REQ", "NCCI", cmsg->adr.adrNCCI);
 		send_conf(iif, ap, skb, CapiIllContrPlciNcci);
 		return;
 	}
@@ -1803,11 +1823,10 @@ static void do_disconnect_b3_req(struct gigaset_capi_ctr *iif,
 	gigaset_schedule_event(cs);
 
 	/* NCPI parameter: not applicable for B3 Transparent */
-	ignore_cstruct_param(cs, iif->acmsg.NCPI,
+	ignore_cstruct_param(cs, cmsg->NCPI,
 				"DISCONNECT_B3_REQ", "NCPI");
-	send_conf(iif, ap, skb,
-		  (iif->acmsg.NCPI && iif->acmsg.NCPI[0]) ?
-			CapiNcpiNotSupportedByProtocol : CapiSuccess);
+	send_conf(iif, ap, skb, (cmsg->NCPI && cmsg->NCPI[0]) ?
+				CapiNcpiNotSupportedByProtocol : CapiSuccess);
 }
 
 /*
@@ -1862,12 +1881,12 @@ static void do_data_b3_req(struct gigaset_capi_ctr *iif,
 		return;
 	}
 
-	/*
-	 * pull CAPI message from skb,
-	 * pass payload data to device-specific module
-	 * CAPI message will be preserved in headroom
-	 */
+	/* pull CAPI message into link layer header */
+	skb_reset_mac_header(skb);
+	skb->mac_len = msglen;
 	skb_pull(skb, msglen);
+
+	/* pass to device-specific module */
 	if (cs->ops->send_skb(&cs->bcs[channel-1], skb) < 0) {
 		send_conf(iif, ap, skb, CAPI_MSGOSRESOURCEERR);
 		return;
@@ -1928,7 +1947,7 @@ static void do_nothing(struct gigaset_capi_ctr *iif,
 		capi_message2cmsg(&iif->acmsg, skb->data);
 		dump_cmsg(DEBUG_CMD, __func__, &iif->acmsg);
 	}
-	dev_kfree_skb(skb);
+	dev_kfree_skb_any(skb);
 }
 
 static void do_data_b3_resp(struct gigaset_capi_ctr *iif,
@@ -1936,7 +1955,7 @@ static void do_data_b3_resp(struct gigaset_capi_ctr *iif,
 			    struct sk_buff *skb)
 {
 	dump_rawmsg(DEBUG_LLDATA, __func__, skb->data);
-	dev_kfree_skb(skb);
+	dev_kfree_skb_any(skb);
 }
 
 /* table of outgoing CAPI message handlers with lookup function */

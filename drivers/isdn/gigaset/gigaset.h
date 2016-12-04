@@ -34,8 +34,8 @@
 #include <linux/list.h>
 #include <asm/atomic.h>
 
-#define GIG_VERSION {0,5,0,0}
-#define GIG_COMPAT  {0,4,0,0}
+#define GIG_VERSION {0, 5, 0, 0}
+#define GIG_COMPAT  {0, 4, 0, 0}
 
 #define MAX_REC_PARAMS 10	/* Max. number of params in response string */
 #define MAX_RESP_SIZE 512	/* Max. size of a response string */
@@ -133,35 +133,32 @@ void gigaset_dbg_buffer(enum debuglevel level, const unsigned char *msg,
 #define OUT_VENDOR_REQ	(USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_ENDPOINT)
 #define IN_VENDOR_REQ	(USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_ENDPOINT)
 
-/* int-in-events 3070 */
+/* interrupt pipe messages */
 #define HD_B1_FLOW_CONTROL		0x80
 #define HD_B2_FLOW_CONTROL		0x81
-#define HD_RECEIVEATDATA_ACK		(0x35)		// 3070
-						// att: HD_RECEIVE>>AT<<DATA_ACK
-#define HD_READY_SEND_ATDATA		(0x36)		// 3070
-#define HD_OPEN_ATCHANNEL_ACK		(0x37)		// 3070
-#define HD_CLOSE_ATCHANNEL_ACK		(0x38)		// 3070
-#define HD_DEVICE_INIT_OK		(0x11)		// ISurf USB + 3070
-#define HD_OPEN_B1CHANNEL_ACK		(0x51)		// ISurf USB + 3070
-#define HD_OPEN_B2CHANNEL_ACK		(0x52)		// ISurf USB + 3070
-#define HD_CLOSE_B1CHANNEL_ACK		(0x53)		// ISurf USB + 3070
-#define HD_CLOSE_B2CHANNEL_ACK		(0x54)		// ISurf USB + 3070
-// 	 Powermangment
-#define HD_SUSPEND_END			(0x61)		// ISurf USB
-//   Configuration
-#define HD_RESET_INTERRUPT_PIPE_ACK	(0xFF)		// ISurf USB + 3070
+#define HD_RECEIVEATDATA_ACK		(0x35)		/* 3070 */
+#define HD_READY_SEND_ATDATA		(0x36)		/* 3070 */
+#define HD_OPEN_ATCHANNEL_ACK		(0x37)		/* 3070 */
+#define HD_CLOSE_ATCHANNEL_ACK		(0x38)		/* 3070 */
+#define HD_DEVICE_INIT_OK		(0x11)		/* ISurf USB + 3070 */
+#define HD_OPEN_B1CHANNEL_ACK		(0x51)		/* ISurf USB + 3070 */
+#define HD_OPEN_B2CHANNEL_ACK		(0x52)		/* ISurf USB + 3070 */
+#define HD_CLOSE_B1CHANNEL_ACK		(0x53)		/* ISurf USB + 3070 */
+#define HD_CLOSE_B2CHANNEL_ACK		(0x54)		/* ISurf USB + 3070 */
+#define HD_SUSPEND_END			(0x61)		/* ISurf USB */
+#define HD_RESET_INTERRUPT_PIPE_ACK	(0xFF)		/* ISurf USB + 3070 */
 
-/* control requests 3070 */
-#define	HD_OPEN_B1CHANNEL		(0x23)		// ISurf USB + 3070
-#define	HD_CLOSE_B1CHANNEL		(0x24)		// ISurf USB + 3070
-#define	HD_OPEN_B2CHANNEL		(0x25)		// ISurf USB + 3070
-#define	HD_CLOSE_B2CHANNEL		(0x26)		// ISurf USB + 3070
-#define HD_RESET_INTERRUPT_PIPE		(0x27)		// ISurf USB + 3070
-#define	HD_DEVICE_INIT_ACK		(0x34)		// ISurf USB + 3070
-#define	HD_WRITE_ATMESSAGE		(0x12)		// 3070
-#define	HD_READ_ATMESSAGE		(0x13)		// 3070
-#define	HD_OPEN_ATCHANNEL		(0x28)		// 3070
-#define	HD_CLOSE_ATCHANNEL		(0x29)		// 3070
+/* control requests */
+#define	HD_OPEN_B1CHANNEL		(0x23)		/* ISurf USB + 3070 */
+#define	HD_CLOSE_B1CHANNEL		(0x24)		/* ISurf USB + 3070 */
+#define	HD_OPEN_B2CHANNEL		(0x25)		/* ISurf USB + 3070 */
+#define	HD_CLOSE_B2CHANNEL		(0x26)		/* ISurf USB + 3070 */
+#define HD_RESET_INTERRUPT_PIPE		(0x27)		/* ISurf USB + 3070 */
+#define	HD_DEVICE_INIT_ACK		(0x34)		/* ISurf USB + 3070 */
+#define	HD_WRITE_ATMESSAGE		(0x12)		/* 3070 */
+#define	HD_READ_ATMESSAGE		(0x13)		/* 3070 */
+#define	HD_OPEN_ATCHANNEL		(0x28)		/* 3070 */
+#define	HD_CLOSE_ATCHANNEL		(0x29)		/* 3070 */
 
 /* number of B channels supported by base driver */
 #define BAS_CHANNELS	2
@@ -223,12 +220,11 @@ void gigaset_dbg_buffer(enum debuglevel level, const unsigned char *msg,
 #define EV_BC_CLOSED	-118
 
 /* input state */
-#define INS_command	0x0001
-#define INS_DLE_char	0x0002
+#define INS_command	0x0001	/* receiving messages (not payload data) */
+#define INS_DLE_char	0x0002	/* DLE flag received (in DLE mode) */
 #define INS_byte_stuff	0x0004
 #define INS_have_data	0x0008
-#define INS_skip_frame	0x0010
-#define INS_DLE_command	0x0020
+#define INS_DLE_command	0x0020	/* DLE message start (<DLE> X) received */
 #define INS_flag_hunt	0x0040
 
 /* channel state */
@@ -290,8 +286,6 @@ extern struct reply_t gigaset_tab_cid[];
 extern struct reply_t gigaset_tab_nocid[];
 
 struct inbuf_t {
-	unsigned char		*rcvbuf;	/* usb-gigaset receive buffer */
-	struct bc_state		*bcs;
 	struct cardstate	*cs;
 	int			inputstate;
 	int			head, tail;
@@ -361,12 +355,6 @@ struct at_state_t {
 
 	struct cardstate	*cs;
 	struct bc_state		*bcs;
-};
-
-struct resp_type_t {
-	unsigned char	*response;
-	int		resp_code;	/* RSP_XXXX */
-	int		type;		/* RT_XXXX */
 };
 
 struct event_t {
@@ -483,8 +471,8 @@ struct cardstate {
 
 	struct timer_list timer;
 	int retry_count;
-	int dle;			/* !=0 if modem commands/responses are
-					   dle encoded */
+	int dle;			/* !=0 if DLE mode is active
+					   (ZDLE=1 received -- M10x only) */
 	int cur_at_seq;			/* sequence of AT commands being
 					   processed */
 	int curchannel;			/* channel those commands are meant
@@ -625,7 +613,7 @@ struct gigaset_ops {
 
 	/* Called from LL interface to put an skb into the send-queue.
 	 * After sending is completed, gigaset_skb_sent() must be called
-	 * with the first cs->hw_hdr_len bytes of skb->head preserved. */
+	 * with the skb's link layer header preserved. */
 	int (*send_skb)(struct bc_state *bcs, struct sk_buff *skb);
 
 	/* Called from ev-layer.c to process a block of data
@@ -634,7 +622,8 @@ struct gigaset_ops {
 
 };
 
-/* = Common structures and definitions ======================================= */
+/* = Common structures and definitions =======================================
+ */
 
 /* Parser states for DLE-Event:
  * <DLE-EVENT>: <DLE_FLAG> "X" <EVENT> <DLE_FLAG> "."
@@ -779,7 +768,7 @@ struct event_t *gigaset_add_event(struct cardstate *cs,
 				  void *ptr, int parameter, void *arg);
 
 /* Called on CONFIG1 command from frontend. */
-int gigaset_enterconfigmode(struct cardstate *cs); //0: success <0: errorcode
+int gigaset_enterconfigmode(struct cardstate *cs);
 
 /* cs->lock must not be locked */
 static inline void gigaset_schedule_event(struct cardstate *cs)
