@@ -103,13 +103,18 @@ int fsl_pq_local_mdio_read(struct fsl_pq_mdio __iomem *regs,
 	return value;
 }
 
+static struct fsl_pq_mdio __iomem *fsl_pq_mdio_get_regs(struct mii_bus *bus)
+{
+	return (void __iomem __force *)bus->priv;
+}
+
 /*
  * Write value to the PHY at mii_id at register regnum,
  * on the bus, waiting until the write is done before returning.
  */
 int fsl_pq_mdio_write(struct mii_bus *bus, int mii_id, int regnum, u16 value)
 {
-	struct fsl_pq_mdio __iomem *regs = (void __iomem *)bus->priv;
+	struct fsl_pq_mdio __iomem *regs = fsl_pq_mdio_get_regs(bus);
 
 	/* Write to the local MII regs */
 	return(fsl_pq_local_mdio_write(regs, mii_id, regnum, value));
@@ -121,7 +126,7 @@ int fsl_pq_mdio_write(struct mii_bus *bus, int mii_id, int regnum, u16 value)
  */
 int fsl_pq_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 {
-	struct fsl_pq_mdio __iomem *regs = (void __iomem *)bus->priv;
+	struct fsl_pq_mdio __iomem *regs = fsl_pq_mdio_get_regs(bus);
 
 	/* Read the local MII regs */
 	return(fsl_pq_local_mdio_read(regs, mii_id, regnum));
@@ -130,7 +135,7 @@ int fsl_pq_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 /* Reset the MIIM registers, and wait for the bus to free */
 static int fsl_pq_mdio_reset(struct mii_bus *bus)
 {
-	struct fsl_pq_mdio __iomem *regs = (void __iomem *)bus->priv;
+	struct fsl_pq_mdio __iomem *regs = fsl_pq_mdio_get_regs(bus);
 	int timeout = PHY_INIT_TIMEOUT;
 
 	mutex_lock(&bus->mdio_lock);
@@ -262,10 +267,11 @@ static int fsl_pq_mdio_probe(struct of_device *ofdev,
 	struct device_node *np = ofdev->node;
 	struct device_node *tbi;
 	struct fsl_pq_mdio __iomem *regs = NULL;
+	void __iomem *map;
 	u32 __iomem *tbipa;
 	struct mii_bus *new_bus;
 	int tbiaddr = -1;
-	u64 addr = 0, size = 0, ioremap_miimcfg = 0;
+	u64 addr = 0, size = 0;
 	int err = 0;
 
 	new_bus = mdiobus_alloc();
@@ -279,27 +285,19 @@ static int fsl_pq_mdio_probe(struct of_device *ofdev,
 	fsl_pq_mdio_bus_name(new_bus->id, np);
 
 	/* Set the PHY base address */
-	if (of_device_is_compatible(np,"fsl,gianfar-mdio") ||
-		of_device_is_compatible(np, "fsl,gianfar-tbi") ||
-		of_device_is_compatible(np, "fsl,ucc-mdio") ||
-		of_device_is_compatible(np,"ucc_geth_phy" )) {
-		addr = of_translate_address(np, of_get_address(np, 0, &size, NULL));
-		ioremap_miimcfg =  container_of(addr, struct fsl_pq_mdio, miimcfg);
-		regs = ioremap(ioremap_miimcfg, size +
-				offsetof(struct fsl_pq_mdio, miimcfg));
-	} else if (of_device_is_compatible(np,"fsl,etsec2-mdio") ||
-			of_device_is_compatible(np, "fsl,etsec2-tbi")) {
-		addr = of_translate_address(np, of_get_address(np, 0, &size, NULL));
-		regs = ioremap(addr, size);
-	} else {
-		err = -EINVAL;
-		goto err_free_bus;
-	}
-
-	if (NULL == regs) {
+	addr = of_translate_address(np, of_get_address(np, 0, &size, NULL));
+	map = ioremap(addr, size);
+	if (!map) {
 		err = -ENOMEM;
 		goto err_free_bus;
 	}
+
+	if (of_device_is_compatible(np, "fsl,gianfar-mdio") ||
+			of_device_is_compatible(np, "fsl,gianfar-tbi") ||
+			of_device_is_compatible(np, "fsl,ucc-mdio") ||
+			of_device_is_compatible(np, "ucc_geth_phy"))
+		map -= offsetof(struct fsl_pq_mdio, miimcfg);
+	regs = map;
 
 	new_bus->priv = (void __force *)regs;
 
@@ -411,7 +409,7 @@ static int fsl_pq_mdio_remove(struct of_device *ofdev)
 
 	dev_set_drvdata(device, NULL);
 
-	iounmap((void __iomem *)bus->priv);
+	iounmap(fsl_pq_mdio_get_regs(bus));
 	bus->priv = NULL;
 	mdiobus_free(bus);
 
