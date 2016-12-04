@@ -1057,8 +1057,6 @@ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
 	 */
 	if (!cfq_cfqq_sync(cfqq))
 		return NULL;
-	if (CFQQ_SEEKY(cfqq))
-		return NULL;
 
 	return cfqq;
 }
@@ -1190,17 +1188,8 @@ static int cfqq_process_refs(struct cfq_queue *cfqq)
 
 static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
 {
-	int process_refs, new_process_refs;
+	int process_refs;
 	struct cfq_queue *__cfqq;
-
-	/*
-	 * If there are no process references on the new_cfqq, then it is
-	 * unsafe to follow the ->new_cfqq chain as other cfqq's in the
-	 * chain may have dropped their last reference (not just their
-	 * last process reference).
-	 */
-	if (!cfqq_process_refs(new_cfqq))
-		return;
 
 	/* Avoid a circular list and skip interim queue merges */
 	while ((__cfqq = new_cfqq->new_cfqq)) {
@@ -1210,24 +1199,15 @@ static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
 	}
 
 	process_refs = cfqq_process_refs(cfqq);
-	new_process_refs = cfqq_process_refs(new_cfqq);
 	/*
 	 * If the process for the cfqq has gone away, there is no
 	 * sense in merging the queues.
 	 */
-	if (process_refs == 0 || new_process_refs == 0)
+	if (process_refs == 0)
 		return;
 
-	/*
-	 * Merge in the direction of the lesser amount of work.
-	 */
-	if (new_process_refs >= process_refs) {
-		cfqq->new_cfqq = new_cfqq;
-		atomic_add(process_refs, &new_cfqq->ref);
-	} else {
-		new_cfqq->new_cfqq = cfqq;
-		atomic_add(new_process_refs, &cfqq->ref);
-	}
+	cfqq->new_cfqq = new_cfqq;
+	atomic_add(process_refs, &new_cfqq->ref);
 }
 
 /*
@@ -1261,7 +1241,7 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
 	 * cooperators and put the close queue at the front of the service
 	 * tree.  If possible, merge the expiring queue with the new cfqq.
 	 */
-	new_cfqq = cfq_close_cooperator(cfqd, cfqq);
+	new_cfqq = cfq_close_cooperator(cfqd, cfqq, 0);
 	if (new_cfqq) {
 		if (!cfqq->new_cfqq)
 			cfq_setup_merge(cfqq, new_cfqq);
@@ -2430,37 +2410,10 @@ cfq_merge_cfqqs(struct cfq_data *cfqd, struct cfq_io_context *cic,
 {
 	cfq_log_cfqq(cfqd, cfqq, "merging with queue %p", cfqq->new_cfqq);
 	cic_set_cfqq(cic, cfqq->new_cfqq, 1);
-	cfq_mark_cfqq_coop(cfqq->new_cfqq);
 	cfq_put_queue(cfqq);
 	return cic_to_cfqq(cic, 1);
 }
 
-static int should_split_cfqq(struct cfq_queue *cfqq)
-{
-	if (cfqq->seeky_start &&
-	    time_after(jiffies, cfqq->seeky_start + CFQQ_COOP_TOUT))
-		return 1;
-	return 0;
-}
-
-/*
- * Returns NULL if a new cfqq should be allocated, or the old cfqq if this
- * was the last process referring to said cfqq.
- */
-static struct cfq_queue *
-split_cfqq(struct cfq_io_context *cic, struct cfq_queue *cfqq)
-{
-	if (cfqq_process_refs(cfqq) == 1) {
-		cfqq->seeky_start = 0;
-		cfqq->pid = current->pid;
-		cfq_clear_cfqq_coop(cfqq);
-		return cfqq;
-	}
-
-	cic_set_cfqq(cic, NULL, 1);
-	cfq_put_queue(cfqq);
-	return NULL;
-}
 /*
  * Allocate cfq data structures associated with this request.
  */
@@ -2489,16 +2442,6 @@ new_queue:
 		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
 		cic_set_cfqq(cic, cfqq, is_sync);
 	} else {
-		/*
-		 * If the queue was seeky for too long, break it apart.
-		 */
-		if (cfq_cfqq_coop(cfqq) && should_split_cfqq(cfqq)) {
-			cfq_log_cfqq(cfqd, cfqq, "breaking apart cfqq");
-			cfqq = split_cfqq(cic, cfqq);
-			if (!cfqq)
-				goto new_queue;
-		}
-
 		/*
 		 * Check to see if this queue is scheduled to merge with
 		 * another, closely cooperating queue.  The merging of
