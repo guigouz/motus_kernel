@@ -9,7 +9,6 @@
 #include <linux/pm.h>
 #include <linux/clockchips.h>
 #include <linux/random.h>
-#include <linux/user-return-notifier.h>
 #include <trace/events/power.h>
 #include <asm/system.h>
 #include <asm/apic.h>
@@ -96,7 +95,17 @@ void flush_thread(void)
 {
 	struct task_struct *tsk = current;
 
-	clear_tsk_thread_flag(tsk, TIF_DEBUG);
+#ifdef CONFIG_X86_64
+	if (test_tsk_thread_flag(tsk, TIF_ABI_PENDING)) {
+		clear_tsk_thread_flag(tsk, TIF_ABI_PENDING);
+		if (test_tsk_thread_flag(tsk, TIF_IA32)) {
+			clear_tsk_thread_flag(tsk, TIF_IA32);
+		} else {
+			set_tsk_thread_flag(tsk, TIF_IA32);
+			current_thread_info()->status |= TS_COMPAT;
+		}
+	}
+#endif
 
 	if (unlikely(test_tsk_thread_flag(tsk, TIF_DEBUG)))
 		flush_thread_hw_breakpoint(tsk);
@@ -203,7 +212,6 @@ void __switch_to_xtra(struct task_struct *prev_p, struct task_struct *next_p,
 		 */
 		memset(tss->io_bitmap, 0xff, prev->io_bitmap_max);
 	}
-	propagate_user_return_notify(prev_p, next_p);
 }
 
 int sys_fork(struct pt_regs *regs)
@@ -227,79 +235,6 @@ int sys_vfork(struct pt_regs *regs)
 		       NULL, NULL);
 }
 
-long
-sys_clone(unsigned long clone_flags, unsigned long newsp,
-	  void __user *parent_tid, void __user *child_tid, struct pt_regs *regs)
-{
-	if (!newsp)
-		newsp = regs->sp;
-	return do_fork(clone_flags, newsp, regs, 0, parent_tid, child_tid);
-}
-
-/*
- * This gets run with %si containing the
- * function to call, and %di containing
- * the "args".
- */
-extern void kernel_thread_helper(void);
-
-/*
- * Create a kernel thread
- */
-int kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
-{
-	struct pt_regs regs;
-
-	memset(&regs, 0, sizeof(regs));
-
-	regs.si = (unsigned long) fn;
-	regs.di = (unsigned long) arg;
-
-#ifdef CONFIG_X86_32
-	regs.ds = __USER_DS;
-	regs.es = __USER_DS;
-	regs.fs = __KERNEL_PERCPU;
-	regs.gs = __KERNEL_STACK_CANARY;
-#else
-	regs.ss = __KERNEL_DS;
-#endif
-
-	regs.orig_ax = -1;
-	regs.ip = (unsigned long) kernel_thread_helper;
-	regs.cs = __KERNEL_CS | get_kernel_rpl();
-	regs.flags = X86_EFLAGS_IF | 0x2;
-
-	/* Ok, create the new process.. */
-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
-}
-EXPORT_SYMBOL(kernel_thread);
-
-/*
- * sys_execve() executes a new program.
- */
-long sys_execve(const char __user *name,
-		const char __user *const __user *argv,
-		const char __user *const __user *envp, struct pt_regs *regs)
-{
-	long error;
-	char *filename;
-
-	filename = getname(name);
-	error = PTR_ERR(filename);
-	if (IS_ERR(filename))
-		return error;
-	error = do_execve(filename, argv, envp, regs);
-
-#ifdef CONFIG_X86_32
-	if (error == 0) {
-		/* Make sure we don't return using sysenter.. */
-                set_thread_flag(TIF_IRET);
-        }
-#endif
-
-	putname(filename);
-	return error;
-}
 
 /*
  * Idle related variables and functions
@@ -503,6 +438,24 @@ static int __cpuinit mwait_usable(const struct cpuinfo_x86 *c)
 	return (edx & MWAIT_EDX_C1);
 }
 
+/*
+ * Check for AMD CPUs, which have potentially C1E support
+ */
+static int __cpuinit check_c1e_idle(const struct cpuinfo_x86 *c)
+{
+	if (c->x86_vendor != X86_VENDOR_AMD)
+		return 0;
+
+	if (c->x86 < 0x0F)
+		return 0;
+
+	/* Family 0x0f models < rev F do not have C1E */
+	if (c->x86 == 0x0f && c->x86_model < 0x40)
+		return 0;
+
+	return 1;
+}
+
 static cpumask_var_t c1e_mask;
 static int c1e_detected;
 
@@ -580,8 +533,7 @@ void __cpuinit select_idle_routine(const struct cpuinfo_x86 *c)
 		 */
 		printk(KERN_INFO "using mwait in idle threads.\n");
 		pm_idle = mwait_idle;
-	} else if (cpu_has_amd_erratum(amd_erratum_400)) {
-		/* E400: APIC timer interrupt does not wake up CPU from C1e */
+	} else if (check_c1e_idle(c)) {
 		printk(KERN_INFO "using C1E aware idle routine\n");
 		pm_idle = c1e_idle;
 	} else
