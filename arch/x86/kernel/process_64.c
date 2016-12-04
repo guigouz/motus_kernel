@@ -14,8 +14,6 @@
  * This file handles the architecture-dependent parts of process handling..
  */
 
-#include <stdarg.h>
-
 #include <linux/stackprotector.h>
 #include <linux/cpu.h>
 #include <linux/errno.h>
@@ -32,7 +30,6 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
-#include <linux/random.h>
 #include <linux/notifier.h>
 #include <linux/kprobes.h>
 #include <linux/kdebug.h>
@@ -56,12 +53,8 @@
 #include <asm/syscalls.h>
 #include <asm/ds.h>
 #include <asm/debugreg.h>
-#include <asm/hw_breakpoint.h>
 
 asmlinkage extern void ret_from_fork(void);
-
-DEFINE_PER_CPU(struct task_struct *, current_task) = &init_task;
-EXPORT_PER_CPU_SYMBOL(current_task);
 
 DEFINE_PER_CPU(unsigned long, old_rsp);
 static DEFINE_PER_CPU(unsigned char, is_idle);
@@ -234,7 +227,8 @@ void __show_regs(struct pt_regs *regs, int all)
 
 void show_regs(struct pt_regs *regs)
 {
-	show_registers(regs);
+	printk(KERN_INFO "CPU %d:", smp_processor_id());
+	__show_regs(regs, 1);
 	show_trace(NULL, regs, (void *)(regs + 1), regs->bp);
 }
 
@@ -249,8 +243,6 @@ void release_thread(struct task_struct *dead_task)
 			BUG();
 		}
 	}
-	if (unlikely(dead_task->thread.debugreg7))
-		flush_thread_hw_breakpoint(dead_task);
 }
 
 static inline void set_32bit_tls(struct task_struct *t, int tls, u32 addr)
@@ -314,9 +306,7 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 	savesegment(ds, p->thread.ds);
 
 	err = -ENOMEM;
-	if (unlikely(test_tsk_thread_flag(me, TIF_DEBUG)))
-		if (copy_thread_hw_breakpoint(me, p, clone_flags))
-			goto out;
+	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
 
 	if (unlikely(test_tsk_thread_flag(me, TIF_IO_BITMAP))) {
 		p->thread.io_bitmap_ptr = kmalloc(IO_BITMAP_BYTES, GFP_KERNEL);
@@ -356,48 +346,30 @@ out:
 		kfree(p->thread.io_bitmap_ptr);
 		p->thread.io_bitmap_max = 0;
 	}
-	if (err)
-		flush_thread_hw_breakpoint(p);
 
 	return err;
 }
 
-static void
-start_thread_common(struct pt_regs *regs, unsigned long new_ip,
-		    unsigned long new_sp,
-		    unsigned int _cs, unsigned int _ss, unsigned int _ds)
+void
+start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
 {
 	loadsegment(fs, 0);
-	loadsegment(es, _ds);
-	loadsegment(ds, _ds);
+	loadsegment(es, 0);
+	loadsegment(ds, 0);
 	load_gs_index(0);
 	regs->ip		= new_ip;
 	regs->sp		= new_sp;
 	percpu_write(old_rsp, new_sp);
-	regs->cs		= _cs;
-	regs->ss		= _ss;
-	regs->flags		= X86_EFLAGS_IF;
+	regs->cs		= __USER_CS;
+	regs->ss		= __USER_DS;
+	regs->flags		= 0x200;
 	set_fs(USER_DS);
 	/*
 	 * Free the old FP and other extended state
 	 */
 	free_thread_xstate(current);
 }
-
-void
-start_thread(struct pt_regs *regs, unsigned long new_ip, unsigned long new_sp)
-{
-	start_thread_common(regs, new_ip, new_sp,
-			    __USER_CS, __USER_DS, 0);
-}
-
-#ifdef CONFIG_IA32_EMULATION
-void start_thread_ia32(struct pt_regs *regs, u32 new_ip, u32 new_sp)
-{
-	start_thread_common(regs, new_ip, new_sp,
-			    __USER32_CS, __USER32_DS, __USER32_DS);
-}
-#endif
+EXPORT_SYMBOL_GPL(start_thread);
 
 /*
  *	switch_to(x,y) should switch tasks from x to y.
@@ -417,9 +389,17 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	int cpu = smp_processor_id();
 	struct tss_struct *tss = &per_cpu(init_tss, cpu);
 	unsigned fsindex, gsindex;
+	bool preload_fpu;
+
+	/*
+	 * If the task has used fpu the last 5 timeslices, just do a full
+	 * restore of the math state immediately to avoid the trap; the
+	 * chances of needing FPU soon are obviously high now
+	 */
+	preload_fpu = tsk_used_math(next_p) && next_p->fpu_counter > 5;
 
 	/* we're going to use this soon, after a few expensive things */
-	if (next_p->fpu_counter > 5)
+	if (preload_fpu)
 		prefetch(next->xstate);
 
 	/*
@@ -450,6 +430,13 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 
 	load_TLS(next, cpu);
 
+	/* Must be after DS reload */
+	unlazy_fpu(prev_p);
+
+	/* Make sure cpu is ready for new context */
+	if (preload_fpu)
+		clts();
+
 	/*
 	 * Leave lazy mode, flushing any hypercalls made here.
 	 * This must be done before restoring TLS segments so
@@ -457,7 +444,7 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 	 * done before math_state_restore, so the TS bit is up
 	 * to date.
 	 */
-	arch_leave_lazy_cpu_mode();
+	arch_end_context_switch(next_p);
 
 	/*
 	 * Switch FS and GS.
@@ -490,9 +477,6 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		wrmsrl(MSR_KERNEL_GS_BASE, next->gs);
 	prev->gsindex = gsindex;
 
-	/* Must be after DS reload */
-	unlazy_fpu(prev_p);
-
 	/*
 	 * Switch the PDA and FPU contexts.
 	 */
@@ -511,32 +495,12 @@ __switch_to(struct task_struct *prev_p, struct task_struct *next_p)
 		     task_thread_info(prev_p)->flags & _TIF_WORK_CTXSW_PREV))
 		__switch_to_xtra(prev_p, next_p, tss);
 
-	/* If the task has used fpu the last 5 timeslices, just do a full
-	 * restore of the math state immediately to avoid the trap; the
-	 * chances of needing FPU soon are obviously high now
-	 *
-	 * tsk_used_math() checks prevent calling math_state_restore(),
-	 * which can sleep in the case of !tsk_used_math()
-	 */
-	if (tsk_used_math(next_p) && next_p->fpu_counter > 5)
-		math_state_restore();
 	/*
-	 * There's a problem with moving the arch_install_thread_hw_breakpoint()
-	 * call before current is updated.  Suppose a kernel breakpoint is
-	 * triggered in between the two, the hw-breakpoint handler will see that
-	 * the 'current' task does not have TIF_DEBUG flag set and will think it
-	 * is leftover from an old task (lazy switching) and will erase it. Then
-	 * until the next context switch, no user-breakpoints will be installed.
-	 *
-	 * The real problem is that it's impossible to update both current and
-	 * physical debug registers at the same instant, so there will always be
-	 * a window in which they disagree and a breakpoint might get triggered.
-	 * Since we use lazy switching, we are forced to assume that a
-	 * disagreement means that current is correct and the exception is due
-	 * to lazy debug register switching.
+	 * Preload the FPU context, now that we've determined that the
+	 * task is likely to be using it. 
 	 */
-	if (unlikely(test_tsk_thread_flag(next_p, TIF_DEBUG)))
-		arch_install_thread_hw_breakpoint(next_p);
+	if (preload_fpu)
+		__math_state_restore();
 
 	return prev_p;
 }
@@ -707,15 +671,3 @@ long sys_arch_prctl(int code, unsigned long addr)
 	return do_arch_prctl(current, code, addr);
 }
 
-unsigned long arch_align_stack(unsigned long sp)
-{
-	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
-		sp -= get_random_int() % 8192;
-	return sp & ~0xf;
-}
-
-unsigned long arch_randomize_brk(struct mm_struct *mm)
-{
-	unsigned long range_end = mm->brk + 0x02000000;
-	return randomize_range(mm->brk, range_end, 0) ? : mm->brk;
-}

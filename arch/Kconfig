@@ -133,5 +133,8 @@ config HAVE_DEFAULT_NO_SPIN_MUTEXES
 
 config HAVE_USER_RETURN_NOTIFIER
 	bool
+	depends on HAVE_PERF_EVENTS
+	select ANON_INODES
+	select PERF_EVENTS
 
 source "kernel/gcov/Kconfig"

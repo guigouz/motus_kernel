@@ -69,7 +69,6 @@ static struct dentry *debugfs_file;
 static int  msmsdcc_dbg_init(void);
 #endif
 
-static unsigned int msmsdcc_piopoll = 1;
 static unsigned int msmsdcc_pwrsave = 1;
 
 #define PIO_SPINMAX 30
