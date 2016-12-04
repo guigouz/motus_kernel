@@ -13,6 +13,8 @@
 #include <linux/mount.h>
 #include <linux/mnt_namespace.h>
 #include <linux/fs_struct.h>
+#include <linux/hash.h>
+
 #include "common.h"
 #include "realpath.h"
 
@@ -265,7 +267,8 @@ static unsigned int tomoyo_quota_for_savename;
  * table. Frequency of appending strings is very low. So we don't need
  * large (e.g. 64k) hash size. 256 will be sufficient.
  */
-#define TOMOYO_MAX_HASH 256
+#define TOMOYO_HASH_BITS  8
+#define TOMOYO_MAX_HASH (1u<<TOMOYO_HASH_BITS)
 
 /* Structure for string data. */
 struct tomoyo_name_entry {
@@ -308,6 +311,7 @@ const struct tomoyo_path_info *tomoyo_save_name(const char *name)
 	struct tomoyo_free_memory_block_list *fmb;
 	int len;
 	char *cp;
+	struct list_head *head;
 
 	if (!name)
 		return NULL;
@@ -318,10 +322,10 @@ const struct tomoyo_path_info *tomoyo_save_name(const char *name)
 		return NULL;
 	}
 	hash = full_name_hash((const unsigned char *) name, len - 1);
-	/***** EXCLUSIVE SECTION START *****/
+	head = &tomoyo_name_list[hash_long(hash, TOMOYO_HASH_BITS)];
+
 	mutex_lock(&lock);
-	list_for_each_entry(ptr, &tomoyo_name_list[hash % TOMOYO_MAX_HASH],
-			     list) {
+	list_for_each_entry(ptr, head, list) {
 		if (hash == ptr->entry.hash && !strcmp(name, ptr->entry.name))
 			goto out;
 	}
@@ -359,7 +363,7 @@ const struct tomoyo_path_info *tomoyo_save_name(const char *name)
 	tomoyo_fill_path_info(&ptr->entry);
 	fmb->ptr += len;
 	fmb->len -= len;
-	list_add_tail(&ptr->list, &tomoyo_name_list[hash % TOMOYO_MAX_HASH]);
+	list_add_tail(&ptr->list, head);
 	if (fmb->len == 0) {
 		list_del(&fmb->list);
 		kfree(fmb);
