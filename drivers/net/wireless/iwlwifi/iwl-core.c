@@ -1285,10 +1285,15 @@ void iwl_rx_csa(struct iwl_priv *priv, struct iwl_rx_mem_buffer *rxb)
 	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_rxon_cmd *rxon = (void *)&priv->active_rxon;
 	struct iwl_csa_notification *csa = &(pkt->u.csa_notif);
-	IWL_DEBUG_11H(priv, "CSA notif: channel %d, status %d\n",
-		      le16_to_cpu(csa->channel), le32_to_cpu(csa->status));
-	rxon->channel = csa->channel;
-	priv->staging_rxon.channel = csa->channel;
+
+	if (!le32_to_cpu(csa->status)) {
+		rxon->channel = csa->channel;
+		priv->staging_rxon.channel = csa->channel;
+		IWL_DEBUG_11H(priv, "CSA notif: channel %d\n",
+		      le16_to_cpu(csa->channel));
+	} else
+		IWL_ERR(priv, "CSA notif (fail) : channel %d\n",
+		      le16_to_cpu(csa->channel));
 }
 EXPORT_SYMBOL(iwl_rx_csa);
 
@@ -1370,6 +1375,8 @@ void iwl_apm_stop(struct iwl_priv *priv)
 {
 	unsigned long flags;
 
+	IWL_DEBUG_INFO(priv, "Stop card, put in low power state\n");
+
 	iwl_apm_stop_master(priv);
 
 	spin_lock_irqsave(&priv->lock, flags);
@@ -1382,6 +1389,118 @@ void iwl_apm_stop(struct iwl_priv *priv)
 	spin_unlock_irqrestore(&priv->lock, flags);
 }
 EXPORT_SYMBOL(iwl_apm_stop);
+
+
+/*
+ * Start up NIC's basic functionality after it has been reset
+ * (e.g. after platform boot, or shutdown via iwl_apm_stop())
+ * NOTE:  This does not load uCode nor start the embedded processor
+ */
+int iwl_apm_init(struct iwl_priv *priv)
+{
+	int ret = 0;
+	u16 lctl;
+
+	IWL_DEBUG_INFO(priv, "Init card's basic functions\n");
+
+	/*
+	 * Use "set_bit" below rather than "write", to preserve any hardware
+	 * bits already set by default after reset.
+	 */
+
+	/* Disable L0S exit timer (platform NMI Work/Around) */
+	iwl_set_bit(priv, CSR_GIO_CHICKEN_BITS,
+			  CSR_GIO_CHICKEN_BITS_REG_BIT_DIS_L0S_EXIT_TIMER);
+
+	/*
+	 * Disable L0s without affecting L1;
+	 *  don't wait for ICH L0s (ICH bug W/A)
+	 */
+	iwl_set_bit(priv, CSR_GIO_CHICKEN_BITS,
+			  CSR_GIO_CHICKEN_BITS_REG_BIT_L1A_NO_L0S_RX);
+
+	/* Set FH wait threshold to maximum (HW error during stress W/A) */
+	iwl_set_bit(priv, CSR_DBG_HPET_MEM_REG, CSR_DBG_HPET_MEM_REG_VAL);
+
+	/*
+	 * Enable HAP INTA (interrupt from management bus) to
+	 * wake device's PCI Express link L1a -> L0s
+	 * NOTE:  This is no-op for 3945 (non-existant bit)
+	 */
+	iwl_set_bit(priv, CSR_HW_IF_CONFIG_REG,
+				    CSR_HW_IF_CONFIG_REG_BIT_HAP_WAKE_L1A);
+
+	/*
+	 * HW bug W/A - costs negligible power consumption ...
+	 * Check if BIOS (or OS) enabled L1-ASPM on this device
+	 */
+	if (priv->cfg->set_l0s) {
+		lctl = iwl_pcie_link_ctl(priv);
+		if ((lctl & PCI_CFG_LINK_CTRL_VAL_L1_EN) ==
+					PCI_CFG_LINK_CTRL_VAL_L1_EN) {
+			/* L1-ASPM enabled; disable(!) L0S  */
+			iwl_set_bit(priv, CSR_GIO_REG,
+					CSR_GIO_REG_VAL_L0S_ENABLED);
+			IWL_DEBUG_POWER(priv, "L1 Enabled; Disabling L0S\n");
+		} else {
+			/* L1-ASPM disabled; enable(!) L0S */
+			iwl_clear_bit(priv, CSR_GIO_REG,
+					CSR_GIO_REG_VAL_L0S_ENABLED);
+			IWL_DEBUG_POWER(priv, "L1 Disabled; Enabling L0S\n");
+		}
+	}
+
+	/* Configure analog phase-lock-loop before activating to D0A */
+	if (priv->cfg->pll_cfg_val)
+		iwl_set_bit(priv, CSR_ANA_PLL_CFG, priv->cfg->pll_cfg_val);
+
+	/*
+	 * Set "initialization complete" bit to move adapter from
+	 * D0U* --> D0A* (powered-up active) state.
+	 */
+	iwl_set_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
+
+	/*
+	 * Wait for clock stabilization; once stabilized, access to
+	 * device-internal resources is supported, e.g. iwl_write_prph()
+	 * and accesses to uCode SRAM.
+	 */
+	ret = iwl_poll_bit(priv, CSR_GP_CNTRL,
+			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY,
+			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY, 25000);
+	if (ret < 0) {
+		IWL_DEBUG_INFO(priv, "Failed to init the card\n");
+		goto out;
+	}
+
+	/*
+	 * Enable DMA and BSM (if used) clocks, wait for them to stabilize.
+	 * BSM (Boostrap State Machine) is only in 3945 and 4965;
+	 * later devices (i.e. 5000 and later) have non-volatile SRAM,
+	 * and don't need BSM to restore data after power-saving sleep.
+	 *
+	 * Write to "CLK_EN_REG"; "1" bits enable clocks, while "0" bits
+	 * do not disable clocks.  This preserves any hardware bits already
+	 * set by default in "CLK_CTRL_REG" after reset.
+	 */
+	if (priv->cfg->use_bsm)
+		iwl_write_prph(priv, APMG_CLK_EN_REG,
+			APMG_CLK_VAL_DMA_CLK_RQT | APMG_CLK_VAL_BSM_CLK_RQT);
+	else
+		iwl_write_prph(priv, APMG_CLK_EN_REG,
+			APMG_CLK_VAL_DMA_CLK_RQT);
+	udelay(20);
+
+	/* Disable L1-Active */
+	iwl_set_bits_prph(priv, APMG_PCIDEV_STT_REG,
+			  APMG_PCIDEV_STT_VAL_L1_ACT_DIS);
+
+out:
+	return ret;
+}
+EXPORT_SYMBOL(iwl_apm_init);
+
+
 
 void iwl_configure_filter(struct ieee80211_hw *hw,
 			  unsigned int changed_flags,
@@ -1890,9 +2009,9 @@ EXPORT_SYMBOL(iwl_isr_legacy);
 int iwl_send_bt_config(struct iwl_priv *priv)
 {
 	struct iwl_bt_cmd bt_cmd = {
-		.flags = 3,
-		.lead_time = 0xAA,
-		.max_kill = 1,
+		.flags = BT_COEX_MODE_4W,
+		.lead_time = BT_LEAD_TIME_DEF,
+		.max_kill = BT_MAX_KILL_DEF,
 		.kill_ack_mask = 0,
 		.kill_cts_mask = 0,
 	};
@@ -2052,10 +2171,7 @@ void iwl_rf_kill_ct_config(struct iwl_priv *priv)
 	spin_unlock_irqrestore(&priv->lock, flags);
 	priv->thermal_throttle.ct_kill_toggle = false;
 
-	switch (priv->hw_rev & CSR_HW_REV_TYPE_MSK) {
-	case CSR_HW_REV_TYPE_1000:
-	case CSR_HW_REV_TYPE_6x00:
-	case CSR_HW_REV_TYPE_6x50:
+	if (priv->cfg->support_ct_kill_exit) {
 		adv_cmd.critical_temperature_enter =
 			cpu_to_le32(priv->hw_params.ct_kill_threshold);
 		adv_cmd.critical_temperature_exit =
@@ -2072,8 +2188,7 @@ void iwl_rf_kill_ct_config(struct iwl_priv *priv)
 					"exit is %d\n",
 				       priv->hw_params.ct_kill_threshold,
 				       priv->hw_params.ct_kill_exit_threshold);
-		break;
-	default:
+	} else {
 		cmd.critical_temperature_R =
 			cpu_to_le32(priv->hw_params.ct_kill_threshold);
 
@@ -2086,7 +2201,6 @@ void iwl_rf_kill_ct_config(struct iwl_priv *priv)
 					"succeeded, "
 					"critical temperature is %d\n",
 					priv->hw_params.ct_kill_threshold);
-		break;
 	}
 }
 EXPORT_SYMBOL(iwl_rf_kill_ct_config);
@@ -2604,6 +2718,14 @@ int iwl_mac_config(struct ieee80211_hw *hw, u32 changed)
 				conf->channel->hw_value, conf->channel->band);
 			ret = -EINVAL;
 			goto set_ch_out;
+		}
+
+		if (iwl_is_associated(priv) &&
+		    (le16_to_cpu(priv->active_rxon.channel) != ch) &&
+		    priv->cfg->ops->lib->set_channel_switch) {
+			ret = priv->cfg->ops->lib->set_channel_switch(priv,
+				ch);
+			goto out;
 		}
 
 		spin_lock_irqsave(&priv->lock, flags);

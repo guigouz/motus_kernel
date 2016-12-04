@@ -359,8 +359,6 @@ void iwl3945_hw_rx_statistics(struct iwl_priv *priv,
 		     le32_to_cpu(pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK);
 
 	memcpy(&priv->statistics_39, pkt->u.raw, sizeof(priv->statistics_39));
-
-	iwl_leds_background(priv);
 }
 
 /******************************************************************************
@@ -550,6 +548,7 @@ static void iwl3945_pass_packet_to_mac80211(struct iwl_priv *priv,
 	u16 len = le16_to_cpu(rx_hdr->len);
 	struct sk_buff *skb;
 	int ret;
+	__le16 fc = hdr->frame_control;
 
 	/* We received data from the HW, so stop the watchdog */
 	if (unlikely(len + IWL39_RX_FRAME_SIZE >
@@ -582,9 +581,9 @@ static void iwl3945_pass_packet_to_mac80211(struct iwl_priv *priv,
 	/* mac80211 currently doesn't support paged SKB. Convert it to
 	 * linear SKB for management frame and data frame requires
 	 * software decryption or software defragementation. */
-	if (ieee80211_is_mgmt(hdr->frame_control) ||
-	    ieee80211_has_protected(hdr->frame_control) ||
-	    ieee80211_has_morefrags(hdr->frame_control) ||
+	if (ieee80211_is_mgmt(fc) ||
+	    ieee80211_has_protected(fc) ||
+	    ieee80211_has_morefrags(fc) ||
 	    le16_to_cpu(hdr->seq_ctrl) & IEEE80211_SCTL_FRAG)
 		ret = skb_linearize(skb);
 	else
@@ -596,11 +595,15 @@ static void iwl3945_pass_packet_to_mac80211(struct iwl_priv *priv,
 		goto out;
 	}
 
-	iwl_update_stats(priv, false, hdr->frame_control, len);
+	/*
+	 * XXX: We cannot touch the page and its virtual memory (pkt) after
+	 * here. It might have already been freed by the above skb change.
+	 */
 
+	iwl_update_stats(priv, false, fc, len);
 	memcpy(IEEE80211_SKB_RXCB(skb), stats, sizeof(*stats));
-	ieee80211_rx(priv->hw, skb);
 
+	ieee80211_rx(priv->hw, skb);
  out:
 	priv->alloc_rxb_page--;
 	rxb->page = NULL;
@@ -1013,55 +1016,15 @@ static int iwl3945_txq_ctx_reset(struct iwl_priv *priv)
 	return rc;
 }
 
+
 /*
- * Start up NIC's basic functionality after it has been reset
- * (e.g. after platform boot, or shutdown via iwl3945_apm_stop())
+ * Start up 3945's basic functionality after it has been reset
+ * (e.g. after platform boot, or shutdown via iwl_apm_stop())
  * NOTE:  This does not load uCode nor start the embedded processor
  */
 static int iwl3945_apm_init(struct iwl_priv *priv)
 {
-	int ret;
-
-	/* Configure chip clock phase-lock-loop */
-	iwl_set_bit(priv, CSR_ANA_PLL_CFG, CSR39_ANA_PLL_CFG_VAL);
-
-	/*
-	 * Disable L0S exit timer (platform NMI Work/Around)
-	 * (does this do anything on 3945, or just 4965 and beyond?)
-	 */
-	iwl_set_bit(priv, CSR_GIO_CHICKEN_BITS,
-			  CSR_GIO_CHICKEN_BITS_REG_BIT_DIS_L0S_EXIT_TIMER);
-
-	/* Disable L0s without affecting L1; don't wait for ICH (L0s bug W/A) */
-	iwl_set_bit(priv, CSR_GIO_CHICKEN_BITS,
-			  CSR_GIO_CHICKEN_BITS_REG_BIT_L1A_NO_L0S_RX);
-
-	/* Set FH wait threshold to maximum (HW error during stress W/A) */
-	iwl_set_bit(priv, CSR_DBG_HPET_MEM_REG, CSR_DBG_HPET_MEM_REG_VAL);
-
-	/*
-	 * Set "initialization complete" bit to move adapter from
-	 * D0U* --> D0A* (powered-up active) state.
-	 */
-	iwl_set_bit(priv, CSR_GP_CNTRL, CSR_GP_CNTRL_REG_FLAG_INIT_DONE);
-
-	/*
-	 * Wait for clock stabilization; once stabilized, access to
-	 * device-internal resources is supported, e.g. iwl_write_prph()
-	 * and accesses to uCode SRAM.
-	 */
-	ret = iwl_poll_bit(priv, CSR_GP_CNTRL,
-			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY,
-			CSR_GP_CNTRL_REG_FLAG_MAC_CLOCK_READY, 25000);
-	if (ret < 0) {
-		IWL_DEBUG_INFO(priv, "Failed to init the card\n");
-		goto out;
-	}
-
-	/* Enable DMA and BSM clocks, wait for them to stabilize */
-	iwl_write_prph(priv, APMG_CLK_CTRL_REG, APMG_CLK_VAL_DMA_CLK_RQT |
-						APMG_CLK_VAL_BSM_CLK_RQT);
-	udelay(20);
+	int ret = iwl_apm_init(priv);
 
 	/* Clear APMG (NIC's internal power management) interrupts */
 	iwl_write_prph(priv, APMG_RTC_INT_MSK_REG, 0x0);
@@ -1072,11 +1035,6 @@ static int iwl3945_apm_init(struct iwl_priv *priv)
 	udelay(5);
 	iwl_clear_bits_prph(priv, APMG_PS_CTRL_REG, APMG_PS_CTRL_VAL_RESET_REQ);
 
-	/* Disable L1-Active */
-	iwl_set_bits_prph(priv, APMG_PCIDEV_STT_REG,
-			  APMG_PCIDEV_STT_VAL_L1_ACT_DIS);
-
-out:
 	return ret;
 }
 
@@ -2024,12 +1982,6 @@ static int iwl3945_commit_rxon(struct iwl_priv *priv)
 	return 0;
 }
 
-/* will add 3945 channel switch cmd handling later */
-int iwl3945_hw_channel_switch(struct iwl_priv *priv, u16 channel)
-{
-	return 0;
-}
-
 /**
  * iwl3945_reg_txpower_periodic -  called when time to check our temperature.
  *
@@ -2876,6 +2828,9 @@ static struct iwl_cfg iwl3945_bg_cfg = {
 	.ops = &iwl3945_ops,
 	.num_of_queues = IWL39_NUM_QUEUES,
 	.mod_params = &iwl3945_mod_params,
+	.pll_cfg_val = CSR39_ANA_PLL_CFG_VAL,
+	.set_l0s = false,
+	.use_bsm = true,
 	.use_isr_legacy = true,
 	.ht_greenfield_support = false,
 	.led_compensation = 64,

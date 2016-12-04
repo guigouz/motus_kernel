@@ -814,8 +814,8 @@ void iwl_rx_handle(struct iwl_priv *priv)
 		if (priv->rx_handlers[pkt->hdr.cmd]) {
 			IWL_DEBUG_RX(priv, "r = %d, i = %d, %s, 0x%02x\n", r,
 				i, get_cmd_string(pkt->hdr.cmd), pkt->hdr.cmd);
-			priv->rx_handlers[pkt->hdr.cmd] (priv, rxb);
 			priv->isr_stats.rx_handlers[pkt->hdr.cmd]++;
+			priv->rx_handlers[pkt->hdr.cmd] (priv, rxb);
 		} else {
 			/* No handling needed */
 			IWL_DEBUG_RX(priv,
@@ -824,11 +824,18 @@ void iwl_rx_handle(struct iwl_priv *priv)
 				pkt->hdr.cmd);
 		}
 
+		/*
+		 * XXX: After here, we should always check rxb->page
+		 * against NULL before touching it or its virtual
+		 * memory (pkt). Because some rx_handler might have
+		 * already taken or freed the pages.
+		 */
+
 		if (reclaim) {
 			/* Invoke any callbacks, transfer the buffer to caller,
 			 * and fire off the (possibly) blocking iwl_send_cmd()
 			 * as we reclaim the driver command queue */
-			if (rxb && rxb->page)
+			if (rxb->page)
 				iwl_tx_cmd_complete(priv, rxb);
 			else
 				IWL_WARN(priv, "Claim null rxb?\n");
@@ -1019,6 +1026,7 @@ static void iwl_irq_tasklet_legacy(struct iwl_priv *priv)
 	if (inta & (CSR_INT_BIT_FH_RX | CSR_INT_BIT_SW_RX)) {
 		iwl_rx_handle(priv);
 		priv->isr_stats.rx++;
+		iwl_leds_background(priv);
 		handled |= (CSR_INT_BIT_FH_RX | CSR_INT_BIT_SW_RX);
 	}
 
@@ -1220,6 +1228,7 @@ static void iwl_irq_tasklet(struct iwl_priv *priv)
 				    CSR_INT_PERIODIC_ENA);
 
 		priv->isr_stats.rx++;
+		iwl_leds_background(priv);
 	}
 
 	if (inta & CSR_INT_BIT_FH_TX) {

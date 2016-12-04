@@ -169,6 +169,7 @@ struct iwl_lib_ops {
 	int (*load_ucode)(struct iwl_priv *priv);
 	void (*dump_nic_event_log)(struct iwl_priv *priv);
 	void (*dump_nic_error_log)(struct iwl_priv *priv);
+	int (*set_channel_switch)(struct iwl_priv *priv, u16 channel);
 	/* power management */
 	struct iwl_apm_ops apm_ops;
 
@@ -225,6 +226,8 @@ struct iwl_mod_params {
  *	The detail algorithm is described in iwl-led.c
  * @use_rts_for_ht: use rts/cts protection for HT traffic
  * @chain_noise_num_beacons: number of beacons used to compute chain noise
+ * @adv_thermal_throttle: support advance thermal throttle
+ * @support_ct_kill_exit: support ct kill exit condition
  *
  * We enable the driver to be backward compatible wrt API version. The
  * driver specifies which APIs it supports (with @ucode_api_max being the
@@ -262,7 +265,12 @@ struct iwl_cfg {
 	const struct iwl_mod_params *mod_params;
 	u8   valid_tx_ant;
 	u8   valid_rx_ant;
-	bool need_pll_cfg;
+
+	/* for iwl_apm_init() */
+	u32 pll_cfg_val;
+	bool set_l0s;
+	bool use_bsm;
+
 	bool use_isr_legacy;
 	enum iwl_pa_type pa_type;
 	const u16 max_ll_items;
@@ -273,6 +281,8 @@ struct iwl_cfg {
 	bool use_rts_for_ht;
 	int chain_noise_num_beacons;
 	const bool supports_idle;
+	bool adv_thermal_throttle;
+	bool support_ct_kill_exit;
 };
 
 /***************************
@@ -663,6 +673,7 @@ void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
 					   struct iwl_rx_mem_buffer *rxb);
 void iwl_apm_stop(struct iwl_priv *priv);
 int iwl_apm_stop_master(struct iwl_priv *priv);
+int iwl_apm_init(struct iwl_priv *priv);
 
 void iwl_setup_rxon_timing(struct iwl_priv *priv);
 static inline int iwl_send_rxon_assoc(struct iwl_priv *priv)
