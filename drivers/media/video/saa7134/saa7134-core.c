@@ -1306,7 +1306,7 @@ static struct pci_driver saa7134_pci_driver = {
 #endif
 };
 
-static int saa7134_init(void)
+static int __init saa7134_init(void)
 {
 	INIT_LIST_HEAD(&saa7134_devlist);
 	printk(KERN_INFO "saa7130/34: v4l2 driver version %d.%d.%d loaded\n",
@@ -1320,7 +1320,7 @@ static int saa7134_init(void)
 	return pci_register_driver(&saa7134_pci_driver);
 }
 
-static void saa7134_fini(void)
+static void __exit saa7134_fini(void)
 {
 	pci_unregister_driver(&saa7134_pci_driver);
 }
