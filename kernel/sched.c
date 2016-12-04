@@ -296,13 +296,12 @@ static DEFINE_PER_CPU_SHARED_ALIGNED(struct rt_rq, init_rt_rq_var);
 #endif /* CONFIG_RT_GROUP_SCHED */
 #else /* !CONFIG_USER_SCHED */
 #define root_task_group init_task_group
+#endif
 
 /* task_group_lock serializes add/remove of task groups and also changes to
  * a task group's cpu shares.
  */
 static DEFINE_SPINLOCK(task_group_lock);
-
-#ifdef CONFIG_FAIR_GROUP_SCHED
 
 #ifdef CONFIG_SMP
 static int root_task_group_empty(void)
@@ -311,7 +310,12 @@ static int root_task_group_empty(void)
 }
 #endif
 
+#ifdef CONFIG_FAIR_GROUP_SCHED
+#ifdef CONFIG_USER_SCHED
+# define INIT_TASK_GROUP_LOAD	(2*NICE_0_LOAD)
+#else /* !CONFIG_USER_SCHED */
 # define INIT_TASK_GROUP_LOAD	NICE_0_LOAD
+#endif /* CONFIG_USER_SCHED */
 
 /*
  * A weight of 0 or 1 can cause arithmetics problems.
