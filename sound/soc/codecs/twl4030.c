@@ -613,6 +613,27 @@ static int handsfreerpga_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+static int vibramux_event(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *kcontrol, int event)
+{
+	twl4030_write(w->codec, TWL4030_REG_VIBRA_SET, 0xff);
+	return 0;
+}
+
+static int apll_event(struct snd_soc_dapm_widget *w,
+		struct snd_kcontrol *kcontrol, int event)
+{
+	switch (event) {
+	case SND_SOC_DAPM_PRE_PMU:
+		twl4030_apll_enable(w->codec, 1);
+		break;
+	case SND_SOC_DAPM_POST_PMD:
+		twl4030_apll_enable(w->codec, 0);
+		break;
+	}
+	return 0;
+}
+
 static void headset_ramp(struct snd_soc_codec *codec, int ramp)
 {
 	struct snd_soc_device *socdev = codec->socdev;
@@ -1178,6 +1199,9 @@ static const struct snd_soc_dapm_widget twl4030_dapm_widgets[] = {
 	SND_SOC_DAPM_MIXER("Analog Voice Playback Mixer",
 			TWL4030_REG_VDL_APGA_CTL, 0, 0, NULL, 0),
 
+	SND_SOC_DAPM_SUPPLY("APLL Enable", SND_SOC_NOPM, 0, 0, apll_event,
+			    SND_SOC_DAPM_PRE_PMU|SND_SOC_DAPM_POST_PMD),
+
 	/* Output MIXER controls */
 	/* Earpiece */
 	SND_SOC_DAPM_MIXER("Earpiece Mixer", SND_SOC_NOPM, 0, 0,
@@ -1243,8 +1267,9 @@ static const struct snd_soc_dapm_widget twl4030_dapm_widgets[] = {
 			0, 0, NULL, 0, handsfreerpga_event,
 			SND_SOC_DAPM_POST_PMU|SND_SOC_DAPM_POST_PMD),
 	/* Vibra */
-	SND_SOC_DAPM_MUX("Vibra Mux", TWL4030_REG_VIBRA_CTL, 0, 0,
-		&twl4030_dapm_vibra_control),
+	SND_SOC_DAPM_MUX_E("Vibra Mux", TWL4030_REG_VIBRA_CTL, 0, 0,
+			   &twl4030_dapm_vibra_control, vibramux_event,
+			   SND_SOC_DAPM_PRE_PMU),
 	SND_SOC_DAPM_MUX("Vibra Route", SND_SOC_NOPM, 0, 0,
 		&twl4030_dapm_vibrapath_control),
 
@@ -1303,6 +1328,13 @@ static const struct snd_soc_dapm_route intercon[] = {
 	{"Digital L2 Playback Mixer", NULL, "DAC Left2"},
 	{"Digital R2 Playback Mixer", NULL, "DAC Right2"},
 	{"Digital Voice Playback Mixer", NULL, "DAC Voice"},
+
+	/* Supply for the digital part (APLL) */
+	{"Digital R1 Playback Mixer", NULL, "APLL Enable"},
+	{"Digital L1 Playback Mixer", NULL, "APLL Enable"},
+	{"Digital R2 Playback Mixer", NULL, "APLL Enable"},
+	{"Digital L2 Playback Mixer", NULL, "APLL Enable"},
+	{"Digital Voice Playback Mixer", NULL, "APLL Enable"},
 
 	{"Analog L1 Playback Mixer", NULL, "Digital L1 Playback Mixer"},
 	{"Analog R1 Playback Mixer", NULL, "Digital R1 Playback Mixer"},
@@ -1417,6 +1449,11 @@ static const struct snd_soc_dapm_route intercon[] = {
 	{"ADC Virtual Left2", NULL, "TX2 Capture Route"},
 	{"ADC Virtual Right2", NULL, "TX2 Capture Route"},
 
+	{"ADC Virtual Left1", NULL, "APLL Enable"},
+	{"ADC Virtual Right1", NULL, "APLL Enable"},
+	{"ADC Virtual Left2", NULL, "APLL Enable"},
+	{"ADC Virtual Right2", NULL, "APLL Enable"},
+
 	/* Analog bypass routes */
 	{"Right1 Analog Loopback", "Switch", "Analog Right"},
 	{"Left1 Analog Loopback", "Switch", "Analog Left"},
@@ -1464,14 +1501,12 @@ static int twl4030_set_bias_level(struct snd_soc_codec *codec,
 {
 	switch (level) {
 	case SND_SOC_BIAS_ON:
-		twl4030_apll_enable(codec, 1);
 		break;
 	case SND_SOC_BIAS_PREPARE:
 		break;
 	case SND_SOC_BIAS_STANDBY:
 		if (codec->bias_level == SND_SOC_BIAS_OFF)
 			twl4030_power_up(codec);
-		twl4030_apll_enable(codec, 0);
 		break;
 	case SND_SOC_BIAS_OFF:
 		twl4030_power_down(codec);
