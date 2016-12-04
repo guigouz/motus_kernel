@@ -34,16 +34,18 @@
 #include <net/ip.h>
 #include <linux/ipv6.h>
 #include <linux/inetdevice.h>
+#include <linux/sysfs.h>
 
-MODULE_DESCRIPTION("NetXen Multi port (1/10) Gigabit Network Driver");
+MODULE_DESCRIPTION("QLogic/NetXen (1/10) GbE Converged Ethernet Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(NETXEN_NIC_LINUX_VERSIONID);
 MODULE_FIRMWARE(NX_P2_MN_ROMIMAGE_NAME);
 MODULE_FIRMWARE(NX_P3_CT_ROMIMAGE_NAME);
 MODULE_FIRMWARE(NX_P3_MN_ROMIMAGE_NAME);
+MODULE_FIRMWARE(NX_UNIFIED_ROMIMAGE_NAME);
 
 char netxen_nic_driver_name[] = "netxen_nic";
-static char netxen_nic_driver_string[] = "NetXen Network Driver version "
+static char netxen_nic_driver_string[] = "QLogic/NetXen Network Driver v"
     NETXEN_NIC_LINUX_VERSIONID;
 
 static int port_mode = NETXEN_PORT_MODE_AUTO_NEG;
@@ -57,7 +59,6 @@ static int use_msi_x = 1;
 
 static unsigned long auto_fw_reset = AUTO_FW_RESET_ENABLED;
 
-/* Local functions to NetXen NIC driver */
 static int __devinit netxen_nic_probe(struct pci_dev *pdev,
 		const struct pci_device_id *ent);
 static void __devexit netxen_nic_remove(struct pci_dev *pdev);
@@ -94,6 +95,11 @@ static void netxen_config_indev_addr(struct net_device *dev, unsigned long);
 #define ENTRY(device) \
 	{PCI_DEVICE(PCI_VENDOR_ID_NETXEN, (device)), \
 	.class = PCI_CLASS_NETWORK_ETHERNET << 8, .class_mask = ~0}
+#define ENTRY2(device) \
+	{PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, (device)), \
+	.class = PCI_CLASS_NETWORK_ETHERNET << 8, .class_mask = ~0}
+
+#define PCI_DEVICE_ID_QLOGIC_QLE824X	0x8020
 
 static struct pci_device_id netxen_pci_tbl[] __devinitdata = {
 	ENTRY(PCI_DEVICE_ID_NX2031_10GXSR),
@@ -104,6 +110,7 @@ static struct pci_device_id netxen_pci_tbl[] __devinitdata = {
 	ENTRY(PCI_DEVICE_ID_NX2031_XG_MGMT),
 	ENTRY(PCI_DEVICE_ID_NX2031_XG_MGMT2),
 	ENTRY(PCI_DEVICE_ID_NX3031),
+	ENTRY2(PCI_DEVICE_ID_QLOGIC_QLE824X),
 	{0,}
 };
 
@@ -729,7 +736,8 @@ netxen_check_options(struct netxen_adapter *adapter)
 	if (adapter->portnum == 0) {
 		get_brd_name_by_type(adapter->ahw.board_type, brd_name);
 
-		printk(KERN_INFO "NetXen %s Board S/N %s  Chip rev 0x%x\n",
+		pr_info("%s: %s Board S/N %s  Chip rev 0x%x\n",
+				module_name(THIS_MODULE),
 				brd_name, serial_num, adapter->ahw.revision_id);
 	}
 
@@ -1211,16 +1219,10 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int pci_func_id = PCI_FUNC(pdev->devfn);
 	uint8_t revision_id;
 
-	if (pdev->class != 0x020000) {
-		printk(KERN_DEBUG "NetXen function %d, class %x will not "
-				"be enabled.\n",pci_func_id, pdev->class);
-		return -ENODEV;
-	}
-
 	if (pdev->revision >= NX_P3_A0 && pdev->revision < NX_P3_B1) {
-		printk(KERN_WARNING "NetXen chip revisions between 0x%x-0x%x"
+		pr_warning("%s: chip revisions between 0x%x-0x%x"
 				"will not be enabled.\n",
-				NX_P3_A0, NX_P3_B1);
+				module_name(THIS_MODULE), NX_P3_A0, NX_P3_B1);
 		return -ENODEV;
 	}
 
@@ -2505,6 +2507,7 @@ static struct bin_attribute bin_attr_mem = {
 	.write = netxen_sysfs_write_mem,
 };
 
+#ifdef CONFIG_MODULES
 static ssize_t
 netxen_store_auto_fw_reset(struct module_attribute *mattr,
 		struct module *mod, const char *buf, size_t count)
@@ -2539,6 +2542,7 @@ static struct module_attribute mod_attr_fw_reset = {
 	.show = netxen_show_auto_fw_reset,
 	.store = netxen_store_auto_fw_reset,
 };
+#endif
 
 static void
 netxen_create_sysfs_entries(struct netxen_adapter *adapter)
@@ -2744,7 +2748,9 @@ static struct pci_driver netxen_driver = {
 
 static int __init netxen_init_module(void)
 {
+#ifdef CONFIG_MODULES
 	struct module *mod = THIS_MODULE;
+#endif
 
 	printk(KERN_INFO "%s\n", netxen_nic_driver_string);
 
@@ -2753,9 +2759,11 @@ static int __init netxen_init_module(void)
 	register_inetaddr_notifier(&netxen_inetaddr_cb);
 #endif
 
+#ifdef CONFIG_MODULES
 	if (sysfs_create_file(&mod->mkobj.kobj, &mod_attr_fw_reset.attr))
 		printk(KERN_ERR "%s: Failed to create auto_fw_reset "
 				"sysfs entry.", netxen_nic_driver_name);
+#endif
 
 	return pci_register_driver(&netxen_driver);
 }
@@ -2764,9 +2772,11 @@ module_init(netxen_init_module);
 
 static void __exit netxen_exit_module(void)
 {
+#ifdef CONFIG_MODULES
 	struct module *mod = THIS_MODULE;
 
 	sysfs_remove_file(&mod->mkobj.kobj, &mod_attr_fw_reset.attr);
+#endif
 
 	pci_unregister_driver(&netxen_driver);
 
