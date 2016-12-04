@@ -1571,7 +1571,7 @@ i915_gem_object_move_to_inactive(struct drm_gem_object *obj)
  *
  * Returned sequence numbers are nonzero on success.
  */
-static uint32_t
+uint32_t
 i915_add_request(struct drm_device *dev, struct drm_file *file_priv,
 		 uint32_t flush_domains)
 {
@@ -1605,7 +1605,7 @@ i915_add_request(struct drm_device *dev, struct drm_file *file_priv,
 	OUT_RING(MI_USER_INTERRUPT);
 	ADVANCE_LP_RING();
 
-	DRM_DEBUG("%d\n", seqno);
+	DRM_DEBUG_DRIVER("%d\n", seqno);
 
 	request->seqno = seqno;
 	request->emitted_jiffies = jiffies;
@@ -1810,7 +1810,7 @@ i915_gem_retire_work_handler(struct work_struct *work)
 	mutex_unlock(&dev->struct_mutex);
 }
 
-static int
+int
 i915_do_wait_request(struct drm_device *dev, uint32_t seqno, int interruptible)
 {
 	drm_i915_private_t *dev_priv = dev->dev_private;
@@ -1878,24 +1878,6 @@ static int
 i915_wait_request(struct drm_device *dev, uint32_t seqno)
 {
 	return i915_do_wait_request(dev, seqno, 1);
-}
-
-/**
- * Waits for the ring to finish up to the latest request. Usefull for waiting
- * for flip events, e.g for the overlay support. */
-int i915_lp_ring_sync(struct drm_device *dev)
-{
-	uint32_t seqno;
-	int ret;
-
-	seqno = i915_add_request(dev, NULL, 0);
-
-	if (seqno == 0)
-		return -ENOMEM;
-
-	ret = i915_do_wait_request(dev, seqno, 0);
-	BUG_ON(ret == -ERESTARTSYS);
-	return ret;
 }
 
 static void
@@ -4463,7 +4445,7 @@ i915_gem_init_hws(struct drm_device *dev)
 	memset(dev_priv->hw_status_page, 0, PAGE_SIZE);
 	I915_WRITE(HWS_PGA, dev_priv->status_gfx_addr);
 	I915_READ(HWS_PGA); /* posting read */
-	DRM_DEBUG("hws offset: 0x%08x\n", dev_priv->status_gfx_addr);
+	DRM_DEBUG_DRIVER("hws offset: 0x%08x\n", dev_priv->status_gfx_addr);
 
 	return 0;
 }
@@ -4908,7 +4890,7 @@ i915_gem_phys_pwrite(struct drm_device *dev, struct drm_gem_object *obj,
 	user_data = (char __user *) (uintptr_t) args->data_ptr;
 	obj_addr = obj_priv->phys_obj->handle->vaddr + args->offset;
 
-	DRM_DEBUG("obj_addr %p, %lld\n", obj_addr, args->size);
+	DRM_DEBUG_DRIVER("obj_addr %p, %lld\n", obj_addr, args->size);
 	ret = copy_from_user(obj_addr, user_data, args->size);
 	if (ret)
 		return -EFAULT;
