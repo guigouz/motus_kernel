@@ -232,6 +232,21 @@ static struct iwl_ops iwl6000_ops = {
 	.led = &iwlagn_led_ops,
 };
 
+static struct iwl_hcmd_utils_ops iwl6050_hcmd_utils = {
+	.get_hcmd_size = iwl5000_get_hcmd_size,
+	.build_addsta_hcmd = iwl5000_build_addsta_hcmd,
+	.rts_tx_cmd_flag = iwl5000_rts_tx_cmd_flag,
+	.calc_rssi = iwl5000_calc_rssi,
+};
+
+static struct iwl_ops iwl6050_ops = {
+	.ucode = &iwl5000_ucode,
+	.lib = &iwl6000_lib,
+	.hcmd = &iwl5000_hcmd,
+	.utils = &iwl6050_hcmd_utils,
+	.led = &iwlagn_led_ops,
+};
+
 
 /*
  * "h": Hybrid configuration, use both internal and external Power Amplifier
@@ -397,9 +412,9 @@ struct iwl_cfg iwl6050_2agn_cfg = {
 	.ucode_api_max = IWL6050_UCODE_API_MAX,
 	.ucode_api_min = IWL6050_UCODE_API_MIN,
 	.sku = IWL_SKU_A|IWL_SKU_G|IWL_SKU_N,
-	.ops = &iwl6000_ops,
+	.ops = &iwl6050_ops,
 	.eeprom_size = OTP_LOW_IMAGE_SIZE,
-	.eeprom_ver = EEPROM_6000_EEPROM_VERSION,
+	.eeprom_ver = EEPROM_6050_EEPROM_VERSION,
 	.eeprom_calib_ver = EEPROM_5000_TX_POWER_VERSION,
 	.num_of_queues = IWL50_NUM_QUEUES,
 	.num_of_ampdu_queues = IWL50_NUM_AMPDU_QUEUES,
@@ -408,7 +423,7 @@ struct iwl_cfg iwl6050_2agn_cfg = {
 	.valid_rx_ant = ANT_AB,
 	.need_pll_cfg = false,
 	.pa_type = IWL_PA_SYSTEM,
-	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
+	.max_ll_items = OTP_MAX_LL_ITEMS_6x50,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
 	.led_compensation = 51,
@@ -423,9 +438,9 @@ struct iwl_cfg iwl6050_2abg_cfg = {
 	.ucode_api_max = IWL6050_UCODE_API_MAX,
 	.ucode_api_min = IWL6050_UCODE_API_MIN,
 	.sku = IWL_SKU_A|IWL_SKU_G,
-	.ops = &iwl6000_ops,
+	.ops = &iwl6050_ops,
 	.eeprom_size = OTP_LOW_IMAGE_SIZE,
-	.eeprom_ver = EEPROM_6000_EEPROM_VERSION,
+	.eeprom_ver = EEPROM_6050_EEPROM_VERSION,
 	.eeprom_calib_ver = EEPROM_5000_TX_POWER_VERSION,
 	.num_of_queues = IWL50_NUM_QUEUES,
 	.num_of_ampdu_queues = IWL50_NUM_AMPDU_QUEUES,
@@ -434,7 +449,7 @@ struct iwl_cfg iwl6050_2abg_cfg = {
 	.valid_rx_ant = ANT_AB,
 	.need_pll_cfg = false,
 	.pa_type = IWL_PA_SYSTEM,
-	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
+	.max_ll_items = OTP_MAX_LL_ITEMS_6x50,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
 	.led_compensation = 51,
@@ -474,9 +489,9 @@ struct iwl_cfg iwl6050_3agn_cfg = {
 	.ucode_api_max = IWL6050_UCODE_API_MAX,
 	.ucode_api_min = IWL6050_UCODE_API_MIN,
 	.sku = IWL_SKU_A|IWL_SKU_G|IWL_SKU_N,
-	.ops = &iwl6000_ops,
+	.ops = &iwl6050_ops,
 	.eeprom_size = OTP_LOW_IMAGE_SIZE,
-	.eeprom_ver = EEPROM_6000_EEPROM_VERSION,
+	.eeprom_ver = EEPROM_6050_EEPROM_VERSION,
 	.eeprom_calib_ver = EEPROM_5000_TX_POWER_VERSION,
 	.num_of_queues = IWL50_NUM_QUEUES,
 	.num_of_ampdu_queues = IWL50_NUM_AMPDU_QUEUES,
@@ -485,7 +500,7 @@ struct iwl_cfg iwl6050_3agn_cfg = {
 	.valid_rx_ant = ANT_ABC,
 	.need_pll_cfg = false,
 	.pa_type = IWL_PA_SYSTEM,
-	.max_ll_items = OTP_MAX_LL_ITEMS_6x00,
+	.max_ll_items = OTP_MAX_LL_ITEMS_6x50,
 	.shadow_ram_support = true,
 	.ht_greenfield_support = true,
 	.led_compensation = 51,
