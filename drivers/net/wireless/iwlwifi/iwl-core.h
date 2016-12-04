@@ -109,7 +109,6 @@ struct iwl_hcmd_utils_ops {
 
 struct iwl_apm_ops {
 	int (*init)(struct iwl_priv *priv);
-	int (*reset)(struct iwl_priv *priv);
 	void (*stop)(struct iwl_priv *priv);
 	void (*config)(struct iwl_priv *priv);
 	int (*set_pwr_src)(struct iwl_priv *priv, enum iwl_pwr_src src);
@@ -205,7 +204,6 @@ struct iwl_mod_params {
 	int sw_crypto;		/* def: 0 = using hardware encryption */
 	int disable_hw_scan;	/* def: 0 = use h/w scan */
 	int num_of_queues;	/* def: HW dependent */
-	int num_of_ampdu_queues;/* def: HW dependent */
 	int disable_11n;	/* def: 0 = 11n capabilities enabled */
 	int amsdu_size_8K;	/* def: 1 = enable 8K amsdu size */
 	int antenna;  		/* def: 0 = both antennas (use diversity) */
@@ -258,6 +256,8 @@ struct iwl_cfg {
 	int eeprom_size;
 	u16  eeprom_ver;
 	u16  eeprom_calib_ver;
+	int num_of_queues;	/* def: HW dependent */
+	int num_of_ampdu_queues;/* def: HW dependent */
 	const struct iwl_ops *ops;
 	const struct iwl_mod_params *mod_params;
 	u8   valid_tx_ant;
@@ -327,6 +327,10 @@ void iwl_config_ap(struct iwl_priv *priv);
 int iwl_mac_get_tx_stats(struct ieee80211_hw *hw,
 			 struct ieee80211_tx_queue_stats *stats);
 void iwl_mac_reset_tsf(struct ieee80211_hw *hw);
+int iwl_alloc_txq_mem(struct iwl_priv *priv);
+void iwl_free_txq_mem(struct iwl_priv *priv);
+void iwlcore_rts_tx_cmd_flag(struct ieee80211_tx_info *info,
+				__le32 *tx_flags);
 #ifdef CONFIG_IWLWIFI_DEBUGFS
 int iwl_alloc_traffic_mem(struct iwl_priv *priv);
 void iwl_free_traffic_mem(struct iwl_priv *priv);
@@ -527,7 +531,7 @@ int iwl_send_cmd_pdu_async(struct iwl_priv *priv, u8 id, u16 len,
 			   const void *data,
 			   void (*callback)(struct iwl_priv *priv,
 					    struct iwl_device_cmd *cmd,
-					    struct sk_buff *skb));
+					    struct iwl_rx_packet *pkt));
 
 int iwl_enqueue_hcmd(struct iwl_priv *priv, struct iwl_host_cmd *cmd);
 

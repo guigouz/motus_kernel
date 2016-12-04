@@ -421,15 +421,19 @@ void iwl_hw_txq_ctx_free(struct iwl_priv *priv)
 	int txq_id;
 
 	/* Tx queues */
-	for (txq_id = 0; txq_id < priv->hw_params.max_txq_num; txq_id++)
-		if (txq_id == IWL_CMD_QUEUE_NUM)
-			iwl_cmd_queue_free(priv);
-		else
-			iwl_tx_queue_free(priv, txq_id);
-
+	if (priv->txq)
+		for (txq_id = 0; txq_id < priv->hw_params.max_txq_num;
+		     txq_id++)
+			if (txq_id == IWL_CMD_QUEUE_NUM)
+				iwl_cmd_queue_free(priv);
+			else
+				iwl_tx_queue_free(priv, txq_id);
 	iwl_free_dma_ptr(priv, &priv->kw);
 
 	iwl_free_dma_ptr(priv, &priv->scd_bc_tbls);
+
+	/* free tx queue structure */
+	iwl_free_txq_mem(priv);
 }
 EXPORT_SYMBOL(iwl_hw_txq_ctx_free);
 
@@ -461,6 +465,12 @@ int iwl_txq_ctx_reset(struct iwl_priv *priv)
 		IWL_ERR(priv, "Keep Warm allocation failed\n");
 		goto error_kw;
 	}
+
+	/* allocate tx queue structure */
+	ret = iwl_alloc_txq_mem(priv);
+	if (ret)
+		goto error;
+
 	spin_lock_irqsave(&priv->lock, flags);
 
 	/* Turn off all Tx DMA fifos */
@@ -597,9 +607,7 @@ static void iwl_tx_cmd_build_rate(struct iwl_priv *priv,
 	u8 rate_plcp;
 
 	/* Set retry limit on DATA packets and Probe Responses*/
-	if (priv->data_retry_limit != -1)
-		data_retry_limit = priv->data_retry_limit;
-	else if (ieee80211_is_probe_resp(fc))
+	if (ieee80211_is_probe_resp(fc))
 		data_retry_limit = 3;
 	else
 		data_retry_limit = IWL_DEFAULT_TX_RETRY;
@@ -1171,7 +1179,7 @@ static void iwl_hcmd_queue_reclaim(struct iwl_priv *priv, int txq_id,
  */
 void iwl_tx_cmd_complete(struct iwl_priv *priv, struct iwl_rx_mem_buffer *rxb)
 {
-	struct iwl_rx_packet *pkt = (struct iwl_rx_packet *)rxb->skb->data;
+	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	u16 sequence = le16_to_cpu(pkt->hdr.sequence);
 	int txq_id = SEQ_TO_QUEUE(sequence);
 	int index = SEQ_TO_INDEX(sequence);
@@ -1198,10 +1206,10 @@ void iwl_tx_cmd_complete(struct iwl_priv *priv, struct iwl_rx_mem_buffer *rxb)
 
 	/* Input error checking is done when commands are added to queue. */
 	if (meta->flags & CMD_WANT_SKB) {
-		meta->source->reply_skb = rxb->skb;
-		rxb->skb = NULL;
+		meta->source->reply_page = (unsigned long)rxb_addr(rxb);
+		rxb->page = NULL;
 	} else if (meta->callback)
-		meta->callback(priv, cmd, rxb->skb);
+		meta->callback(priv, cmd, pkt);
 
 	iwl_hcmd_queue_reclaim(priv, txq_id, index, cmd_index);
 
@@ -1472,7 +1480,7 @@ static int iwl_tx_status_reply_compressed_ba(struct iwl_priv *priv,
 void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
 					   struct iwl_rx_mem_buffer *rxb)
 {
-	struct iwl_rx_packet *pkt = (struct iwl_rx_packet *)rxb->skb->data;
+	struct iwl_rx_packet *pkt = rxb_addr(rxb);
 	struct iwl_compressed_ba_resp *ba_resp = &pkt->u.compressed_ba;
 	struct iwl_tx_queue *txq = NULL;
 	struct iwl_ht_agg *agg;
