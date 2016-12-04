@@ -2171,6 +2171,10 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 
 	if (old_cpu != new_cpu) {
 		p->se.nr_migrations++;
+#ifdef CONFIG_SCHEDSTATS
+		if (task_hot(p, old_rq->clock, NULL))
+			schedstat_inc(p, se.nr_forced2_migrations);
+#endif
 		perf_sw_event(PERF_COUNT_SW_CPU_MIGRATIONS,
 				     1, 1, NULL, 0);
 	}
