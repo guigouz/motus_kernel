@@ -17,8 +17,6 @@
 #include <asm/atomic.h>
 
 
-#define get_irq_desc(irq) (&irq_desc[(irq)])
-
 /* Define a way to iterate across irqs. */
 #define for_each_irq(i) \
 	for ((i) = 0; (i) < NR_IRQS; ++(i))
@@ -34,11 +32,14 @@ extern atomic_t ppc_n_lost_interrupts;
  */
 #define NO_IRQ_IGNORE		((unsigned int)-1)
 
-/* Total number of virq in the platform (make it a CONFIG_* option ? */
-#define NR_IRQS		512
+/* Total number of virq in the platform */
+#define NR_IRQS		CONFIG_NR_IRQS
 
 /* Number of irqs reserved for the legacy controller */
 #define NUM_ISA_INTERRUPTS	16
+
+/* Same thing, used by the generic IRQ code */
+#define NR_IRQS_LEGACY		NUM_ISA_INTERRUPTS
 
 /* This type is the placeholder for a hardware interrupt number. It has to
  * be big enough to enclose whatever representation is used by a given
