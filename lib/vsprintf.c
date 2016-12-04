@@ -593,35 +593,81 @@ static char *symbol_string(char *buf, char *end, void *ptr,
 }
 
 static char *resource_string(char *buf, char *end, struct resource *res,
-				struct printf_spec spec)
+				struct printf_spec spec, const char *fmt)
 {
 #ifndef IO_RSRC_PRINTK_SIZE
-#define IO_RSRC_PRINTK_SIZE	4
+#define IO_RSRC_PRINTK_SIZE	6
 #endif
 
 #ifndef MEM_RSRC_PRINTK_SIZE
-#define MEM_RSRC_PRINTK_SIZE	8
+#define MEM_RSRC_PRINTK_SIZE	10
 #endif
-	struct printf_spec num_spec = {
+	struct printf_spec hex_spec = {
 		.base = 16,
 		.precision = -1,
 		.flags = SPECIAL | SMALL | ZEROPAD,
 	};
-	/* room for the actual numbers, the two "0x", -, [, ] and the final zero */
-	char sym[4*sizeof(resource_size_t) + 8];
+	struct printf_spec dec_spec = {
+		.base = 10,
+		.precision = -1,
+		.flags = 0,
+	};
+	struct printf_spec str_spec = {
+		.field_width = -1,
+		.precision = 10,
+		.flags = LEFT,
+	};
+	struct printf_spec flag_spec = {
+		.base = 16,
+		.precision = -1,
+		.flags = SPECIAL | SMALL,
+	};
+	/*
+	 * room for three actual numbers (decimal or hex), plus
+	 * "[mem 0x-0x 64bit pref disabled flags 0x]\0"
+	 */
+	char sym[3*3*sizeof(resource_size_t) + 41];
 	char *p = sym, *pend = sym + sizeof(sym);
-	int size = -1;
+	int size = -1, addr = 0;
 
-	if (res->flags & IORESOURCE_IO)
+	if (res->flags & IORESOURCE_IO) {
 		size = IO_RSRC_PRINTK_SIZE;
-	else if (res->flags & IORESOURCE_MEM)
+		addr = 1;
+	} else if (res->flags & IORESOURCE_MEM) {
 		size = MEM_RSRC_PRINTK_SIZE;
+		addr = 1;
+	}
 
 	*p++ = '[';
-	num_spec.field_width = size;
-	p = number(p, pend, res->start, num_spec);
-	*p++ = '-';
-	p = number(p, pend, res->end, num_spec);
+	if (fmt[1] == 't' || fmt[1] == 'f') {
+		if (res->flags & IORESOURCE_IO)
+			p = string(p, pend, "io  ", str_spec);
+		else if (res->flags & IORESOURCE_MEM)
+			p = string(p, pend, "mem ", str_spec);
+		else if (res->flags & IORESOURCE_IRQ)
+			p = string(p, pend, "irq ", str_spec);
+		else if (res->flags & IORESOURCE_DMA)
+			p = string(p, pend, "dma ", str_spec);
+	}
+	hex_spec.field_width = size;
+	p = number(p, pend, res->start, addr ? hex_spec : dec_spec);
+	if (res->start != res->end) {
+		*p++ = '-';
+		p = number(p, pend, res->end, addr ? hex_spec : dec_spec);
+	}
+	if (fmt[1] == 't' || fmt[1] == 'f') {
+		if (res->flags & IORESOURCE_MEM_64)
+			p = string(p, pend, " 64bit", str_spec);
+		if (res->flags & IORESOURCE_PREFETCH)
+			p = string(p, pend, " pref", str_spec);
+		if (res->flags & IORESOURCE_DISABLED)
+			p = string(p, pend, " disabled", str_spec);
+		if (fmt[1] == 'f') {
+			p = string(p, pend, " flags ", str_spec);
+			p = number(p, pend, res->flags & ~IORESOURCE_TYPE_BITS,
+				   flag_spec);
+		}
+	}
 	*p++ = ']';
 	*p = 0;
 
@@ -799,8 +845,10 @@ static char *ip4_addr_string(char *buf, char *end, const u8 *addr,
  * - 'f' For simple symbolic function names without offset
  * - 'S' For symbolic direct pointers with offset
  * - 's' For symbolic direct pointers without offset
- * - 'R' For a struct resource pointer, it prints the range of
- *       addresses (not the name nor the flags)
+ * - 'R' For a struct resource pointer, print:
+ *       R   address range only ([0x0-0x1f])
+ *       Rt  type and range ([mem 0x0-0x1f 64bit pref])
+ *       Rf  type, range, and flags ([mem 0x0-0x1f 64bit pref flags 0x1])
  * - 'M' For a 6-byte MAC address, it prints the address in the
  *       usual colon-separated hex notation
  * - 'm' For a 6-byte MAC address, it prints the hex address without colons
@@ -830,7 +878,7 @@ static char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	case 'S':
 		return symbol_string(buf, end, ptr, spec, *fmt);
 	case 'R':
-		return resource_string(buf, end, ptr, spec);
+		return resource_string(buf, end, ptr, spec, fmt);
 	case 'M':			/* Colon separated: 00:01:02:03:04:05 */
 	case 'm':			/* Contiguous: 000102030405 */
 		return mac_address_string(buf, end, ptr, spec, fmt);
