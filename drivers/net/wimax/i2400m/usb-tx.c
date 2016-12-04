@@ -105,7 +105,7 @@ int i2400mu_tx(struct i2400mu *i2400mu, struct i2400m_msg_hdr *tx_msg,
 	usb_pipe = usb_sndbulkpipe(i2400mu->usb_dev, epd->bEndpointAddress);
 retry:
 	result = usb_bulk_msg(i2400mu->usb_dev, usb_pipe,
-			      tx_msg, tx_msg_size, &sent_size, HZ);
+			      tx_msg, tx_msg_size, &sent_size, 200);
 	usb_mark_last_busy(i2400mu->usb_dev);
 	switch (result) {
 	case 0:
@@ -115,6 +115,28 @@ retry:
 			result = -EIO;
 		}
 		break;
+	case -EPIPE:
+		/*
+		 * Stall -- maybe the device is choking with our
+		 * requests. Clear it and give it some time. If they
+		 * happen to often, it might be another symptom, so we
+		 * reset.
+		 *
+		 * No error handling for usb_clear_halt(0; if it
+		 * works, the retry works; if it fails, this switch
+		 * does the error handling for us.
+		 */
+		if (edc_inc(&i2400mu->urb_edc,
+			    10 * EDC_MAX_ERRORS, EDC_ERROR_TIMEFRAME)) {
+			dev_err(dev, "BM-CMD: too many stalls in "
+				"URB; resetting device\n");
+			usb_queue_reset_device(i2400mu->usb_iface);
+			/* fallthrough */
+		} else {
+			usb_clear_halt(i2400mu->usb_dev, usb_pipe);
+			msleep(10);	/* give the device some time */
+			goto retry;
+		}
 	case -EINVAL:			/* while removing driver */
 	case -ENODEV:			/* dev disconnect ... */
 	case -ENOENT:			/* just ignore it */

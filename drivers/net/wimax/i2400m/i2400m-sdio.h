@@ -100,6 +100,14 @@ enum {
  * @tx_workqueue: workqeueue used for data TX; we don't use the
  *     system's workqueue as that might cause deadlocks with code in
  *     the bus-generic driver.
+ *
+ * @debugfs_dentry: dentry for the SDIO specific debugfs files
+ *
+ *     Note this value is set to NULL upon destruction; this is
+ *     because some routinges use it to determine if we are inside the
+ *     probe() path or some other path. When debugfs is disabled,
+ *     creation sets the dentry to '(void*) -ENODEV', which is valid
+ *     for the test.
  */
 struct i2400ms {
 	struct i2400m i2400m;		/* FIRST! See doc */
@@ -114,6 +122,9 @@ struct i2400ms {
 	wait_queue_head_t bm_wfa_wq;
 	int bm_wait_result;
 	size_t bm_ack_size;
+
+	/* Device is any of the iwmc3200 SKUs */
+	unsigned iwmc3200:1;
 };
 
 
