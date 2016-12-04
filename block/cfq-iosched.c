@@ -1043,6 +1043,11 @@ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
 {
 	struct cfq_queue *cfqq;
 
+	if (!cfq_cfqq_sync(cur_cfqq))
+		return NULL;
+	if (CFQQ_SEEKY(cur_cfqq))
+		return NULL;
+
 	/*
 	 * We should notice if some of the queues are cooperating, eg
 	 * working closely on the same area of the disk. In that case,
@@ -1056,6 +1061,8 @@ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
 	 * It only makes sense to merge sync queues.
 	 */
 	if (!cfq_cfqq_sync(cfqq))
+		return NULL;
+	if (CFQQ_SEEKY(cfqq))
 		return NULL;
 
 	return cfqq;
@@ -1188,7 +1195,7 @@ static int cfqq_process_refs(struct cfq_queue *cfqq)
 
 static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
 {
-	int process_refs;
+	int process_refs, new_process_refs;
 	struct cfq_queue *__cfqq;
 
 	/* Avoid a circular list and skip interim queue merges */
@@ -1206,8 +1213,17 @@ static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
 	if (process_refs == 0)
 		return;
 
-	cfqq->new_cfqq = new_cfqq;
-	atomic_add(process_refs, &new_cfqq->ref);
+	/*
+	 * Merge in the direction of the lesser amount of work.
+	 */
+	new_process_refs = cfqq_process_refs(new_cfqq);
+	if (new_process_refs >= process_refs) {
+		cfqq->new_cfqq = new_cfqq;
+		atomic_add(process_refs, &new_cfqq->ref);
+	} else {
+		new_cfqq->new_cfqq = cfqq;
+		atomic_add(new_process_refs, &cfqq->ref);
+	}
 }
 
 /*
@@ -1241,7 +1257,7 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
 	 * cooperators and put the close queue at the front of the service
 	 * tree.  If possible, merge the expiring queue with the new cfqq.
 	 */
-	new_cfqq = cfq_close_cooperator(cfqd, cfqq, 0);
+	new_cfqq = cfq_close_cooperator(cfqd, cfqq);
 	if (new_cfqq) {
 		if (!cfqq->new_cfqq)
 			cfq_setup_merge(cfqq, new_cfqq);
@@ -2053,6 +2069,19 @@ cfq_update_io_seektime(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	total = cfqq->seek_total + (cfqq->seek_samples/2);
 	do_div(total, cfqq->seek_samples);
 	cfqq->seek_mean = (sector_t)total;
+
+	/*
+	 * If this cfqq is shared between multiple processes, check to
+	 * make sure that those processes are still issuing I/Os within
+	 * the mean seek distance.  If not, it may be time to break the
+	 * queues apart again.
+	 */
+	if (cfq_cfqq_coop(cfqq)) {
+		if (CFQQ_SEEKY(cfqq) && !cfqq->seeky_start)
+			cfqq->seeky_start = jiffies;
+		else if (!CFQQ_SEEKY(cfqq))
+			cfqq->seeky_start = 0;
+	}
 }
 
 /*
@@ -2245,11 +2274,23 @@ static void cfq_insert_request(struct request_queue *q, struct request *rq)
  */
 static void cfq_update_hw_tag(struct cfq_data *cfqd)
 {
+	struct cfq_queue *cfqq = cfqd->active_queue;
+
 	if (rq_in_driver(cfqd) > cfqd->rq_in_driver_peak)
 		cfqd->rq_in_driver_peak = rq_in_driver(cfqd);
 
 	if (cfqd->rq_queued <= CFQ_HW_QUEUE_MIN &&
 	    rq_in_driver(cfqd) <= CFQ_HW_QUEUE_MIN)
+		return;
+
+	/*
+	 * If active queue hasn't enough requests and can idle, cfq might not
+	 * dispatch sufficient requests to hardware. Don't zero hw_tag in this
+	 * case
+	 */
+	if (cfqq && cfq_cfqq_idle_window(cfqq) &&
+	    cfqq->dispatched + cfqq->queued[0] + cfqq->queued[1] <
+	    CFQ_HW_QUEUE_MIN && rq_in_driver(cfqd) < CFQ_HW_QUEUE_MIN)
 		return;
 
 	if (cfqd->hw_tag_samples++ < 50)
@@ -2410,10 +2451,37 @@ cfq_merge_cfqqs(struct cfq_data *cfqd, struct cfq_io_context *cic,
 {
 	cfq_log_cfqq(cfqd, cfqq, "merging with queue %p", cfqq->new_cfqq);
 	cic_set_cfqq(cic, cfqq->new_cfqq, 1);
+	cfq_mark_cfqq_coop(cfqq->new_cfqq);
 	cfq_put_queue(cfqq);
 	return cic_to_cfqq(cic, 1);
 }
 
+static int should_split_cfqq(struct cfq_queue *cfqq)
+{
+	if (cfqq->seeky_start &&
+	    time_after(jiffies, cfqq->seeky_start + CFQQ_COOP_TOUT))
+		return 1;
+	return 0;
+}
+
+/*
+ * Returns NULL if a new cfqq should be allocated, or the old cfqq if this
+ * was the last process referring to said cfqq.
+ */
+static struct cfq_queue *
+split_cfqq(struct cfq_io_context *cic, struct cfq_queue *cfqq)
+{
+	if (cfqq_process_refs(cfqq) == 1) {
+		cfqq->seeky_start = 0;
+		cfqq->pid = current->pid;
+		cfq_clear_cfqq_coop(cfqq);
+		return cfqq;
+	}
+
+	cic_set_cfqq(cic, NULL, 1);
+	cfq_put_queue(cfqq);
+	return NULL;
+}
 /*
  * Allocate cfq data structures associated with this request.
  */
@@ -2442,6 +2510,16 @@ new_queue:
 		cfqq = cfq_get_queue(cfqd, is_sync, cic->ioc, gfp_mask);
 		cic_set_cfqq(cic, cfqq, is_sync);
 	} else {
+		/*
+		 * If the queue was seeky for too long, break it apart.
+		 */
+		if (cfq_cfqq_coop(cfqq) && should_split_cfqq(cfqq)) {
+			cfq_log_cfqq(cfqd, cfqq, "breaking apart cfqq");
+			cfqq = split_cfqq(cic, cfqq);
+			if (!cfqq)
+				goto new_queue;
+		}
+
 		/*
 		 * Check to see if this queue is scheduled to merge with
 		 * another, closely cooperating queue.  The merging of

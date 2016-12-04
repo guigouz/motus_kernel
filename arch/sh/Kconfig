@@ -173,6 +173,12 @@ config ARCH_HAS_CPU_IDLE_WAIT
 config IO_TRAPPED
 	bool
 
+config DMA_COHERENT
+	bool
+
+config DMA_NONCOHERENT
+	def_bool !DMA_COHERENT
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"
@@ -223,6 +229,7 @@ config CPU_SHX2
 
 config CPU_SHX3
 	bool
+	select DMA_COHERENT
 
 config ARCH_SHMOBILE
 	bool
@@ -810,7 +817,13 @@ config MAPLE
 	 Dreamcast with a serial line terminal or a remote network
 	 connection.
 
-source "arch/sh/drivers/pci/Kconfig"
+config PCI
+	bool "PCI support"
+	depends on SYS_SUPPORTS_PCI
+	help
+	  Find out whether you have a PCI motherboard. PCI is the name of a
+	  bus system, i.e. the way the CPU talks to the other stuff inside
+	  your box. If you have PCI, say Y, otherwise N.
 
 source "drivers/pci/pcie/Kconfig"
 
