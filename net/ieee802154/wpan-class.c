@@ -30,7 +30,7 @@ static ssize_t name ## _show(struct device *dev,			\
 	int ret;							\
 									\
 	mutex_lock(&phy->pib_lock);					\
-	ret = sprintf(buf, format_string "\n", args);			\
+	ret = snprintf(buf, PAGE_SIZE, format_string "\n", args);	\
 	mutex_unlock(&phy->pib_lock);					\
 	return ret;							\
 }
@@ -91,6 +91,31 @@ struct wpan_phy *wpan_phy_find(const char *str)
 }
 EXPORT_SYMBOL(wpan_phy_find);
 
+struct wpan_phy_iter_data {
+	int (*fn)(struct wpan_phy *phy, void *data);
+	void *data;
+};
+
+static int wpan_phy_iter(struct device *dev, void *_data)
+{
+	struct wpan_phy_iter_data *wpid = _data;
+	struct wpan_phy *phy = container_of(dev, struct wpan_phy, dev);
+	return wpid->fn(phy, wpid->data);
+}
+
+int wpan_phy_for_each(int (*fn)(struct wpan_phy *phy, void *data),
+		void *data)
+{
+	struct wpan_phy_iter_data wpid = {
+		.fn = fn,
+		.data = data,
+	};
+
+	return class_for_each_device(&wpan_phy_class, NULL,
+			&wpid, wpan_phy_iter);
+}
+EXPORT_SYMBOL(wpan_phy_for_each);
+
 static int wpan_phy_idx_valid(int idx)
 {
 	return idx >= 0;
@@ -117,6 +142,9 @@ struct wpan_phy *wpan_phy_alloc(size_t priv_size)
 	dev_set_name(&phy->dev, "wpan-phy%d", phy->idx);
 
 	phy->dev.class = &wpan_phy_class;
+
+	phy->current_channel = -1; /* not initialised */
+	phy->current_page = 0; /* for compatibility */
 
 	return phy;
 }
