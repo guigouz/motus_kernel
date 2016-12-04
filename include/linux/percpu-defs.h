@@ -12,11 +12,21 @@
  * that section.
  */
 #define __PCPU_ATTRS(sec)						\
-	__attribute__((section(PER_CPU_BASE_SECTION sec)))		\
+	__percpu __attribute__((section(PER_CPU_BASE_SECTION sec)))	\
 	PER_CPU_ATTRIBUTES
 
 #define __PCPU_DUMMY_ATTRS						\
 	__attribute__((section(".discard"), unused))
+
+/*
+ * Macro which verifies @ptr is a percpu pointer without evaluating
+ * @ptr.  This is to be used in percpu accessors to verify that the
+ * input parameter is a percpu pointer.
+ */
+#define __verify_pcpu_ptr(ptr)	do {					\
+	void __percpu *__vpp_verify = (typeof(ptr))NULL;		\
+	(void)__vpp_verify;						\
+} while (0)
 
 /*
  * s390 and alpha modules require percpu variables to be defined as
@@ -129,10 +139,16 @@
 	__aligned(PAGE_SIZE)
 
 /*
- * Intermodule exports for per-CPU variables.
+ * Intermodule exports for per-CPU variables.  sparse forgets about
+ * address space across EXPORT_SYMBOL(), change EXPORT_SYMBOL() to
+ * noop if __CHECKER__.
  */
+#ifndef __CHECKER__
 #define EXPORT_PER_CPU_SYMBOL(var) EXPORT_SYMBOL(var)
 #define EXPORT_PER_CPU_SYMBOL_GPL(var) EXPORT_SYMBOL_GPL(var)
-
+#else
+#define EXPORT_PER_CPU_SYMBOL(var)
+#define EXPORT_PER_CPU_SYMBOL_GPL(var)
+#endif
 
 #endif /* _LINUX_PERCPU_DEFS_H */
