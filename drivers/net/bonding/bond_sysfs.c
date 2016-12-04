@@ -36,6 +36,8 @@
 #include <linux/rtnetlink.h>
 #include <linux/etherdevice.h>
 #include <net/net_namespace.h>
+#include <net/netns/generic.h>
+#include <linux/nsproxy.h>
 
 #include "bonding.h"
 
@@ -48,12 +50,14 @@
  */
 static ssize_t bonding_show_bonds(struct class *cls, char *buf)
 {
+	struct net *net = current->nsproxy->net_ns;
+	struct bond_net *bn = net_generic(net, bond_net_id);
 	int res = 0;
 	struct bonding *bond;
 
 	rtnl_lock();
 
-	list_for_each_entry(bond, &bond_dev_list, bond_list) {
+	list_for_each_entry(bond, &bn->dev_list, bond_list) {
 		if (res > (PAGE_SIZE - IFNAMSIZ)) {
 			/* not enough space for another interface name */
 			if ((PAGE_SIZE - res) > 10)
@@ -70,11 +74,12 @@ static ssize_t bonding_show_bonds(struct class *cls, char *buf)
 	return res;
 }
 
-static struct net_device *bond_get_by_name(const char *ifname)
+static struct net_device *bond_get_by_name(struct net *net, const char *ifname)
 {
+	struct bond_net *bn = net_generic(net, bond_net_id);
 	struct bonding *bond;
 
-	list_for_each_entry(bond, &bond_dev_list, bond_list) {
+	list_for_each_entry(bond, &bn->dev_list, bond_list) {
 		if (strncmp(bond->dev->name, ifname, IFNAMSIZ) == 0)
 			return bond->dev;
 	}
@@ -92,6 +97,7 @@ static struct net_device *bond_get_by_name(const char *ifname)
 static ssize_t bonding_store_bonds(struct class *cls,
 				   const char *buffer, size_t count)
 {
+	struct net *net = current->nsproxy->net_ns;
 	char command[IFNAMSIZ + 1] = {0, };
 	char *ifname;
 	int rv, res = count;
@@ -105,7 +111,7 @@ static ssize_t bonding_store_bonds(struct class *cls,
 	if (command[0] == '+') {
 		pr_info(DRV_NAME
 			": %s is being created...\n", ifname);
-		rv = bond_create(ifname);
+		rv = bond_create(net, ifname);
 		if (rv) {
 			pr_info(DRV_NAME ": Bond creation failed.\n");
 			res = rv;
@@ -114,7 +120,7 @@ static ssize_t bonding_store_bonds(struct class *cls,
 		struct net_device *bond_dev;
 
 		rtnl_lock();
-		bond_dev = bond_get_by_name(ifname);
+		bond_dev = bond_get_by_name(net, ifname);
 		if (bond_dev) {
 			pr_info(DRV_NAME ": %s is being deleted...\n",
 				ifname);
@@ -239,8 +245,7 @@ static ssize_t bonding_store_slaves(struct device *d,
 		/* Got a slave name in ifname.  Is it already in the list? */
 		found = 0;
 
-		/* FIXME: get netns from sysfs object */
-		dev = __dev_get_by_name(&init_net, ifname);
+		dev = __dev_get_by_name(dev_net(bond->dev), ifname);
 		if (!dev) {
 			pr_info(DRV_NAME
 			       ": %s: Interface %s does not exist!\n",
@@ -1623,24 +1628,8 @@ void bond_destroy_sysfs(void)
  * Initialize sysfs for each bond.  This sets up and registers
  * the 'bondctl' directory for each individual bond under /sys/class/net.
  */
-int bond_create_sysfs_entry(struct bonding *bond)
+void bond_prepare_sysfs_group(struct bonding *bond)
 {
-	struct net_device *dev = bond->dev;
-	int err;
-
-	err = sysfs_create_group(&(dev->dev.kobj), &bonding_group);
-	if (err)
-		pr_emerg("eek! didn't create group!\n");
-
-	return err;
-}
-/*
- * Remove sysfs entries for each bond.
- */
-void bond_destroy_sysfs_entry(struct bonding *bond)
-{
-	struct net_device *dev = bond->dev;
-
-	sysfs_remove_group(&(dev->dev.kobj), &bonding_group);
+	bond->dev->sysfs_groups[0] = &bonding_group;
 }
 
