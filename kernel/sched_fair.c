@@ -1503,14 +1503,36 @@ select_task_rq_fair(struct rq *rq, struct task_struct *p, int sd_flag, int wake_
 				want_sd = 0;
 		}
 
-		/*
-		 * If both cpu and prev_cpu are part of this domain,
-		 * cpu is a valid SD_WAKE_AFFINE target.
-		 */
-		if (want_affine && (tmp->flags & SD_WAKE_AFFINE) &&
-		    cpumask_test_cpu(prev_cpu, sched_domain_span(tmp))) {
-			affine_sd = tmp;
-			want_affine = 0;
+		if (want_affine && (tmp->flags & SD_WAKE_AFFINE)) {
+			int candidate = -1, i;
+
+			if (cpumask_test_cpu(prev_cpu, sched_domain_span(tmp)))
+				candidate = cpu;
+
+			/*
+			 * Check for an idle shared cache.
+			 */
+			if (tmp->flags & SD_PREFER_SIBLING) {
+				if (candidate == cpu) {
+					if (!cpu_rq(prev_cpu)->cfs.nr_running)
+						candidate = prev_cpu;
+				}
+
+				if (candidate == -1 || candidate == cpu) {
+					for_each_cpu(i, sched_domain_span(tmp)) {
+						if (!cpu_rq(i)->cfs.nr_running) {
+							candidate = i;
+							break;
+						}
+					}
+				}
+			}
+
+			if (candidate >= 0) {
+				affine_sd = tmp;
+				want_affine = 0;
+				cpu = candidate;
+			}
 		}
 
 		if (!want_sd && !want_affine)
