@@ -2,6 +2,7 @@
 #define _ASM_SH_SUSPEND_H
 
 #ifndef __ASSEMBLY__
+#include <linux/notifier.h>
 static inline int arch_prepare_suspend(void) { return 0; }
 
 #include <asm/ptrace.h>
@@ -19,6 +20,20 @@ void sh_mobile_setup_cpuidle(void);
 static inline void sh_mobile_setup_cpuidle(void) {}
 #endif
 
+/* notifier chains for pre/post sleep hooks */
+extern struct atomic_notifier_head sh_mobile_pre_sleep_notifier_list;
+extern struct atomic_notifier_head sh_mobile_post_sleep_notifier_list;
+
+/* priority levels for notifiers */
+#define SH_MOBILE_SLEEP_BOARD	0
+#define SH_MOBILE_SLEEP_CPU	1
+#define SH_MOBILE_PRE(x)	(x)
+#define SH_MOBILE_POST(x)	(-(x))
+
+/* board code registration function for self-refresh assembly snippets */
+void sh_mobile_register_self_refresh(unsigned long flags,
+				     void *pre_start, void *pre_end,
+				     void *post_start, void *post_end);
 #endif
 
 /* flags passed to assembly suspend code */
