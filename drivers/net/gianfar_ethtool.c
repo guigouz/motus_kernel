@@ -137,7 +137,7 @@ static void gfar_fill_stats(struct net_device *dev, struct ethtool_stats *dummy,
 {
 	int i;
 	struct gfar_private *priv = netdev_priv(dev);
-	struct gfar __iomem *regs = priv->gfargrp.regs;
+	struct gfar __iomem *regs = priv->gfargrp[0].regs;
 	u64 *extra = (u64 *) & priv->extra_stats;
 
 	if (priv->device_flags & FSL_GIANFAR_DEV_HAS_RMON) {
@@ -204,9 +204,11 @@ static int gfar_gsettings(struct net_device *dev, struct ethtool_cmd *cmd)
 
 	if (NULL == phydev)
 		return -ENODEV;
-	tx_queue = priv->tx_queue;
-	rx_queue = priv->rx_queue;
+	tx_queue = priv->tx_queue[0];
+	rx_queue = priv->rx_queue[0];
 
+	/* etsec-1.7 and older versions have only one txic
+	 * and rxic regs although they support multiple queues */
 	cmd->maxtxpkt = get_icft_value(tx_queue->txic);
 	cmd->maxrxpkt = get_icft_value(rx_queue->rxic);
 
@@ -224,7 +226,7 @@ static void gfar_get_regs(struct net_device *dev, struct ethtool_regs *regs, voi
 {
 	int i;
 	struct gfar_private *priv = netdev_priv(dev);
-	u32 __iomem *theregs = (u32 __iomem *) priv->gfargrp.regs;
+	u32 __iomem *theregs = (u32 __iomem *) priv->gfargrp[0].regs;
 	u32 *buf = (u32 *) regbuf;
 
 	for (i = 0; i < sizeof (struct gfar) / sizeof (u32); i++)
@@ -298,8 +300,8 @@ static int gfar_gcoalesce(struct net_device *dev, struct ethtool_coalesce *cvals
 	if (NULL == priv->phydev)
 		return -ENODEV;
 
-	rx_queue = priv->rx_queue;
-	tx_queue = priv->tx_queue;
+	rx_queue = priv->rx_queue[0];
+	tx_queue = priv->tx_queue[0];
 
 	rxtime  = get_ictt_value(rx_queue->rxic);
 	rxcount = get_icft_value(rx_queue->rxic);
@@ -350,22 +352,23 @@ static int gfar_gcoalesce(struct net_device *dev, struct ethtool_coalesce *cvals
 static int gfar_scoalesce(struct net_device *dev, struct ethtool_coalesce *cvals)
 {
 	struct gfar_private *priv = netdev_priv(dev);
-	struct gfar __iomem *regs = priv->gfargrp.regs;
-	struct gfar_priv_tx_q *tx_queue = NULL;
-	struct gfar_priv_rx_q *rx_queue = NULL;
+	int i = 0;
 
 	if (!(priv->device_flags & FSL_GIANFAR_DEV_HAS_COALESCE))
 		return -EOPNOTSUPP;
 
-	tx_queue = priv->tx_queue;
-	rx_queue = priv->rx_queue;
-
 	/* Set up rx coalescing */
+	/* As of now, we will enable/disable coalescing for all
+	 * queues together in case of eTSEC2, this will be modified
+	 * along with the ethtool interface */
 	if ((cvals->rx_coalesce_usecs == 0) ||
-	    (cvals->rx_max_coalesced_frames == 0))
-		rx_queue->rxcoalescing = 0;
-	else
-		rx_queue->rxcoalescing = 1;
+	    (cvals->rx_max_coalesced_frames == 0)) {
+		for (i = 0; i < priv->num_rx_queues; i++)
+			priv->rx_queue[i]->rxcoalescing = 0;
+	} else {
+		for (i = 0; i < priv->num_rx_queues; i++)
+			priv->rx_queue[i]->rxcoalescing = 1;
+	}
 
 	if (NULL == priv->phydev)
 		return -ENODEV;
@@ -383,15 +386,21 @@ static int gfar_scoalesce(struct net_device *dev, struct ethtool_coalesce *cvals
 		return -EINVAL;
 	}
 
-	rx_queue->rxic = mk_ic_value(cvals->rx_max_coalesced_frames,
-		gfar_usecs2ticks(priv, cvals->rx_coalesce_usecs));
+	for (i = 0; i < priv->num_rx_queues; i++) {
+		priv->rx_queue[i]->rxic = mk_ic_value(
+			cvals->rx_max_coalesced_frames,
+			gfar_usecs2ticks(priv, cvals->rx_coalesce_usecs));
+	}
 
 	/* Set up tx coalescing */
 	if ((cvals->tx_coalesce_usecs == 0) ||
-	    (cvals->tx_max_coalesced_frames == 0))
-		tx_queue->txcoalescing = 0;
-	else
-		tx_queue->txcoalescing = 1;
+	    (cvals->tx_max_coalesced_frames == 0)) {
+		for (i = 0; i < priv->num_tx_queues; i++)
+			priv->tx_queue[i]->txcoalescing = 0;
+	} else {
+		for (i = 0; i < priv->num_tx_queues; i++)
+			priv->tx_queue[i]->txcoalescing = 1;
+	}
 
 	/* Check the bounds of the values */
 	if (cvals->tx_coalesce_usecs > GFAR_MAX_COAL_USECS) {
@@ -406,16 +415,13 @@ static int gfar_scoalesce(struct net_device *dev, struct ethtool_coalesce *cvals
 		return -EINVAL;
 	}
 
-	tx_queue->txic = mk_ic_value(cvals->tx_max_coalesced_frames,
-		gfar_usecs2ticks(priv, cvals->tx_coalesce_usecs));
+	for (i = 0; i < priv->num_tx_queues; i++) {
+		priv->tx_queue[i]->txic = mk_ic_value(
+			cvals->tx_max_coalesced_frames,
+			gfar_usecs2ticks(priv, cvals->tx_coalesce_usecs));
+	}
 
-	gfar_write(&regs->rxic, 0);
-	if (rx_queue->rxcoalescing)
-		gfar_write(&regs->rxic, rx_queue->rxic);
-
-	gfar_write(&regs->txic, 0);
-	if (tx_queue->txcoalescing)
-		gfar_write(&regs->txic, tx_queue->txic);
+	gfar_configure_coalescing(priv, 0xFF, 0xFF);
 
 	return 0;
 }
@@ -429,8 +435,8 @@ static void gfar_gringparam(struct net_device *dev, struct ethtool_ringparam *rv
 	struct gfar_priv_tx_q *tx_queue = NULL;
 	struct gfar_priv_rx_q *rx_queue = NULL;
 
-	tx_queue = priv->tx_queue;
-	rx_queue = priv->rx_queue;
+	tx_queue = priv->tx_queue[0];
+	rx_queue = priv->rx_queue[0];
 
 	rvals->rx_max_pending = GFAR_RX_MAX_RING_SIZE;
 	rvals->rx_mini_max_pending = GFAR_RX_MAX_RING_SIZE;
@@ -453,9 +459,7 @@ static void gfar_gringparam(struct net_device *dev, struct ethtool_ringparam *rv
 static int gfar_sringparam(struct net_device *dev, struct ethtool_ringparam *rvals)
 {
 	struct gfar_private *priv = netdev_priv(dev);
-	struct gfar_priv_tx_q *tx_queue = NULL;
-	struct gfar_priv_rx_q *rx_queue = NULL;
-	int err = 0;
+	int err = 0, i = 0;
 
 	if (rvals->rx_pending > GFAR_RX_MAX_RING_SIZE)
 		return -EINVAL;
@@ -475,37 +479,41 @@ static int gfar_sringparam(struct net_device *dev, struct ethtool_ringparam *rva
 		return -EINVAL;
 	}
 
-	tx_queue = priv->tx_queue;
-	rx_queue = priv->rx_queue;
 
 	if (dev->flags & IFF_UP) {
 		unsigned long flags;
 
 		/* Halt TX and RX, and process the frames which
 		 * have already been received */
-		spin_lock_irqsave(&tx_queue->txlock, flags);
-		spin_lock(&rx_queue->rxlock);
+		local_irq_save(flags);
+		lock_tx_qs(priv);
+		lock_rx_qs(priv);
 
 		gfar_halt(dev);
 
-		spin_unlock(&rx_queue->rxlock);
-		spin_unlock_irqrestore(&tx_queue->txlock, flags);
+		unlock_rx_qs(priv);
+		unlock_tx_qs(priv);
+		local_irq_restore(flags);
 
-		gfar_clean_rx_ring(rx_queue, rx_queue->rx_ring_size);
+		for (i = 0; i < priv->num_rx_queues; i++)
+			gfar_clean_rx_ring(priv->rx_queue[i],
+					priv->rx_queue[i]->rx_ring_size);
 
 		/* Now we take down the rings to rebuild them */
 		stop_gfar(dev);
 	}
 
 	/* Change the size */
-	rx_queue->rx_ring_size = rvals->rx_pending;
-	tx_queue->tx_ring_size = rvals->tx_pending;
-	tx_queue->num_txbdfree = tx_queue->tx_ring_size;
+	for (i = 0; i < priv->num_rx_queues; i++) {
+		priv->rx_queue[i]->rx_ring_size = rvals->rx_pending;
+		priv->tx_queue[i]->tx_ring_size = rvals->tx_pending;
+		priv->tx_queue[i]->num_txbdfree = priv->tx_queue[i]->tx_ring_size;
+	}
 
 	/* Rebuild the rings with the new size */
 	if (dev->flags & IFF_UP) {
 		err = startup_gfar(dev);
-		netif_wake_queue(dev);
+		netif_tx_wake_all_queues(dev);
 	}
 	return err;
 }
@@ -513,29 +521,29 @@ static int gfar_sringparam(struct net_device *dev, struct ethtool_ringparam *rva
 static int gfar_set_rx_csum(struct net_device *dev, uint32_t data)
 {
 	struct gfar_private *priv = netdev_priv(dev);
-	struct gfar_priv_rx_q *rx_queue = NULL;
-	struct gfar_priv_tx_q *tx_queue = NULL;
 	unsigned long flags;
-	int err = 0;
+	int err = 0, i = 0;
 
 	if (!(priv->device_flags & FSL_GIANFAR_DEV_HAS_CSUM))
 		return -EOPNOTSUPP;
 
-	tx_queue = priv->tx_queue;
-	rx_queue = priv->rx_queue;
 
 	if (dev->flags & IFF_UP) {
 		/* Halt TX and RX, and process the frames which
 		 * have already been received */
-		spin_lock_irqsave(&tx_queue->txlock, flags);
-		spin_lock(&rx_queue->rxlock);
+		local_irq_save(flags);
+		lock_tx_qs(priv);
+		lock_rx_qs(priv);
 
 		gfar_halt(dev);
 
-		spin_unlock(&rx_queue->rxlock);
-		spin_unlock_irqrestore(&tx_queue->txlock, flags);
+		unlock_tx_qs(priv);
+		unlock_rx_qs(priv);
+		local_irq_save(flags);
 
-		gfar_clean_rx_ring(rx_queue, rx_queue->rx_ring_size);
+		for (i = 0; i < priv->num_rx_queues; i++)
+			gfar_clean_rx_ring(priv->rx_queue[i],
+					priv->rx_queue[i]->rx_ring_size);
 
 		/* Now we take down the rings to rebuild them */
 		stop_gfar(dev);
@@ -547,7 +555,7 @@ static int gfar_set_rx_csum(struct net_device *dev, uint32_t data)
 
 	if (dev->flags & IFF_UP) {
 		err = startup_gfar(dev);
-		netif_wake_queue(dev);
+		netif_tx_wake_all_queues(dev);
 	}
 	return err;
 }
@@ -637,6 +645,241 @@ static int gfar_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 }
 #endif
 
+static int gfar_ethflow_to_class(int flow_type, u64 *class)
+{
+	switch (flow_type) {
+	case TCP_V4_FLOW:
+		*class = CLASS_CODE_TCP_IPV4;
+		break;
+	case UDP_V4_FLOW:
+		*class = CLASS_CODE_UDP_IPV4;
+		break;
+	case AH_V4_FLOW:
+	case ESP_V4_FLOW:
+		*class = CLASS_CODE_AH_ESP_IPV4;
+		break;
+	case SCTP_V4_FLOW:
+		*class = CLASS_CODE_SCTP_IPV4;
+		break;
+	case TCP_V6_FLOW:
+		*class = CLASS_CODE_TCP_IPV6;
+		break;
+	case UDP_V6_FLOW:
+		*class = CLASS_CODE_UDP_IPV6;
+		break;
+	case AH_V6_FLOW:
+	case ESP_V6_FLOW:
+		*class = CLASS_CODE_AH_ESP_IPV6;
+		break;
+	case SCTP_V6_FLOW:
+		*class = CLASS_CODE_SCTP_IPV6;
+		break;
+	default:
+		return 0;
+	}
+
+	return 1;
+}
+
+static void ethflow_to_filer_rules (struct gfar_private *priv, u64 ethflow)
+{
+	u32 fcr = 0x0, fpr = FPR_FILER_MASK;
+
+	if (ethflow & RXH_L2DA) {
+		fcr = RQFCR_PID_DAH |RQFCR_CMP_NOMATCH |
+			RQFCR_HASH | RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+
+		fcr = RQFCR_PID_DAL | RQFCR_AND | RQFCR_CMP_NOMATCH |
+				RQFCR_HASH | RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & RXH_VLAN) {
+		fcr = RQFCR_PID_VID | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+				RQFCR_AND | RQFCR_HASHTBL_0;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & RXH_IP_SRC) {
+		fcr = RQFCR_PID_SIA | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+			RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & (RXH_IP_DST)) {
+		fcr = RQFCR_PID_DIA | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+			RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & RXH_L3_PROTO) {
+		fcr = RQFCR_PID_L4P | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+			RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & RXH_L4_B_0_1) {
+		fcr = RQFCR_PID_SPT | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+			RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	if (ethflow & RXH_L4_B_2_3) {
+		fcr = RQFCR_PID_DPT | RQFCR_CMP_NOMATCH | RQFCR_HASH |
+			RQFCR_AND | RQFCR_HASHTBL_0;
+		ftp_rqfpr[priv->cur_filer_idx] = fpr;
+		ftp_rqfcr[priv->cur_filer_idx] = fcr;
+		gfar_write_filer(priv, priv->cur_filer_idx, fcr, fpr);
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+}
+
+static int gfar_ethflow_to_filer_table(struct gfar_private *priv, u64 ethflow, u64 class)
+{
+	unsigned int last_rule_idx = priv->cur_filer_idx;
+	unsigned int cmp_rqfpr;
+	unsigned int local_rqfpr[MAX_FILER_IDX + 1];
+	unsigned int local_rqfcr[MAX_FILER_IDX + 1];
+	int i = 0x0, k = 0x0;
+	int j = MAX_FILER_IDX, l = 0x0;
+
+	switch (class) {
+	case TCP_V4_FLOW:
+		cmp_rqfpr = RQFPR_IPV4 |RQFPR_TCP;
+		break;
+	case UDP_V4_FLOW:
+		cmp_rqfpr = RQFPR_IPV4 |RQFPR_UDP;
+		break;
+	case TCP_V6_FLOW:
+		cmp_rqfpr = RQFPR_IPV6 |RQFPR_TCP;
+		break;
+	case UDP_V6_FLOW:
+		cmp_rqfpr = RQFPR_IPV6 |RQFPR_UDP;
+		break;
+	case IPV4_FLOW:
+		cmp_rqfpr = RQFPR_IPV4;
+	case IPV6_FLOW:
+		cmp_rqfpr = RQFPR_IPV6;
+		break;
+	default:
+		printk(KERN_ERR "Right now this class is not supported\n");
+		return 0;
+	}
+
+	for (i = 0; i < MAX_FILER_IDX + 1; i++) {
+		local_rqfpr[j] = ftp_rqfpr[i];
+		local_rqfcr[j] = ftp_rqfcr[i];
+		j--;
+		if ((ftp_rqfcr[i] == (RQFCR_PID_PARSE |
+			RQFCR_CLE |RQFCR_AND)) &&
+			(ftp_rqfpr[i] == cmp_rqfpr))
+			break;
+	}
+
+	if (i == MAX_FILER_IDX + 1) {
+		printk(KERN_ERR "No parse rule found, ");
+		printk(KERN_ERR "can't create hash rules\n");
+		return 0;
+	}
+
+	/* If a match was found, then it begins the starting of a cluster rule
+	 * if it was already programmed, we need to overwrite these rules
+	 */
+	for (l = i+1; l < MAX_FILER_IDX; l++) {
+		if ((ftp_rqfcr[l] & RQFCR_CLE) &&
+			!(ftp_rqfcr[l] & RQFCR_AND)) {
+			ftp_rqfcr[l] = RQFCR_CLE | RQFCR_CMP_EXACT |
+				RQFCR_HASHTBL_0 | RQFCR_PID_MASK;
+			ftp_rqfpr[l] = FPR_FILER_MASK;
+			gfar_write_filer(priv, l, ftp_rqfcr[l], ftp_rqfpr[l]);
+			break;
+		}
+
+		if (!(ftp_rqfcr[l] & RQFCR_CLE) && (ftp_rqfcr[l] & RQFCR_AND))
+			continue;
+		else {
+			local_rqfpr[j] = ftp_rqfpr[l];
+			local_rqfcr[j] = ftp_rqfcr[l];
+			j--;
+		}
+	}
+
+	priv->cur_filer_idx = l - 1;
+	last_rule_idx = l;
+
+	/* hash rules */
+	ethflow_to_filer_rules(priv, ethflow);
+
+	/* Write back the popped out rules again */
+	for (k = j+1; k < MAX_FILER_IDX; k++) {
+		ftp_rqfpr[priv->cur_filer_idx] = local_rqfpr[k];
+		ftp_rqfcr[priv->cur_filer_idx] = local_rqfcr[k];
+		gfar_write_filer(priv, priv->cur_filer_idx,
+				local_rqfcr[k], local_rqfpr[k]);
+		if (!priv->cur_filer_idx)
+			break;
+		priv->cur_filer_idx = priv->cur_filer_idx - 1;
+	}
+
+	return 1;
+}
+
+static int gfar_set_hash_opts(struct gfar_private *priv, struct ethtool_rxnfc *cmd)
+{
+	u64 class;
+
+	if (!gfar_ethflow_to_class(cmd->flow_type, &class))
+		return -EINVAL;
+
+	if (class < CLASS_CODE_USER_PROG1 ||
+			class > CLASS_CODE_SCTP_IPV6)
+		return -EINVAL;
+
+	/* write the filer rules here */
+	if (!gfar_ethflow_to_filer_table(priv, cmd->data, cmd->flow_type))
+		return -1;
+
+	return 0;
+}
+
+static int gfar_set_nfc(struct net_device *dev, struct ethtool_rxnfc *cmd)
+{
+	struct gfar_private *priv = netdev_priv(dev);
+	int ret = 0;
+
+	switch(cmd->cmd) {
+	case ETHTOOL_SRXFH:
+		ret = gfar_set_hash_opts(priv, cmd);
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
 const struct ethtool_ops gfar_ethtool_ops = {
 	.get_settings = gfar_gsettings,
 	.set_settings = gfar_ssettings,
@@ -662,4 +905,5 @@ const struct ethtool_ops gfar_ethtool_ops = {
 	.get_wol = gfar_get_wol,
 	.set_wol = gfar_set_wol,
 #endif
+	.set_rxnfc = gfar_set_nfc,
 };
