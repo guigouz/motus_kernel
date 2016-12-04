@@ -226,7 +226,8 @@ int __pci_read_base(struct pci_dev *dev, enum pci_bar_type type,
 			goto fail;
 
 		if ((sizeof(resource_size_t) < 8) && (sz64 > 0x100000000ULL)) {
-			dev_err(&dev->dev, "can't handle 64-bit BAR\n");
+			dev_err(&dev->dev, "reg %x: can't handle 64-bit BAR\n",
+				pos);
 			goto fail;
 		}
 
@@ -294,8 +295,11 @@ void __devinit pci_read_bridge_bases(struct pci_bus *child)
 	if (pci_is_root_bus(child))	/* It's a host bus, nothing to read */
 		return;
 
+	dev_info(&dev->dev, "PCI bridge to [bus %02x-%02x]%s\n",
+		 child->secondary, child->subordinate,
+		 dev->transparent ? " (subtractive decode)": "");
+
 	if (dev->transparent) {
-		dev_info(&dev->dev, "transparent bridge\n");
 		for(i = 3; i < PCI_BUS_NUM_RESOURCES; i++)
 			child->resource[i] = child->parent->resource[i - 3];
 	}
@@ -645,13 +649,14 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev *dev, int max,
 		    (child->number > bus->subordinate) ||
 		    (child->number < bus->number) ||
 		    (child->subordinate < bus->number)) {
-			pr_debug("PCI: Bus #%02x (-#%02x) is %s "
-				"hidden behind%s bridge #%02x (-#%02x)\n",
+			dev_info(&child->dev, "[bus %02x-%02x] %s "
+				"hidden behind%s bridge %s [bus %02x-%02x]\n",
 				child->number, child->subordinate,
 				(bus->number > child->subordinate &&
 				 bus->subordinate < child->number) ?
 					"wholly" : "partially",
 				bus->self->transparent ? " transparent" : "",
+				dev_name(&bus->dev),
 				bus->number, bus->subordinate);
 		}
 		bus = bus->parent;
@@ -1121,7 +1126,7 @@ unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
 	unsigned int devfn, pass, max = bus->secondary;
 	struct pci_dev *dev;
 
-	pr_debug("PCI: Scanning bus %04x:%02x\n", pci_domain_nr(bus), bus->number);
+	dev_dbg(&bus->dev, "scanning bus\n");
 
 	/* Go find them, Rover! */
 	for (devfn = 0; devfn < 0x100; devfn += 8)
@@ -1135,8 +1140,7 @@ unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
 	 * all PCI-to-PCI bridges on this bus.
 	 */
 	if (!bus->is_added) {
-		pr_debug("PCI: Fixups for bus %04x:%02x\n",
-			 pci_domain_nr(bus), bus->number);
+		dev_dbg(&bus->dev, "fixups for bus\n");
 		pcibios_fixup_bus(bus);
 		if (pci_is_root_bus(bus))
 			bus->is_added = 1;
@@ -1156,8 +1160,7 @@ unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
 	 *
 	 * Return how far we've got finding sub-buses.
 	 */
-	pr_debug("PCI: Bus scan for %04x:%02x returning with max=%02x\n",
-		pci_domain_nr(bus), bus->number, max);
+	dev_dbg(&bus->dev, "bus scan returning with max=%02x\n", max);
 	return max;
 }
 
@@ -1165,7 +1168,7 @@ struct pci_bus * pci_create_bus(struct device *parent,
 		int bus, struct pci_ops *ops, void *sysdata)
 {
 	int error;
-	struct pci_bus *b;
+	struct pci_bus *b, *b2;
 	struct device *dev;
 
 	b = pci_alloc_bus();
@@ -1181,9 +1184,10 @@ struct pci_bus * pci_create_bus(struct device *parent,
 	b->sysdata = sysdata;
 	b->ops = ops;
 
-	if (pci_find_bus(pci_domain_nr(b), bus)) {
+	b2 = pci_find_bus(pci_domain_nr(b), bus);
+	if (b2) {
 		/* If we already got to this bus through a different bridge, ignore it */
-		pr_debug("PCI: Bus %04x:%02x already known\n", pci_domain_nr(b), bus);
+		dev_dbg(&b2->dev, "bus already known\n");
 		goto err_out;
 	}
 

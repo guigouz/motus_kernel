@@ -1211,7 +1211,7 @@ void pci_pme_active(struct pci_dev *dev, bool enable)
 
 	pci_write_config_word(dev, dev->pm_cap + PCI_PM_CTRL, pmcsr);
 
-	dev_printk(KERN_INFO, &dev->dev, "PME# %s\n",
+	dev_printk(KERN_DEBUG, &dev->dev, "PME# %s\n",
 			enable ? "enabled" : "disabled");
 }
 
@@ -1422,7 +1422,8 @@ void pci_pm_init(struct pci_dev *dev)
 
 	pmc &= PCI_PM_CAP_PME_MASK;
 	if (pmc) {
-		dev_info(&dev->dev, "PME# supported from%s%s%s%s%s\n",
+		dev_printk(KERN_DEBUG, &dev->dev,
+			 "PME# supported from%s%s%s%s%s\n",
 			 (pmc & PCI_PM_CAP_PME_D0) ? " D0" : "",
 			 (pmc & PCI_PM_CAP_PME_D1) ? " D1" : "",
 			 (pmc & PCI_PM_CAP_PME_D2) ? " D2" : "",
@@ -2577,7 +2578,7 @@ int pci_resource_bar(struct pci_dev *dev, int resno, enum pci_bar_type *type)
 			return reg;
 	}
 
-	dev_err(&dev->dev, "BAR: invalid resource #%d\n", resno);
+	dev_err(&dev->dev, "BAR %d: invalid resource\n", resno);
 	return 0;
 }
 
