@@ -52,6 +52,7 @@ const char *default_search_path[NR_SEARCH_PATH] = {
 #define MAX_PATH_LEN 256
 #define MAX_PROBES 128
 #define MAX_PROBE_ARGS 128
+#define PERFPROBE_GROUP "perfprobe"
 
 /* Session management structure */
 static struct {
@@ -60,23 +61,99 @@ static struct {
 	int need_dwarf;
 	int nr_probe;
 	struct probe_point probes[MAX_PROBES];
-	char *events[MAX_PROBES];
 } session;
 
 #define semantic_error(msg ...) die("Semantic error :" msg)
 
-static int parse_probepoint(const struct option *opt __used,
-			    const char *str, int unset __used)
+/* Parse probe point. Return 1 if return probe */
+static void parse_probe_point(char *arg, struct probe_point *pp)
+{
+	char *ptr, *tmp;
+	char c, nc;
+	/*
+	 * <Syntax>
+	 * perf probe SRC:LN
+	 * perf probe FUNC[+OFFS|%return][@SRC]
+	 */
+
+	ptr = strpbrk(arg, ":+@%");
+	if (ptr) {
+		nc = *ptr;
+		*ptr++ = '\0';
+	}
+
+	/* Check arg is function or file and copy it */
+	if (strchr(arg, '.'))	/* File */
+		pp->file = strdup(arg);
+	else			/* Function */
+		pp->function = strdup(arg);
+	DIE_IF(pp->file == NULL && pp->function == NULL);
+
+	/* Parse other options */
+	while (ptr) {
+		arg = ptr;
+		c = nc;
+		ptr = strpbrk(arg, ":+@%");
+		if (ptr) {
+			nc = *ptr;
+			*ptr++ = '\0';
+		}
+		switch (c) {
+		case ':':	/* Line number */
+			pp->line = strtoul(arg, &tmp, 0);
+			if (*tmp != '\0')
+				semantic_error("There is non-digit charactor"
+						" in line number.");
+			break;
+		case '+':	/* Byte offset from a symbol */
+			pp->offset = strtoul(arg, &tmp, 0);
+			if (*tmp != '\0')
+				semantic_error("There is non-digit charactor"
+						" in offset.");
+			break;
+		case '@':	/* File name */
+			if (pp->file)
+				semantic_error("SRC@SRC is not allowed.");
+			pp->file = strdup(arg);
+			DIE_IF(pp->file == NULL);
+			if (ptr)
+				semantic_error("@SRC must be the last "
+					       "option.");
+			break;
+		case '%':	/* Probe places */
+			if (strcmp(arg, "return") == 0) {
+				pp->retprobe = 1;
+			} else	/* Others not supported yet */
+				semantic_error("%%%s is not supported.", arg);
+			break;
+		default:
+			DIE_IF("Program has a bug.");
+			break;
+		}
+	}
+
+	/* Exclusion check */
+	if (pp->line && pp->offset)
+		semantic_error("Offset can't be used with line number.");
+	if (!pp->line && pp->file && !pp->function)
+		semantic_error("File always requires line number.");
+	if (pp->offset && !pp->function)
+		semantic_error("Offset requires an entry function.");
+	if (pp->retprobe && !pp->function)
+		semantic_error("Return probe requires an entry function.");
+	if ((pp->offset || pp->line) && pp->retprobe)
+		semantic_error("Offset/Line can't be used with return probe.");
+
+	pr_debug("symbol:%s file:%s line:%d offset:%d, return:%d\n",
+		 pp->function, pp->file, pp->line, pp->offset, pp->retprobe);
+}
+
+/* Parse an event definition. Note that any error must die. */
+static void parse_probe_event(const char *str)
 {
 	char *argv[MAX_PROBE_ARGS + 2];	/* Event + probe + args */
 	int argc, i;
-	char *arg, *ptr;
 	struct probe_point *pp = &session.probes[session.nr_probe];
-	char **event = &session.events[session.nr_probe];
-	int retp = 0;
-
-	if (!str)	/* The end of probe points */
-		return 0;
 
 	pr_debug("probe-definition(%d): %s\n", session.nr_probe, str);
 	if (++session.nr_probe == MAX_PROBES)
@@ -106,76 +183,41 @@ static int parse_probepoint(const struct option *opt __used,
 			pr_debug("argv[%d]=%s\n", argc, argv[argc - 1]);
 		}
 	} while (*str != '\0');
-	if (argc < 2)
-		semantic_error("Need event-name and probe-point at least.");
-
-	/* Parse the event name */
-	if (argv[0][0] == 'r')
-		retp = 1;
-	else if (argv[0][0] != 'p')
-		semantic_error("You must specify 'p'(kprobe) or"
-				" 'r'(kretprobe) first.");
-	/* TODO: check event name */
-	*event = argv[0];
+	if (!argc)
+		semantic_error("An empty argument.");
 
 	/* Parse probe point */
-	arg = argv[1];
-	if (arg[0] == '@') {
-		/* Source Line */
-		arg++;
-		ptr = strchr(arg, ':');
-		if (!ptr || !isdigit(ptr[1]))
-			semantic_error("Line number is required.");
-		*ptr++ = '\0';
-		if (strlen(arg) == 0)
-			semantic_error("No file name.");
-		pp->file = strdup(arg);
-		pp->line = atoi(ptr);
-		if (!pp->file || !pp->line)
-			semantic_error("Failed to parse line.");
-		pr_debug("file:%s line:%d\n", pp->file, pp->line);
-	} else {
-		/* Function name */
-		ptr = strchr(arg, '+');
-		if (ptr) {
-			if (!isdigit(ptr[1]))
-				semantic_error("Offset is required.");
-			*ptr++ = '\0';
-			pp->offset = atoi(ptr);
-		} else
-			ptr = arg;
-		ptr = strchr(ptr, '@');
-		if (ptr) {
-			*ptr++ = '\0';
-			pp->file = strdup(ptr);
-		}
-		pp->function = strdup(arg);
-		pr_debug("symbol:%s file:%s offset:%d\n",
-			 pp->function, pp->file, pp->offset);
-	}
-	free(argv[1]);
+	parse_probe_point(argv[0], pp);
+	free(argv[0]);
 	if (pp->file)
 		session.need_dwarf = 1;
 
 	/* Copy arguments */
-	pp->nr_args = argc - 2;
+	pp->nr_args = argc - 1;
 	if (pp->nr_args > 0) {
 		pp->args = (char **)malloc(sizeof(char *) * pp->nr_args);
 		if (!pp->args)
 			die("malloc");
-		memcpy(pp->args, &argv[2], sizeof(char *) * pp->nr_args);
+		memcpy(pp->args, &argv[1], sizeof(char *) * pp->nr_args);
 	}
 
 	/* Ensure return probe has no C argument */
 	for (i = 0; i < pp->nr_args; i++)
 		if (is_c_varname(pp->args[i])) {
-			if (retp)
+			if (pp->retprobe)
 				semantic_error("You can't specify local"
 						" variable for kretprobe");
 			session.need_dwarf = 1;
 		}
 
 	pr_debug("%d arguments\n", pp->nr_args);
+}
+
+static int opt_add_probe_event(const struct option *opt __used,
+			      const char *str, int unset __used)
+{
+	if (str)
+		parse_probe_event(str);
 	return 0;
 }
 
@@ -211,7 +253,8 @@ static int open_default_vmlinux(void)
 #endif
 
 static const char * const probe_usage[] = {
-	"perf probe [<options>] -P 'PROBEDEF' [-P 'PROBEDEF' ...]",
+	"perf probe [<options>] 'PROBEDEF' ['PROBEDEF' ...]",
+	"perf probe [<options>] --add 'PROBEDEF' [--add 'PROBEDEF' ...]",
 	NULL
 };
 
@@ -222,28 +265,28 @@ static const struct option options[] = {
 	OPT_STRING('k', "vmlinux", &session.vmlinux, "file",
 		"vmlinux/module pathname"),
 #endif
-	OPT_CALLBACK('P', "probe", NULL,
+	OPT_CALLBACK('a', "add", NULL,
 #ifdef NO_LIBDWARF
-		"p|r:[GRP/]NAME FUNC[+OFFS] [ARG ...]",
+		"FUNC[+OFFS|%return] [ARG ...]",
 #else
-		"p|r:[GRP/]NAME FUNC[+OFFS][@SRC]|@SRC:LINE [ARG ...]",
+		"FUNC[+OFFS|%return|:RLN][@SRC]|SRC:ALN [ARG ...]",
 #endif
 		"probe point definition, where\n"
-		"\t\tp:\tkprobe probe\n"
-		"\t\tr:\tkretprobe probe\n"
 		"\t\tGRP:\tGroup name (optional)\n"
 		"\t\tNAME:\tEvent name\n"
 		"\t\tFUNC:\tFunction name\n"
 		"\t\tOFFS:\tOffset from function entry (in byte)\n"
+		"\t\t%return:\tPut the probe at function return\n"
 #ifdef NO_LIBDWARF
 		"\t\tARG:\tProbe argument (only \n"
 #else
 		"\t\tSRC:\tSource code path\n"
-		"\t\tLINE:\tLine number\n"
+		"\t\tRLN:\tRelative line number from function entry.\n"
+		"\t\tALN:\tAbsolute line number in file.\n"
 		"\t\tARG:\tProbe argument (local variable name or\n"
 #endif
 		"\t\t\tkprobe-tracer argument format is supported.)\n",
-		parse_probepoint),
+		opt_add_probe_event),
 	OPT_END()
 };
 
@@ -261,7 +304,7 @@ static int write_new_event(int fd, const char *buf)
 
 #define MAX_CMDLEN 256
 
-static int synthesize_probepoint(struct probe_point *pp)
+static int synthesize_probe_event(struct probe_point *pp)
 {
 	char *buf;
 	int i, len, ret;
@@ -296,8 +339,11 @@ int cmd_probe(int argc, const char **argv, const char *prefix __used)
 	char buf[MAX_CMDLEN];
 
 	argc = parse_options(argc, argv, options, probe_usage,
-		PARSE_OPT_STOP_AT_NON_OPTION);
-	if (argc || session.nr_probe == 0)
+			     PARSE_OPT_STOP_AT_NON_OPTION);
+	for (i = 0; i < argc; i++)
+		parse_probe_event(argv[i]);
+
+	if (session.nr_probe == 0)
 		usage_with_options(probe_usage, options);
 
 #ifdef NO_LIBDWARF
@@ -308,12 +354,12 @@ int cmd_probe(int argc, const char **argv, const char *prefix __used)
 	/* Synthesize probes without dwarf */
 	for (j = 0; j < session.nr_probe; j++) {
 #ifndef NO_LIBDWARF
-		if (session.events[j][0] != 'r') {
+		if (!session.probes[j].retprobe) {
 			session.need_dwarf = 1;
 			continue;
 		}
 #endif
-		ret = synthesize_probepoint(&session.probes[j]);
+		ret = synthesize_probe_event(&session.probes[j]);
 		if (ret == -E2BIG)
 			semantic_error("probe point is too long.");
 		else if (ret < 0)
@@ -341,7 +387,6 @@ int cmd_probe(int argc, const char **argv, const char *prefix __used)
 		ret = find_probepoint(fd, pp);
 		if (ret <= 0)
 			die("No probe point found.\n");
-		pr_debug("probe event %s found\n", session.events[j]);
 	}
 	close(fd);
 
@@ -356,13 +401,17 @@ setup_probes:
 	for (j = 0; j < session.nr_probe; j++) {
 		pp = &session.probes[j];
 		if (pp->found == 1) {
-			snprintf(buf, MAX_CMDLEN, "%s %s\n",
-				session.events[j], pp->probes[0]);
+			snprintf(buf, MAX_CMDLEN, "%c:%s/%s_%x %s\n",
+				pp->retprobe ? 'r' : 'p', PERFPROBE_GROUP,
+				pp->function, pp->offset, pp->probes[0]);
 			write_new_event(fd, buf);
 		} else
 			for (i = 0; i < pp->found; i++) {
-				snprintf(buf, MAX_CMDLEN, "%s%d %s\n",
-					session.events[j], i, pp->probes[i]);
+				snprintf(buf, MAX_CMDLEN, "%c:%s/%s_%x_%d %s\n",
+					pp->retprobe ? 'r' : 'p',
+					PERFPROBE_GROUP,
+					pp->function, pp->offset, i,
+					pp->probes[0]);
 				write_new_event(fd, buf);
 			}
 	}
