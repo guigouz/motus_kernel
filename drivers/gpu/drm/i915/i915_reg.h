@@ -140,6 +140,7 @@
 #define MI_NOOP			MI_INSTR(0, 0)
 #define MI_USER_INTERRUPT	MI_INSTR(0x02, 0)
 #define MI_WAIT_FOR_EVENT       MI_INSTR(0x03, 0)
+#define   MI_WAIT_FOR_OVERLAY_FLIP	(1<<16)
 #define   MI_WAIT_FOR_PLANE_B_FLIP      (1<<6)
 #define   MI_WAIT_FOR_PLANE_A_FLIP      (1<<2)
 #define   MI_WAIT_FOR_PLANE_A_SCANLINES (1<<1)
@@ -151,6 +152,10 @@
 #define   MI_END_SCENE		(1 << 4) /* flush binner and incr scene count */
 #define MI_BATCH_BUFFER_END	MI_INSTR(0x0a, 0)
 #define MI_REPORT_HEAD		MI_INSTR(0x07, 0)
+#define MI_OVERLAY_FLIP		MI_INSTR(0x11,0)
+#define   MI_OVERLAY_CONTINUE	(0x0<<21)
+#define   MI_OVERLAY_ON		(0x1<<21)
+#define   MI_OVERLAY_OFF	(0x2<<21)
 #define MI_LOAD_SCAN_LINES_INCL MI_INSTR(0x12, 0)
 #define MI_STORE_DWORD_IMM	MI_INSTR(0x20, 1)
 #define   MI_MEM_VIRTUAL	(1 << 22) /* 965+ only */
@@ -260,6 +265,8 @@
 #define HWS_PGA		0x02080
 #define HWS_ADDRESS_MASK	0xfffff000
 #define HWS_START_ADDRESS_SHIFT	4
+#define PWRCTXA		0x2088 /* 965GM+ only */
+#define   PWRCTX_EN	(1<<0)
 #define IPEIR		0x02088
 #define IPEHR		0x0208c
 #define INSTDONE	0x02090
@@ -841,7 +848,8 @@
 
 /** GM965 GM45 render standby register */
 #define MCHBAR_RENDER_STANDBY	0x111B8
-
+#define   RCX_SW_EXIT		(1<<23)
+#define   RSX_STATUS_MASK	0x00700000
 #define PEG_BAND_GAP_DATA	0x14d68
 
 /*
