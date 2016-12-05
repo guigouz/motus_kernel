@@ -167,31 +167,8 @@ static void __init omap_irq_bank_init_one(struct omap_irq_bank *bank)
 	while (!(intc_bank_read_reg(bank, INTC_SYSSTATUS) & 0x1))
 		/* Wait for reset to complete */;
 
-	/*
-	 * Disable autoidle, intc appears to lockup when hammered (from cpuidle)
-	 * with PER-RET & CORE-ON state.
-	 */
-	intc_bank_write_reg(0, bank, INTC_SYSCONFIG);
-}
-
-int omap_irq_pending(void)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(irq_banks); i++) {
-		struct omap_irq_bank *bank = irq_banks + i;
-		int irq;
-
-		for (irq = 0; irq < bank->nr_irqs; irq += IRQ_BITS_PER_REG) {
-			int offset = irq & (~(IRQ_BITS_PER_REG - 1));
-
-			if (intc_bank_read_reg(bank, (INTC_PENDING_IRQ0 +
-						      offset)))
-				return 1;
-		}
-	}
-
-	return 0;
+	/* Enable autoidle */
+	intc_bank_write_reg(1 << 0, bank, INTC_SYSCONFIG);
 }
 
 int omap_irq_pending(void)
@@ -249,7 +226,7 @@ void __init omap_init_irq(void)
 }
 
 #ifdef CONFIG_ARCH_OMAP3
-void omap3_intc_save_context(void)
+void omap_intc_save_context(void)
 {
 	int ind = 0, i = 0;
 	for (ind = 0; ind < ARRAY_SIZE(irq_banks); ind++) {
@@ -264,7 +241,7 @@ void omap3_intc_save_context(void)
 			intc_bank_read_reg(bank, INTC_THRESHOLD);
 		for (i = 0; i < INTCPS_NR_IRQS; i++)
 			intc_context[ind].ilr[i] =
-				intc_bank_read_reg(bank, (0x100 + 0x4*i));
+				intc_bank_read_reg(bank, (0x100 + 0x4*ind));
 		for (i = 0; i < INTCPS_NR_MIR_REGS; i++)
 			intc_context[ind].mir[i] =
 				intc_bank_read_reg(&irq_banks[0], INTC_MIR0 +
@@ -272,7 +249,7 @@ void omap3_intc_save_context(void)
 	}
 }
 
-void omap3_intc_restore_context(void)
+void omap_intc_restore_context(void)
 {
 	int ind = 0, i = 0;
 
@@ -290,7 +267,7 @@ void omap3_intc_restore_context(void)
 					bank, INTC_THRESHOLD);
 		for (i = 0; i < INTCPS_NR_IRQS; i++)
 			intc_bank_write_reg(intc_context[ind].ilr[i],
-				bank, (0x100 + 0x4*i));
+				bank, (0x100 + 0x4*ind));
 		for (i = 0; i < INTCPS_NR_MIR_REGS; i++)
 			intc_bank_write_reg(intc_context[ind].mir[i],
 				 &irq_banks[0], INTC_MIR0 + (0x20 * i));
