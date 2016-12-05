@@ -1034,7 +1034,6 @@ extern ctl_handler sysctl_ms_jiffies;
 /* A sysctl table is an array of struct ctl_table: */
 struct ctl_table 
 {
-	int ctl_name;			/* Binary ID */
 	const char *procname;		/* Text ID for /proc/sys, or zero */
 	void *data;
 	int maxlen;
@@ -1042,7 +1041,6 @@ struct ctl_table
 	struct ctl_table *child;
 	struct ctl_table *parent;	/* Automatically set */
 	proc_handler *proc_handler;	/* Callback for text formatting */
-	ctl_handler *strategy;		/* Callback function for all r/w */
 	void *extra1;
 	void *extra2;
 };
@@ -1076,7 +1074,6 @@ struct ctl_table_header
 /* struct ctl_path describes where in the hierarchy a table is added */
 struct ctl_path {
 	const char *procname;
-	int ctl_name;
 };
 
 void register_sysctl_root(struct ctl_table_root *root);

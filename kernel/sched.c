@@ -2109,6 +2109,9 @@ void kthread_bind(struct task_struct *p, unsigned int cpu)
 		return;
 	}
 
+	spin_lock_irqsave(&rq->lock, flags);
+	update_rq_clock(rq);
+	set_task_cpu(p, cpu);
 	p->cpus_allowed = cpumask_of_cpu(cpu);
 	p->rt.nr_cpus_allowed = 1;
 	p->flags |= PF_THREAD_BOUND;
@@ -2199,7 +2202,9 @@ migrate_task(struct task_struct *p, int dest_cpu, struct migration_req *req)
 	 * If the task is not on a runqueue (and not running), then
 	 * the next wake-up will properly place the task.
 	 */
-	if (!p->se.on_rq && !task_running(rq, p))
+	if (!p->se.on_rq && !task_running(rq, p)) {
+		update_rq_clock(rq);
+		set_task_cpu(p, dest_cpu);
 		return 0;
 
 	init_completion(&req->done);
@@ -2499,17 +2504,15 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	}
 	p->state = TASK_WAKING;
 
-	if (p->sched_class->task_waking)
-		p->sched_class->task_waking(rq, p);
-
-	cpu = select_task_rq(rq, p, SD_BALANCE_WAKE, wake_flags);
-	if (cpu != orig_cpu)
+	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
+	if (cpu != orig_cpu) {
+		local_irq_save(flags);
+		rq = cpu_rq(cpu);
+		update_rq_clock(rq);
 		set_task_cpu(p, cpu);
-	__task_rq_unlock(rq);
-
-	rq = cpu_rq(cpu);
-	spin_lock(&rq->lock);
-	update_rq_clock(rq);
+		local_irq_restore(flags);
+	}
+	rq = task_rq_lock(p, &flags);
 
 	WARN_ON(p->state != TASK_WAKING);
 
@@ -2662,6 +2665,7 @@ static void __sched_fork(struct task_struct *p)
 void sched_fork(struct task_struct *p, int clone_flags)
 {
 	int cpu = get_cpu();
+	unsigned long flags;
 
 	__sched_fork(p);
 	/*
@@ -2704,7 +2708,13 @@ void sched_fork(struct task_struct *p, int clone_flags)
 	if (p->sched_class->task_fork)
 		p->sched_class->task_fork(p);
 
+#ifdef CONFIG_SMP
+	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_FORK, 0);
+#endif
+	local_irq_save(flags);
+	update_rq_clock(cpu_rq(cpu));
 	set_task_cpu(p, cpu);
+	local_irq_restore(flags);
 
 #if defined(CONFIG_SCHEDSTATS) || defined(CONFIG_TASK_DELAY_ACCT)
 	if (likely(sched_info_on()))
