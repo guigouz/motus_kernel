@@ -662,9 +662,6 @@ mext_replace_branches(handle_t *handle, struct inode *orig_inode,
 	int replaced_count = 0;
 	int dext_alen;
 
-	/* Protect extent trees against block allocations via delalloc */
-	double_down_write_data_sem(orig_inode, donor_inode);
-
 	/* Get the original extent for the block "orig_off" */
 	*err = get_ext_path(orig_inode, orig_off, &orig_path);
 	if (*err)
@@ -760,11 +757,6 @@ out:
 		kfree(donor_path);
 	}
 
-	ext4_ext_invalidate_cache(orig_inode);
-	ext4_ext_invalidate_cache(donor_inode);
-
-	double_up_write_data_sem(orig_inode, donor_inode);
-
 	return replaced_count;
 }
 
@@ -830,6 +822,11 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 	 * Just swap data blocks between orig and donor.
 	 */
 	if (uninit) {
+		/*
+		 * Protect extent trees against block allocations
+		 * via delalloc
+		 */
+		double_down_write_data_sem(orig_inode, donor_inode);
 		replaced_count = mext_replace_branches(handle, orig_inode,
 						donor_inode, orig_blk_offset,
 						block_len_in_page, err);
@@ -837,6 +834,7 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 		/* Clear the inode cache not to refer to the old data */
 		ext4_ext_invalidate_cache(orig_inode);
 		ext4_ext_invalidate_cache(donor_inode);
+		double_up_write_data_sem(orig_inode, donor_inode);
 		goto out2;
 	}
 
@@ -884,6 +882,8 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 	/* Release old bh and drop refs */
 	try_to_release_page(page, 0);
 
+	/* Protect extent trees against block allocations via delalloc */
+	double_down_write_data_sem(orig_inode, donor_inode);
 	replaced_count = mext_replace_branches(handle, orig_inode, donor_inode,
 					orig_blk_offset, block_len_in_page,
 					&err2);
@@ -892,13 +892,17 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 			block_len_in_page = replaced_count;
 			replaced_size =
 				block_len_in_page << orig_inode->i_blkbits;
-		} else
+		} else {
+			double_up_write_data_sem(orig_inode, donor_inode);
 			goto out;
+		}
 	}
 
 	/* Clear the inode cache not to refer to the old data */
 	ext4_ext_invalidate_cache(orig_inode);
 	ext4_ext_invalidate_cache(donor_inode);
+
+	double_up_write_data_sem(orig_inode, donor_inode);
 
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, 1 << orig_inode->i_blkbits, 0);
@@ -1209,19 +1213,6 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 		return -EINVAL;
 	}
 
-	/* Regular file check */
-	if (!S_ISREG(orig_inode->i_mode) || !S_ISREG(donor_inode->i_mode)) {
-		ext4_debug("ext4 move extent: The argument files should be "
-			"regular file [ino:orig %lu, donor %lu]\n",
-			orig_inode->i_ino, donor_inode->i_ino);
-		return -EINVAL;
-	}
-	/* TODO: This is non obvious task to swap blocks for inodes with full
-	   jornaling enabled */
-	if (ext4_should_journal_data(orig_inode) ||
-	    ext4_should_journal_data(donor_inode)) {
-		return -EINVAL;
-	}
 	/* Protect orig and donor inodes against a truncate */
 	ret1 = mext_inode_double_lock(orig_inode, donor_inode);
 	if (ret1 < 0)
@@ -1231,7 +1222,7 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 	double_down_write_data_sem(orig_inode, donor_inode);
 	/* Check the filesystem environment whether move_extent can be done */
 	ret1 = mext_check_arguments(orig_inode, donor_inode, orig_start,
-				    donor_start, &len);
+					donor_start, &len, *moved_len);
 	if (ret1)
 		goto out;
 
@@ -1293,6 +1284,10 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 	add_blocks = min(le32_to_cpu(ext_cur->ee_block) +
 			 ext4_ext_get_actual_len(ext_cur), block_end + 1) -
 		     max(le32_to_cpu(ext_cur->ee_block), block_start);
+
+	/* Discard preallocations of two inodes */
+	ext4_discard_preallocations(orig_inode);
+	ext4_discard_preallocations(donor_inode);
 
 	while (!last_extent && le32_to_cpu(ext_cur->ee_block) <= block_end) {
 		seq_blocks += add_blocks;
@@ -1367,7 +1362,7 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			/* Count how many blocks we have exchanged */
 			*moved_len += block_len_in_page;
 			if (ret1 < 0)
-				goto out;
+				break;
 			if (*moved_len > len) {
 				ext4_error(orig_inode->i_sb, __func__,
 					"We replaced blocks too much! "
