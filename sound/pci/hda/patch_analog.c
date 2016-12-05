@@ -156,15 +156,19 @@ static const char *ad_slave_sws[] = {
 
 static void ad198x_free_kctls(struct hda_codec *codec);
 
+#ifdef CONFIG_SND_HDA_INPUT_BEEP
 /* additional beep mixers; the actual parameters are overwritten at build */
 static struct snd_kcontrol_new ad_beep_mixer[] = {
 	HDA_CODEC_VOLUME("Beep Playback Volume", 0, 0, HDA_OUTPUT),
-	HDA_CODEC_MUTE("Beep Playback Switch", 0, 0, HDA_OUTPUT),
+	HDA_CODEC_MUTE_BEEP("Beep Playback Switch", 0, 0, HDA_OUTPUT),
 	{ } /* end */
 };
 
 #define set_beep_amp(spec, nid, idx, dir) \
 	((spec)->beep_amp = HDA_COMPOSE_AMP_VAL(nid, 1, idx, dir)) /* mono */
+#else
+#define set_beep_amp(spec, nid, idx, dir) /* NOP */
+#endif
 
 static int ad198x_build_controls(struct hda_codec *codec)
 {
@@ -194,6 +198,7 @@ static int ad198x_build_controls(struct hda_codec *codec)
 	}
 
 	/* create beep controls if needed */
+#ifdef CONFIG_SND_HDA_INPUT_BEEP
 	if (spec->beep_amp) {
 		struct snd_kcontrol_new *knew;
 		for (knew = ad_beep_mixer; knew->name; knew++) {
@@ -202,11 +207,14 @@ static int ad198x_build_controls(struct hda_codec *codec)
 			if (!kctl)
 				return -ENOMEM;
 			kctl->private_value = spec->beep_amp;
-			err = snd_hda_ctl_add(codec, kctl);
+			err = snd_hda_ctl_add(codec,
+						get_amp_nid_(spec->beep_amp),
+						kctl);
 			if (err < 0)
 				return err;
 		}
 	}
+#endif
 
 	/* if we have no master control, let's create it */
 	if (!snd_hda_find_mixer_ctl(codec, "Master Playback Volume")) {
@@ -2577,6 +2585,8 @@ static int add_control(struct ad198x_spec *spec, int type, const char *name,
 	knew->name = kstrdup(name, GFP_KERNEL);
 	if (! knew->name)
 		return -ENOMEM;
+	if (get_amp_nid_(val))
+		knew->subdevice = HDA_SUBDEV_NID_FLAG | get_amp_nid_(val);
 	knew->private_value = val;
 	return 0;
 }

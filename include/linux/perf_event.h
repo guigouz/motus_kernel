@@ -739,7 +739,6 @@ struct perf_output_handle {
 	int				nmi;
 	int				sample;
 	int				locked;
-	unsigned long			flags;
 };
 
 #ifdef CONFIG_PERF_EVENTS

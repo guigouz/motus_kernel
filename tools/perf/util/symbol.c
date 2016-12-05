@@ -212,14 +212,21 @@ int build_id__sprintf(u8 *self, int len, char *bf)
 	return raw - self;
 }
 
-size_t dso__fprintf(struct dso *self, FILE *fp)
+size_t dso__fprintf_buildid(struct dso *self, FILE *fp)
 {
 	char sbuild_id[BUILD_ID_SIZE * 2 + 1];
-	struct rb_node *nd;
-	size_t ret;
 
 	build_id__sprintf(self->build_id, sizeof(self->build_id), sbuild_id);
-	ret = fprintf(fp, "dso: %s (%s)\n", self->short_name, sbuild_id);
+	return fprintf(fp, "%s", sbuild_id);
+}
+
+size_t dso__fprintf(struct dso *self, FILE *fp)
+{
+	struct rb_node *nd;
+	size_t ret = fprintf(fp, "dso: %s (", self->short_name);
+
+	ret += dso__fprintf_buildid(self, fp);
+	ret += fprintf(fp, ")\n");
 
 	for (nd = rb_first(&self->syms); nd; nd = rb_next(nd)) {
 		struct symbol *pos = rb_entry(nd, struct symbol, rb_node);
@@ -281,6 +288,11 @@ static int kernel_maps__load_all_kallsyms(void)
 		if (sym == NULL)
 			goto out_delete_line;
 
+		/*
+		 * We will pass the symbols to the filter later, in
+		 * kernel_maps__split_kallsyms, when we have split the
+		 * maps per module
+		 */
 		dso__insert_symbol(kernel_map->dso, sym);
 	}
 
@@ -555,7 +567,8 @@ static Elf_Scn *elf_section_by_name(Elf *elf, GElf_Ehdr *ep,
  * And always look at the original dso, not at debuginfo packages, that
  * have the PLT data stripped out (shdr_rel_plt.sh_type == SHT_NOBITS).
  */
-static int dso__synthesize_plt_symbols(struct  dso *self)
+static int dso__synthesize_plt_symbols(struct  dso *self, struct map *map,
+				       symbol_filter_t filter)
 {
 	uint32_t nr_rel_entries, idx;
 	GElf_Sym sym;
@@ -643,8 +656,12 @@ static int dso__synthesize_plt_symbols(struct  dso *self)
 			if (!f)
 				goto out_elf_end;
 
-			dso__insert_symbol(self, f);
-			++nr;
+			if (filter && filter(map, f))
+				symbol__delete(f);
+			else {
+				dso__insert_symbol(self, f);
+				++nr;
+			}
 		}
 	} else if (shdr_rel_plt.sh_type == SHT_REL) {
 		GElf_Rel pos_mem, *pos;
@@ -661,8 +678,12 @@ static int dso__synthesize_plt_symbols(struct  dso *self)
 			if (!f)
 				goto out_elf_end;
 
-			dso__insert_symbol(self, f);
-			++nr;
+			if (filter && filter(map, f))
+				symbol__delete(f);
+			else {
+				dso__insert_symbol(self, f);
+				++nr;
+			}
 		}
 	}
 
@@ -1050,7 +1071,7 @@ compare_build_id:
 		goto more;
 
 	if (ret > 0) {
-		int nr_plt = dso__synthesize_plt_symbols(self);
+		int nr_plt = dso__synthesize_plt_symbols(self, map, filter);
 		if (nr_plt > 0)
 			ret += nr_plt;
 	}
@@ -1412,6 +1433,21 @@ void dsos__fprintf(FILE *fp)
 
 	list_for_each_entry(pos, &dsos, node)
 		dso__fprintf(pos, fp);
+}
+
+size_t dsos__fprintf_buildid(FILE *fp)
+{
+	struct dso *pos;
+	size_t ret = 0;
+
+	list_for_each_entry(pos, &dsos, node) {
+		ret += dso__fprintf_buildid(pos, fp);
+		if (verbose)
+			ret += fprintf(fp, " %s\n", pos->long_name);
+		else
+			ret += fprintf(fp, "\n");
+	}
+	return ret;
 }
 
 int load_kernel(symbol_filter_t filter)

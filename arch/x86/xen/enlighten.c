@@ -28,7 +28,6 @@
 #include <linux/highmem.h>
 #include <linux/console.h>
 
-#include <xen/xen.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/version.h>
 #include <xen/interface/physdev.h>
@@ -49,7 +48,6 @@
 #include <asm/traps.h>
 #include <asm/setup.h>
 #include <asm/desc.h>
-#include <asm/pgalloc.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <asm/reboot.h>
@@ -140,23 +138,24 @@ static void xen_vcpu_setup(int cpu)
  */
 void xen_vcpu_restore(void)
 {
-	int cpu;
+	if (have_vcpu_info_placement) {
+		int cpu;
 
-	for_each_online_cpu(cpu) {
-		bool other_cpu = (cpu != smp_processor_id());
+		for_each_online_cpu(cpu) {
+			bool other_cpu = (cpu != smp_processor_id());
 
-		if (other_cpu &&
-		    HYPERVISOR_vcpu_op(VCPUOP_down, cpu, NULL))
-			BUG();
+			if (other_cpu &&
+			    HYPERVISOR_vcpu_op(VCPUOP_down, cpu, NULL))
+				BUG();
 
-		xen_setup_runstate_info(cpu);
-
-		if (have_vcpu_info_placement)
 			xen_vcpu_setup(cpu);
 
-		if (other_cpu &&
-		    HYPERVISOR_vcpu_op(VCPUOP_up, cpu, NULL))
-			BUG();
+			if (other_cpu &&
+			    HYPERVISOR_vcpu_op(VCPUOP_up, cpu, NULL))
+				BUG();
+		}
+
+		BUG_ON(!have_vcpu_info_placement);
 	}
 }
 
@@ -179,7 +178,6 @@ static __read_mostly unsigned int cpuid_leaf1_ecx_mask = ~0;
 static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 		      unsigned int *cx, unsigned int *dx)
 {
-	unsigned maskebx = ~0;
 	unsigned maskecx = ~0;
 	unsigned maskedx = ~0;
 
@@ -187,16 +185,9 @@ static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 	 * Mask out inconvenient features, to try and disable as many
 	 * unsupported kernel subsystems as possible.
 	 */
-	switch (*ax) {
-	case 1:
+	if (*ax == 1) {
 		maskecx = cpuid_leaf1_ecx_mask;
 		maskedx = cpuid_leaf1_edx_mask;
-		break;
-
-	case 0xb:
-		/* Suppress extended topology stuff */
-		maskebx = 0;
-		break;
 	}
 
 	asm(XEN_EMULATE_PREFIX "cpuid"
@@ -206,7 +197,6 @@ static void xen_cpuid(unsigned int *ax, unsigned int *bx,
 		  "=d" (*dx)
 		: "0" (*ax), "2" (*cx));
 
-	*bx &= maskebx;
 	*cx &= maskecx;
 	*dx &= maskedx;
 }
@@ -777,16 +767,7 @@ static void xen_write_cr4(unsigned long cr4)
 
 	native_write_cr4(cr4);
 }
-#ifdef CONFIG_X86_64
-static inline unsigned long xen_read_cr8(void)
-{
-	return 0;
-}
-static inline void xen_write_cr8(unsigned long val)
-{
-	BUG_ON(val);
-}
-#endif
+
 static int xen_write_msr_safe(unsigned int msr, unsigned low, unsigned high)
 {
 	int ret;
@@ -934,7 +915,7 @@ static const struct pv_init_ops xen_init_ops __initdata = {
 };
 
 static const struct pv_time_ops xen_time_ops __initdata = {
-	.sched_clock = xen_clocksource_read,
+	.sched_clock = xen_sched_clock,
 };
 
 static const struct pv_cpu_ops xen_cpu_ops __initdata = {
@@ -952,22 +933,12 @@ static const struct pv_cpu_ops xen_cpu_ops __initdata = {
 	.read_cr4_safe = native_read_cr4_safe,
 	.write_cr4 = xen_write_cr4,
 
-#ifdef CONFIG_X86_64
-	.read_cr8 = xen_read_cr8,
-	.write_cr8 = xen_write_cr8,
-#endif
-
 	.wbinvd = native_wbinvd,
 
 	.read_msr = native_read_msr_safe,
-	.rdmsr_regs = native_rdmsr_safe_regs,
 	.write_msr = xen_write_msr_safe,
-	.wrmsr_regs = native_wrmsr_safe_regs,
-
 	.read_tsc = native_read_tsc,
 	.read_pmc = native_read_pmc,
-
-	.read_tscp = native_read_tscp,
 
 	.iret = xen_iret,
 	.irq_enable_sysexit = xen_sysexit,
@@ -1016,6 +987,10 @@ static const struct pv_apic_ops xen_apic_ops __initdata = {
 static void xen_reboot(int reason)
 {
 	struct sched_shutdown r = { .reason = reason };
+
+#ifdef CONFIG_SMP
+	smp_send_stop();
+#endif
 
 	if (HYPERVISOR_sched_op(SCHEDOP_shutdown, &r))
 		BUG();
@@ -1100,8 +1075,6 @@ asmlinkage void __init xen_start_kernel(void)
 	 * Set up some pagetable state before starting to set any ptes.
 	 */
 
-	xen_init_mmu_ops();
-
 	/* Prevent unwanted bits from being set in PTEs. */
 	__supported_pte_mask &= ~_PAGE_GLOBAL;
 	if (!xen_initial_domain())
@@ -1109,16 +1082,8 @@ asmlinkage void __init xen_start_kernel(void)
 
 	__supported_pte_mask |= _PAGE_IOMAP;
 
-	/*
-	 * Prevent page tables from being allocated in highmem, even
-	 * if CONFIG_HIGHPTE is enabled.
-	 */
-	__userpte_alloc_gfp &= ~__GFP_HIGHMEM;
-
-#ifdef CONFIG_X86_64
 	/* Work out if we support NX */
-	check_efer();
-#endif
+	x86_configure_nx();
 
 	xen_setup_features();
 
@@ -1132,6 +1097,7 @@ asmlinkage void __init xen_start_kernel(void)
 	 */
 	xen_setup_stackprotector();
 
+	xen_init_mmu_ops();
 	xen_init_irq_ops();
 	xen_init_cpuid_mask();
 
@@ -1203,8 +1169,6 @@ asmlinkage void __init xen_start_kernel(void)
 	}
 
 	xen_raw_console_write("about to get started...\n");
-
-	xen_setup_runstate_info(0);
 
 	/* Start the world */
 #ifdef CONFIG_X86_32
