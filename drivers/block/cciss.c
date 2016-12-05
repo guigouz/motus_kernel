@@ -179,19 +179,17 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time, int via_ioctl);
 static int deregister_disk(ctlr_info_t *h, int drv_index,
 			   int clear_all, int via_ioctl);
 
-static void cciss_read_capacity(int ctlr, int logvol, int withirq,
+static void cciss_read_capacity(int ctlr, int logvol,
 			sector_t *total_size, unsigned int *block_size);
-static void cciss_read_capacity_16(int ctlr, int logvol, int withirq,
+static void cciss_read_capacity_16(int ctlr, int logvol,
 			sector_t *total_size, unsigned int *block_size);
 static void cciss_geometry_inquiry(int ctlr, int logvol,
-			int withirq, sector_t total_size,
+			sector_t total_size,
 			unsigned int block_size, InquiryData_struct *inq_buff,
 				   drive_info_struct *drv);
 static void __devinit cciss_interrupt_mode(ctlr_info_t *, struct pci_dev *,
 					   __u32);
 static void start_io(ctlr_info_t *h);
-static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size,
-		   __u8 page_code, unsigned char *scsi3addr, int cmd_type);
 static int sendcmd_withirq(__u8 cmd, int ctlr, void *buff, size_t size,
 			__u8 page_code, unsigned char scsi3addr[],
 			int cmd_type);
@@ -1701,7 +1699,7 @@ static inline void log_unit_to_scsi3addr(ctlr_info_t *h,
  * via the inquiry page 0.  Model, vendor, and rev are set to empty strings if
  * they cannot be read.
  */
-static void cciss_get_device_descr(int ctlr, int logvol, int withirq,
+static void cciss_get_device_descr(int ctlr, int logvol,
 				   char *vendor, char *model, char *rev)
 {
 	int rc;
@@ -1717,14 +1715,8 @@ static void cciss_get_device_descr(int ctlr, int logvol, int withirq,
 		return;
 
 	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
-	if (withirq)
-		rc = sendcmd_withirq(CISS_INQUIRY, ctlr, inq_buf,
-			     sizeof(InquiryData_struct), 0,
-				scsi3addr, TYPE_CMD);
-	else
-		rc = sendcmd(CISS_INQUIRY, ctlr, inq_buf,
-			     sizeof(InquiryData_struct), 0,
-				scsi3addr, TYPE_CMD);
+	rc = sendcmd_withirq(CISS_INQUIRY, ctlr, inq_buf, sizeof(*inq_buf), 0,
+			scsi3addr, TYPE_CMD);
 	if (rc == IO_OK) {
 		memcpy(vendor, &inq_buf->data_byte[8], VENDOR_LEN);
 		vendor[VENDOR_LEN] = '\0';
@@ -1743,7 +1735,7 @@ static void cciss_get_device_descr(int ctlr, int logvol, int withirq,
  * number cannot be had, for whatever reason, 16 bytes of 0xff
  * are returned instead.
  */
-static void cciss_get_serial_no(int ctlr, int logvol, int withirq,
+static void cciss_get_serial_no(int ctlr, int logvol,
 				unsigned char *serial_no, int buflen)
 {
 #define PAGE_83_INQ_BYTES 64
@@ -1759,12 +1751,8 @@ static void cciss_get_serial_no(int ctlr, int logvol, int withirq,
 		return;
 	memset(serial_no, 0, buflen);
 	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
-	if (withirq)
-		rc = sendcmd_withirq(CISS_INQUIRY, ctlr, buf,
-			PAGE_83_INQ_BYTES, 0x83, scsi3addr, TYPE_CMD);
-	else
-		rc = sendcmd(CISS_INQUIRY, ctlr, buf,
-			PAGE_83_INQ_BYTES, 0x83, scsi3addr, TYPE_CMD);
+	rc = sendcmd_withirq(CISS_INQUIRY, ctlr, buf,
+		PAGE_83_INQ_BYTES, 0x83, scsi3addr, TYPE_CMD);
 	if (rc == IO_OK)
 		memcpy(serial_no, &buf[8], buflen);
 	kfree(buf);
@@ -1852,18 +1840,16 @@ static void cciss_update_drive_info(int ctlr, int drv_index, int first_time,
 
 	/* testing to see if 16-byte CDBs are already being used */
 	if (h->cciss_read == CCISS_READ_16) {
-		cciss_read_capacity_16(h->ctlr, drv_index, 1,
+		cciss_read_capacity_16(h->ctlr, drv_index,
 			&total_size, &block_size);
 
 	} else {
-		cciss_read_capacity(ctlr, drv_index, 1,
-				    &total_size, &block_size);
-
+		cciss_read_capacity(ctlr, drv_index, &total_size, &block_size);
 		/* if read_capacity returns all F's this volume is >2TB */
 		/* in size so we switch to 16-byte CDB's for all */
 		/* read/write ops */
 		if (total_size == 0xFFFFFFFFULL) {
-			cciss_read_capacity_16(ctlr, drv_index, 1,
+			cciss_read_capacity_16(ctlr, drv_index,
 			&total_size, &block_size);
 			h->cciss_read = CCISS_READ_16;
 			h->cciss_write = CCISS_WRITE_16;
@@ -1873,14 +1859,14 @@ static void cciss_update_drive_info(int ctlr, int drv_index, int first_time,
 		}
 	}
 
-	cciss_geometry_inquiry(ctlr, drv_index, 1, total_size, block_size,
+	cciss_geometry_inquiry(ctlr, drv_index, total_size, block_size,
 			       inq_buff, drvinfo);
 	drvinfo->block_size = block_size;
 	drvinfo->nr_blocks = total_size + 1;
 
-	cciss_get_device_descr(ctlr, drv_index, 1, drvinfo->vendor,
+	cciss_get_device_descr(ctlr, drv_index, drvinfo->vendor,
 				drvinfo->model, drvinfo->rev);
-	cciss_get_serial_no(ctlr, drv_index, 1, drvinfo->serial_no,
+	cciss_get_serial_no(ctlr, drv_index, drvinfo->serial_no,
 			sizeof(drvinfo->serial_no));
 	/* Save the lunid in case we deregister the disk, below. */
 	memcpy(drvinfo->LunID, h->drv[drv_index]->LunID,
@@ -2674,7 +2660,7 @@ static int sendcmd_withirq(__u8 cmd, int ctlr, void *buff, size_t size,
 }
 
 static void cciss_geometry_inquiry(int ctlr, int logvol,
-				   int withirq, sector_t total_size,
+				   sector_t total_size,
 				   unsigned int block_size,
 				   InquiryData_struct *inq_buff,
 				   drive_info_struct *drv)
@@ -2685,14 +2671,8 @@ static void cciss_geometry_inquiry(int ctlr, int logvol,
 
 	memset(inq_buff, 0, sizeof(InquiryData_struct));
 	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
-	if (withirq)
-		return_code = sendcmd_withirq(CISS_INQUIRY, ctlr,
-					      inq_buff, sizeof(*inq_buff),
-					      0xC1, scsi3addr, TYPE_CMD);
-	else
-		return_code = sendcmd(CISS_INQUIRY, ctlr, inq_buff,
-				      sizeof(*inq_buff), 0xC1, scsi3addr,
-				      TYPE_CMD);
+	return_code = sendcmd_withirq(CISS_INQUIRY, ctlr, inq_buff,
+			sizeof(*inq_buff), 0xC1, scsi3addr, TYPE_CMD);
 	if (return_code == IO_OK) {
 		if (inq_buff->data_byte[8] == 0xFF) {
 			printk(KERN_WARNING
@@ -2725,7 +2705,7 @@ static void cciss_geometry_inquiry(int ctlr, int logvol,
 }
 
 static void
-cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
+cciss_read_capacity(int ctlr, int logvol, sector_t *total_size,
 		    unsigned int *block_size)
 {
 	ReadCapdata_struct *buf;
@@ -2739,14 +2719,8 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
 	}
 
 	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
-	if (withirq)
-		return_code = sendcmd_withirq(CCISS_READ_CAPACITY,
-				ctlr, buf, sizeof(ReadCapdata_struct),
-					0, scsi3addr, TYPE_CMD);
-	else
-		return_code = sendcmd(CCISS_READ_CAPACITY,
-				ctlr, buf, sizeof(ReadCapdata_struct),
-					0, scsi3addr, TYPE_CMD);
+	return_code = sendcmd_withirq(CCISS_READ_CAPACITY, ctlr, buf,
+		sizeof(ReadCapdata_struct), 0, scsi3addr, TYPE_CMD);
 	if (return_code == IO_OK) {
 		*total_size = be32_to_cpu(*(__be32 *) buf->total_size);
 		*block_size = be32_to_cpu(*(__be32 *) buf->block_size);
@@ -2758,8 +2732,8 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
 	kfree(buf);
 }
 
-static void
-cciss_read_capacity_16(int ctlr, int logvol, int withirq, sector_t *total_size, 				unsigned int *block_size)
+static void cciss_read_capacity_16(int ctlr, int logvol,
+	sector_t *total_size, unsigned int *block_size)
 {
 	ReadCapdata_struct_16 *buf;
 	int return_code;
@@ -2772,16 +2746,9 @@ cciss_read_capacity_16(int ctlr, int logvol, int withirq, sector_t *total_size, 
 	}
 
 	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
-	if (withirq) {
-		return_code = sendcmd_withirq(CCISS_READ_CAPACITY_16,
-			ctlr, buf, sizeof(ReadCapdata_struct_16),
-				0, scsi3addr, TYPE_CMD);
-	}
-	else {
-		return_code = sendcmd(CCISS_READ_CAPACITY_16,
-			ctlr, buf, sizeof(ReadCapdata_struct_16),
-				0, scsi3addr, TYPE_CMD);
-	}
+	return_code = sendcmd_withirq(CCISS_READ_CAPACITY_16,
+		ctlr, buf, sizeof(ReadCapdata_struct_16),
+			0, scsi3addr, TYPE_CMD);
 	if (return_code == IO_OK) {
 		*total_size = be64_to_cpu(*(__be64 *) buf->total_size);
 		*block_size = be32_to_cpu(*(__be32 *) buf->block_size);
@@ -2822,13 +2789,13 @@ static int cciss_revalidate(struct gendisk *disk)
 		return 1;
 	}
 	if (h->cciss_read == CCISS_READ_10) {
-		cciss_read_capacity(h->ctlr, logvol, 1,
+		cciss_read_capacity(h->ctlr, logvol,
 					&total_size, &block_size);
 	} else {
-		cciss_read_capacity_16(h->ctlr, logvol, 1,
+		cciss_read_capacity_16(h->ctlr, logvol,
 					&total_size, &block_size);
 	}
-	cciss_geometry_inquiry(h->ctlr, logvol, 1, total_size, block_size,
+	cciss_geometry_inquiry(h->ctlr, logvol, total_size, block_size,
 			       inq_buff, drv);
 
 	blk_queue_logical_block_size(drv->queue, drv->block_size);
@@ -2836,167 +2803,6 @@ static int cciss_revalidate(struct gendisk *disk)
 
 	kfree(inq_buff);
 	return 0;
-}
-
-/*
- *   Wait polling for a command to complete.
- *   The memory mapped FIFO is polled for the completion.
- *   Used only at init time, interrupts from the HBA are disabled.
- */
-static unsigned long pollcomplete(int ctlr)
-{
-	unsigned long done;
-	int i;
-
-	/* Wait (up to 20 seconds) for a command to complete */
-
-	for (i = 20 * HZ; i > 0; i--) {
-		done = hba[ctlr]->access.command_completed(hba[ctlr]);
-		if (done == FIFO_EMPTY)
-			schedule_timeout_uninterruptible(1);
-		else
-			return done;
-	}
-	/* Invalid address to tell caller we ran out of time */
-	return 1;
-}
-
-/* Send command c to controller h and poll for it to complete.
- * Turns interrupts off on the board.  Used at driver init time
- * and during SCSI error recovery.
- */
-static int sendcmd_core(ctlr_info_t *h, CommandList_struct *c)
-{
-	int i;
-	unsigned long complete;
-	int status = IO_ERROR;
-	u64bit buff_dma_handle;
-
-resend_cmd1:
-
-	/* Disable interrupt on the board. */
-	h->access.set_intr_mask(h, CCISS_INTR_OFF);
-
-	/* Make sure there is room in the command FIFO */
-	/* Actually it should be completely empty at this time */
-	/* unless we are in here doing error handling for the scsi */
-	/* tape side of the driver. */
-	for (i = 200000; i > 0; i--) {
-		/* if fifo isn't full go */
-		if (!(h->access.fifo_full(h)))
-			break;
-		udelay(10);
-		printk(KERN_WARNING "cciss cciss%d: SendCmd FIFO full,"
-		       " waiting!\n", h->ctlr);
-	}
-	h->access.submit_command(h, c); /* Send the cmd */
-	do {
-		complete = pollcomplete(h->ctlr);
-
-#ifdef CCISS_DEBUG
-		printk(KERN_DEBUG "cciss: command completed\n");
-#endif				/* CCISS_DEBUG */
-
-		if (complete == 1) {
-			printk(KERN_WARNING
-			       "cciss cciss%d: SendCmd Timeout out, "
-			       "No command list address returned!\n", h->ctlr);
-			status = IO_ERROR;
-			break;
-		}
-
-		/* Make sure it's the command we're expecting. */
-		if ((complete & ~CISS_ERROR_BIT) != c->busaddr) {
-			printk(KERN_WARNING "cciss%d: Unexpected command "
-				"completion.\n", h->ctlr);
-			continue;
-		}
-
-		/* It is our command.  If no error, we're done. */
-		if (!(complete & CISS_ERROR_BIT)) {
-			status = IO_OK;
-			break;
-		}
-
-		/* There is an error... */
-
-		/* if data overrun or underun on Report command ignore it */
-		if (((c->Request.CDB[0] == CISS_REPORT_LOG) ||
-		     (c->Request.CDB[0] == CISS_REPORT_PHYS) ||
-		     (c->Request.CDB[0] == CISS_INQUIRY)) &&
-			((c->err_info->CommandStatus == CMD_DATA_OVERRUN) ||
-			 (c->err_info->CommandStatus == CMD_DATA_UNDERRUN))) {
-			complete = c->busaddr;
-			status = IO_OK;
-			break;
-		}
-
-		if (c->err_info->CommandStatus == CMD_UNSOLICITED_ABORT) {
-			printk(KERN_WARNING "cciss%d: unsolicited abort %p\n",
-				h->ctlr, c);
-			if (c->retry_count < MAX_CMD_RETRIES) {
-				printk(KERN_WARNING "cciss%d: retrying %p\n",
-				   h->ctlr, c);
-				c->retry_count++;
-				/* erase the old error information */
-				memset(c->err_info, 0, sizeof(c->err_info));
-				goto resend_cmd1;
-			}
-			printk(KERN_WARNING "cciss%d: retried %p too many "
-				"times\n", h->ctlr, c);
-			status = IO_ERROR;
-			break;
-		}
-
-		if (c->err_info->CommandStatus == CMD_UNABORTABLE) {
-			printk(KERN_WARNING "cciss%d: command could not be "
-				"aborted.\n", h->ctlr);
-			status = IO_ERROR;
-			break;
-		}
-
-		if (c->err_info->CommandStatus == CMD_TARGET_STATUS) {
-			status = check_target_status(h, c);
-			break;
-		}
-
-		printk(KERN_WARNING "cciss%d: sendcmd error\n", h->ctlr);
-		printk(KERN_WARNING "cmd = 0x%02x, CommandStatus = 0x%02x\n",
-			c->Request.CDB[0], c->err_info->CommandStatus);
-		status = IO_ERROR;
-		break;
-
-	} while (1);
-
-	/* unlock the data buffer from DMA */
-	buff_dma_handle.val32.lower = c->SG[0].Addr.lower;
-	buff_dma_handle.val32.upper = c->SG[0].Addr.upper;
-	pci_unmap_single(h->pdev, (dma_addr_t) buff_dma_handle.val,
-			 c->SG[0].Len, PCI_DMA_BIDIRECTIONAL);
-	return status;
-}
-
-/*
- * Send a command to the controller, and wait for it to complete.
- * Used at init time, and during SCSI error recovery.
- */
-static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size,
-	__u8 page_code, unsigned char *scsi3addr, int cmd_type)
-{
-	CommandList_struct *c;
-	int status;
-
-	c = cmd_alloc(hba[ctlr], 1);
-	if (!c) {
-		printk(KERN_WARNING "cciss: unable to get memory");
-		return IO_ERROR;
-	}
-	status = fill_cmd(c, cmd, ctlr, buff, size, page_code,
-		scsi3addr, cmd_type);
-	if (status == IO_OK)
-		status = sendcmd_core(hba[ctlr], c);
-	cmd_free(hba[ctlr], c, 1);
-	return status;
 }
 
 /*
@@ -4407,30 +4213,28 @@ clean_no_release_regions:
 
 static void cciss_shutdown(struct pci_dev *pdev)
 {
-	ctlr_info_t *tmp_ptr;
-	int i;
-	char flush_buf[4];
+	ctlr_info_t *h;
+	char *flush_buf;
 	int return_code;
 
-	tmp_ptr = pci_get_drvdata(pdev);
-	if (tmp_ptr == NULL)
+	h = pci_get_drvdata(pdev);
+	flush_buf = kzalloc(4, GFP_KERNEL);
+	if (!flush_buf) {
+		printk(KERN_WARNING
+			"cciss:%d cache not flushed, out of memory.\n",
+			h->ctlr);
 		return;
-	i = tmp_ptr->ctlr;
-	if (hba[i] == NULL)
-		return;
-
-	/* Turn board interrupts off  and send the flush cache command */
-	/* sendcmd will turn off interrupt, and send the flush...
-	 * To write all data in the battery backed cache to disks */
-	memset(flush_buf, 0, 4);
-	return_code = sendcmd(CCISS_CACHE_FLUSH, i, flush_buf, 4, 0,
-		CTLR_LUNID, TYPE_CMD);
-	if (return_code == IO_OK) {
-		printk(KERN_INFO "Completed flushing cache on controller %d\n", i);
-	} else {
-		printk(KERN_WARNING "Error flushing cache on controller %d\n", i);
 	}
-	free_irq(hba[i]->intr[2], hba[i]);
+	/* write all data in the battery backed cache to disk */
+	memset(flush_buf, 0, 4);
+	return_code = sendcmd_withirq(CCISS_CACHE_FLUSH, h->ctlr, flush_buf,
+		4, 0, CTLR_LUNID, TYPE_CMD);
+	kfree(flush_buf);
+	if (return_code != IO_OK)
+		printk(KERN_WARNING "cciss%d: Error flushing cache\n",
+			h->ctlr);
+	h->access.set_intr_mask(h, CCISS_INTR_OFF);
+	free_irq(h->intr[2], h);
 }
 
 static void __devexit cciss_remove_one(struct pci_dev *pdev)
