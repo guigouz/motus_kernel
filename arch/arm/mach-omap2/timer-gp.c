@@ -48,6 +48,7 @@ static struct clock_event_device clockevent_gpt;
 struct omap_dm_timer *gptimer_wakeup;
 static u8 __initdata gptimer_id = 1;
 static u8 __initdata inited;
+struct omap_dm_timer *gptimer_wakeup;
 
 static irqreturn_t omap2_gp_timer_interrupt(int irq, void *dev_id)
 {
