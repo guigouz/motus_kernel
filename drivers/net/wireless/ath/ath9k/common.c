@@ -53,16 +53,17 @@ static bool ath9k_rx_accept(struct ath_common *common,
 	if (rx_stats->rs_datalen > common->rx_bufsize)
 		return false;
 
-	if (rx_stats->rs_more) {
-		/*
-		 * Frame spans multiple descriptors; this cannot happen yet
-		 * as we don't support jumbograms. If not in monitor mode,
-		 * discard the frame. Enable this if you want to see
-		 * error frames in Monitor mode.
-		 */
-		if (ah->opmode != NL80211_IFTYPE_MONITOR)
-			return false;
-	} else if (rx_stats->rs_status != 0) {
+	/*
+	 * rs_more indicates chained descriptors which can be used
+	 * to link buffers together for a sort of scatter-gather
+	 * operation.
+	 *
+	 * The rx_stats->rs_status will not be set until the end of the
+	 * chained descriptors so it can be ignored if rs_more is set. The
+	 * rs_more will be false at the last element of the chained
+	 * descriptors.
+	 */
+	if (!rx_stats->rs_more && rx_stats->rs_status != 0) {
 		if (rx_stats->rs_status & ATH9K_RXERR_CRC)
 			rxs->flag |= RX_FLAG_FAILED_FCS_CRC;
 		if (rx_stats->rs_status & ATH9K_RXERR_PHY)
@@ -142,47 +143,6 @@ static u8 ath9k_process_rate(struct ath_common *common,
         return 0;
 }
 
-/*
- * Theory for reporting quality:
- *
- * At a hardware RSSI of 45 you will be able to use MCS 7  reliably.
- * At a hardware RSSI of 45 you will be able to use MCS 15 reliably.
- * At a hardware RSSI of 35 you should be able use 54 Mbps reliably.
- *
- * MCS 7  is the highets MCS index usable by a 1-stream device.
- * MCS 15 is the highest MCS index usable by a 2-stream device.
- *
- * All ath9k devices are either 1-stream or 2-stream.
- *
- * How many bars you see is derived from the qual reporting.
- *
- * A more elaborate scheme can be used here but it requires tables
- * of SNR/throughput for each possible mode used. For the MCS table
- * you can refer to the wireless wiki:
- *
- * http://wireless.kernel.org/en/developers/Documentation/ieee80211/802.11n
- *
- */
-static int ath9k_compute_qual(struct ieee80211_hw *hw,
-			      struct ath_rx_status *rx_stats)
-{
-	int qual;
-
-	if (conf_is_ht(&hw->conf))
-		qual =  rx_stats->rs_rssi * 100 / 45;
-	else
-		qual =  rx_stats->rs_rssi * 100 / 35;
-
-	/*
-	 * rssi can be more than 45 though, anything above that
-	 * should be considered at 100%
-	 */
-	if (qual > 100)
-		qual = 100;
-
-	return qual;
-}
-
 static void ath9k_process_rssi(struct ath_common *common,
 			       struct ieee80211_hw *hw,
 			       struct sk_buff *skb,
@@ -256,7 +216,6 @@ int ath9k_cmn_rx_skb_preprocess(struct ath_common *common,
 	rx_status->noise = common->ani.noise_floor;
 	rx_status->signal = ATH_DEFAULT_NOISE_FLOOR + rx_stats->rs_rssi;
 	rx_status->antenna = rx_stats->rs_antenna;
-	rx_status->qual = ath9k_compute_qual(hw, rx_stats);
 	rx_status->flag |= RX_FLAG_TSFT;
 
 	return 0;
