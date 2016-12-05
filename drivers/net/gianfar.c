@@ -1246,7 +1246,7 @@ static int gfar_restore(struct device *dev)
 		phy_start(priv->phydev);
 
 	netif_device_attach(ndev);
-	napi_enable(&priv->gfargrp.napi);
+	enable_napi(priv);
 
 	return 0;
 }
@@ -1928,14 +1928,11 @@ static int gfar_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	/* total number of fragments in the SKB */
 	nr_frags = skb_shinfo(skb)->nr_frags;
 
-	spin_lock_irqsave(&tx_queue->txlock, flags);
-
 	/* check if there is space to queue this packet */
 	if ((nr_frags+1) > tx_queue->num_txbdfree) {
 		/* no space, stop the queue */
 		netif_tx_stop_queue(txq);
 		dev->stats.tx_fifo_errors++;
-		spin_unlock_irqrestore(&tx_queue->txlock, flags);
 		return NETDEV_TX_BUSY;
 	}
 
@@ -1997,6 +1994,20 @@ static int gfar_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			skb_headlen(skb), DMA_TO_DEVICE);
 
 	lstatus |= BD_LFLAG(TXBD_CRC | TXBD_READY) | skb_headlen(skb);
+
+	/*
+	 * We can work in parallel with gfar_clean_tx_ring(), except
+	 * when modifying num_txbdfree. Note that we didn't grab the lock
+	 * when we were reading the num_txbdfree and checking for available
+	 * space, that's because outside of this function it can only grow,
+	 * and once we've got needed space, it cannot suddenly disappear.
+	 *
+	 * The lock also protects us from gfar_error(), which can modify
+	 * regs->tstat and thus retrigger the transfers, which is why we
+	 * also must grab the lock before setting ready bit for the first
+	 * to be transmitted BD.
+	 */
+	spin_lock_irqsave(&tx_queue->txlock, flags);
 
 	/*
 	 * The powerpc-specific eieio() is used, as wmb() has too strong
@@ -2225,6 +2236,8 @@ static int gfar_clean_tx_ring(struct gfar_priv_tx_q *tx_queue)
 	skb_dirtytx = tx_queue->skb_dirtytx;
 
 	while ((skb = tx_queue->tx_skbuff[skb_dirtytx])) {
+		unsigned long flags;
+
 		frags = skb_shinfo(skb)->nr_frags;
 		lbdp = skip_txbd(bdp, frags, base, tx_ring_size);
 
@@ -2269,7 +2282,9 @@ static int gfar_clean_tx_ring(struct gfar_priv_tx_q *tx_queue)
 			TX_RING_MOD_MASK(tx_ring_size);
 
 		howmany++;
+		spin_lock_irqsave(&tx_queue->txlock, flags);
 		tx_queue->num_txbdfree += frags + 1;
+		spin_unlock_irqrestore(&tx_queue->txlock, flags);
 	}
 
 	/* If we freed a buffer, we can restart transmission, if necessary */
@@ -2504,8 +2519,6 @@ int gfar_clean_rx_ring(struct gfar_priv_rx_q *rx_queue, int rx_work_limit)
 				skb_put(skb, pkt_len);
 				dev->stats.rx_bytes += pkt_len;
 
-				if (in_irq() || irqs_disabled())
-					printk("Interrupt problem!\n");
 				gfar_process_frame(dev, skb, amount_pull);
 
 			} else {
@@ -2550,7 +2563,6 @@ static int gfar_poll(struct napi_struct *napi, int budget)
 	int tx_cleaned = 0, i, left_over_budget = budget;
 	unsigned long serviced_queues = 0;
 	int num_queues = 0;
-	unsigned long flags;
 
 	num_queues = gfargrp->num_rx_queues;
 	budget_per_queue = budget/num_queues;
@@ -2570,14 +2582,7 @@ static int gfar_poll(struct napi_struct *napi, int budget)
 			rx_queue = priv->rx_queue[i];
 			tx_queue = priv->tx_queue[rx_queue->qindex];
 
-			/* If we fail to get the lock,
-			 * don't bother with the TX BDs */
-			if (spin_trylock_irqsave(&tx_queue->txlock, flags)) {
-				tx_cleaned += gfar_clean_tx_ring(tx_queue);
-				spin_unlock_irqrestore(&tx_queue->txlock,
-							flags);
-			}
-
+			tx_cleaned += gfar_clean_tx_ring(tx_queue);
 			rx_cleaned_per_queue = gfar_clean_rx_ring(rx_queue,
 							budget_per_queue);
 			rx_cleaned += rx_cleaned_per_queue;
@@ -2945,14 +2950,22 @@ static irqreturn_t gfar_error(int irq, void *grp_id)
 		if (events & IEVENT_CRL)
 			dev->stats.tx_aborted_errors++;
 		if (events & IEVENT_XFUN) {
+			unsigned long flags;
+
 			if (netif_msg_tx_err(priv))
 				printk(KERN_DEBUG "%s: TX FIFO underrun, "
 				       "packet dropped.\n", dev->name);
 			dev->stats.tx_dropped++;
 			priv->extra_stats.tx_underrun++;
 
+			local_irq_save(flags);
+			lock_tx_qs(priv);
+
 			/* Reactivate the Tx Queues */
 			gfar_write(&regs->tstat, gfargrp->tstat);
+
+			unlock_tx_qs(priv);
+			local_irq_restore(flags);
 		}
 		if (netif_msg_tx_err(priv))
 			printk(KERN_DEBUG "%s: Transmit Error\n", dev->name);

@@ -3754,7 +3754,7 @@ tracing_stats_read(struct file *filp, char __user *ubuf,
 
 	s = kmalloc(sizeof(*s), GFP_KERNEL);
 	if (!s)
-		return ENOMEM;
+		return -ENOMEM;
 
 	trace_seq_init(s);
 

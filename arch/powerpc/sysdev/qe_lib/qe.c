@@ -65,19 +65,6 @@ static unsigned int qe_num_of_snum;
 
 static phys_addr_t qebase = -1;
 
-int qe_alive_during_sleep(void)
-{
-	static int ret = -1;
-
-	if (ret != -1)
-		return ret;
-
-	ret = !of_find_compatible_node(NULL, NULL, "fsl,mpc8569-pmc");
-
-	return ret;
-}
-EXPORT_SYMBOL(qe_alive_during_sleep);
-
 phys_addr_t get_qe_base(void)
 {
 	struct device_node *qe;
@@ -104,7 +91,7 @@ phys_addr_t get_qe_base(void)
 
 EXPORT_SYMBOL(get_qe_base);
 
-void __init qe_reset(void)
+void qe_reset(void)
 {
 	if (qe_immr == NULL)
 		qe_immr = ioremap(get_qe_base(), QE_IMMAP_SIZE);
@@ -330,16 +317,18 @@ EXPORT_SYMBOL(qe_put_snum);
 static int qe_sdma_init(void)
 {
 	struct sdma __iomem *sdma = &qe_immr->sdma;
-	unsigned long sdma_buf_offset;
+	static unsigned long sdma_buf_offset = (unsigned long)-ENOMEM;
 
 	if (!sdma)
 		return -ENODEV;
 
 	/* allocate 2 internal temporary buffers (512 bytes size each) for
 	 * the SDMA */
- 	sdma_buf_offset = qe_muram_alloc(512 * 2, 4096);
-	if (IS_ERR_VALUE(sdma_buf_offset))
-		return -ENOMEM;
+	if (IS_ERR_VALUE(sdma_buf_offset)) {
+		sdma_buf_offset = qe_muram_alloc(512 * 2, 4096);
+		if (IS_ERR_VALUE(sdma_buf_offset))
+			return -ENOMEM;
+	}
 
 	out_be32(&sdma->sdebcr, (u32) sdma_buf_offset & QE_SDEBCR_BA_MASK);
  	out_be32(&sdma->sdmr, (QE_SDMR_GLB_1_MSK |
@@ -349,7 +338,7 @@ static int qe_sdma_init(void)
 }
 
 /* The maximum number of RISCs we support */
-#define MAX_QE_RISC     2
+#define MAX_QE_RISC     4
 
 /* Firmware information stored here for qe_get_firmware_info() */
 static struct qe_firmware_info qe_firmware_info;
