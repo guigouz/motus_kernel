@@ -290,13 +290,11 @@ static int __init pci_iommu_init(void)
 	dma_debug_add_bus(&pci_bus_type);
 #endif
 
-	calgary_iommu_init();
+	x86_init.iommu.iommu_init();
 
 	intel_iommu_init();
 
 	amd_iommu_init();
-
-	gart_iommu_init();
 
 	no_iommu_init();
 	return 0;
