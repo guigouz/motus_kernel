@@ -29,6 +29,8 @@
 #include <linux/init.h>
 #include <linux/gpio.h>
 #include <linux/platform_device.h>
+#include <linux/spi/spi.h>
+#include <linux/mfd/mc13783.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -109,6 +111,9 @@ static int mxc_mmc1_get_ro(struct device *dev)
 
 static int gpio_det, gpio_wp;
 
+#define MMC_PAD_CFG (PAD_CTL_DRV_MAX | PAD_CTL_SRE_FAST | PAD_CTL_HYS_CMOS | \
+			PAD_CTL_ODE_CMOS | PAD_CTL_100K_PU)
+
 static int mxc_mmc1_init(struct device *dev,
 			 irq_handler_t detect_irq, void *data)
 {
@@ -116,6 +121,13 @@ static int mxc_mmc1_init(struct device *dev,
 
 	gpio_det = IOMUX_TO_GPIO(MX31_PIN_GPIO1_1);
 	gpio_wp = IOMUX_TO_GPIO(MX31_PIN_LCS0);
+
+	mxc_iomux_set_pad(MX31_PIN_SD1_DATA0, MMC_PAD_CFG);
+	mxc_iomux_set_pad(MX31_PIN_SD1_DATA1, MMC_PAD_CFG);
+	mxc_iomux_set_pad(MX31_PIN_SD1_DATA2, MMC_PAD_CFG);
+	mxc_iomux_set_pad(MX31_PIN_SD1_DATA3, MMC_PAD_CFG);
+	mxc_iomux_set_pad(MX31_PIN_SD1_CLK, MMC_PAD_CFG);
+	mxc_iomux_set_pad(MX31_PIN_SD1_CMD, MMC_PAD_CFG);
 
 	ret = gpio_request(gpio_det, "MMC detect");
 	if (ret)
@@ -202,6 +214,22 @@ static void __init mx31lilly_init_fb(void)
 	gpio_direction_output(LCD_VCC_EN_GPIO, 1);
 }
 
+/* SPI */
+
+static struct mc13783_platform_data mc13783_pdata __initdata = {
+	.flags = MC13783_USE_RTC | MC13783_USE_TOUCHSCREEN,
+};
+
+static struct spi_board_info lilly_spi_devs[] __initdata = {
+	{
+		.modalias	= "mc13783",
+		.max_speed_hz	= 1000000,
+		.bus_num	= 1,
+		.chip_select	= 0,
+		.platform_data	= &mc13783_pdata,
+	},
+};
+
 void __init mx31lilly_db_init(void)
 {
 	mxc_iomux_setup_multiple_pins(lilly_db_board_pins,
@@ -212,5 +240,6 @@ void __init mx31lilly_db_init(void)
 	mxc_register_device(&mxc_uart_device2, &uart_pdata);
 	mxc_register_device(&mxcsdhc_device0, &mmc_pdata);
 	mx31lilly_init_fb();
+	spi_register_board_info(lilly_spi_devs, ARRAY_SIZE(lilly_spi_devs));
 }
 
