@@ -12,6 +12,11 @@
 
 #define IO_OK		0
 #define IO_ERROR	1
+#define IO_NEEDS_RETRY  3
+
+#define VENDOR_LEN	8
+#define MODEL_LEN	16
+#define REV_LEN		4
 
 struct ctlr_info;
 typedef struct ctlr_info ctlr_info_t;
@@ -50,15 +55,13 @@ typedef struct _drive_info_struct
 	char device_initialized;     /* indicates whether dev is initialized */
 } drive_info_struct;
 
-#ifdef CONFIG_CISS_SCSI_TAPE
-
-struct sendcmd_reject_list {
-	int ncompletions;
-	unsigned long *complete; /* array of NR_CMDS tags */
+struct Cmd_sg_list {
+	SGDescriptor_struct	*sgchain;
+	dma64_addr_t		sg_chain_dma;
+	int			chain_block_size;
 };
 
-#endif
-struct ctlr_info 
+struct ctlr_info
 {
 	int	ctlr;
 	char	devname[8];
@@ -78,6 +81,16 @@ struct ctlr_info
 	int	num_luns;
 	int 	highest_lun;
 	int	usage_count;  /* number of opens all all minor devices */
+	/* Need space for temp sg list
+	 * number of scatter/gathers supported
+	 * number of scatter/gathers in chained block
+	 */
+	struct	scatterlist **scatter_list;
+	int	maxsgentries;
+	int	chainsize;
+	int	max_cmd_sgentries;
+	struct Cmd_sg_list **cmd_sg_list;
+
 #	define DOORBELL_INT	0
 #	define PERF_MODE_INT	1
 #	define SIMPLE_MODE_INT	2
@@ -127,7 +140,6 @@ struct ctlr_info
 	void *scsi_ctlr; /* ptr to structure containing scsi related stuff */
 	/* list of block side commands the scsi error handling sucked up */
 	/* and saved for later processing */
-	struct sendcmd_reject_list scsi_rejects;
 #endif
 	unsigned char alive;
 	struct list_head scan_list;
@@ -169,7 +181,6 @@ static void SA5_submit_command( ctlr_info_t *h, CommandList_struct *c)
 	 printk("Sending %x - down to controller\n", c->busaddr );
 #endif /* CCISS_DEBUG */ 
          writel(c->busaddr, h->vaddr + SA5_REQUEST_PORT_OFFSET);
-	readl(h->vaddr + SA5_SCRATCHPAD_OFFSET);
 	 h->commands_outstanding++;
 	 if ( h->commands_outstanding > h->max_outstanding)
 		h->max_outstanding = h->commands_outstanding;
