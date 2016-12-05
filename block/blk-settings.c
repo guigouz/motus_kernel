@@ -97,7 +97,10 @@ void blk_set_default_limits(struct queue_limits *lim)
 	lim->max_segment_size = MAX_SEGMENT_SIZE;
 	lim->max_sectors = BLK_DEF_MAX_SECTORS;
 	lim->max_hw_sectors = INT_MAX;
-	lim->max_discard_sectors = SAFE_MAX_SECTORS;
+	lim->max_discard_sectors = 0;
+	lim->discard_granularity = 0;
+	lim->discard_alignment = 0;
+	lim->discard_misaligned = 0;
 	lim->logical_block_size = lim->physical_block_size = lim->io_min = 512;
 	lim->bounce_pfn = (unsigned long)(BLK_BOUNCE_ANY >> PAGE_SHIFT);
 	lim->alignment_offset = 0;
@@ -575,19 +578,34 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 		ret = -1;
 	}
 
+	if (offset &&
+	    (offset & (b->discard_granularity - 1)) != b->discard_alignment) {
+		t->discard_misaligned = 1;
+		ret = -1;
+	}
+
 	/* Find lowest common alignment_offset */
 	t->alignment_offset = lcm(t->alignment_offset, alignment)
 		& (max(t->physical_block_size, t->io_min) - 1);
 
-	/* Verify that new alignment_offset is on a logical block boundary */
+	if (!t->discard_alignment)
+		t->discard_alignment =
+			b->discard_alignment & (b->discard_granularity - 1);
+
+	/* Top device aligned on logical block boundary? */
 	if (t->alignment_offset & (t->logical_block_size - 1)) {
 		t->misaligned = 1;
 		ret = -1;
 	}
 
-	/* Discard */
-	t->max_discard_sectors = min_not_zero(t->max_discard_sectors,
-					      b->max_discard_sectors);
+	/* Find lcm() of optimal I/O size and granularity */
+	t->io_opt = lcm(t->io_opt, b->io_opt);
+	t->discard_granularity = lcm(t->discard_granularity,
+				     b->discard_granularity);
+
+	/* Verify that optimal I/O size is a multiple of io_min */
+	if (t->io_min && t->io_opt % t->io_min)
+		ret = -1;
 
 	return ret;
 }
