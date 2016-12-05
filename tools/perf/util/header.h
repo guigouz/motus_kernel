@@ -33,7 +33,7 @@ struct perf_header {
 };
 
 struct perf_header *perf_header__read(int fd);
-void perf_header__write(struct perf_header *self, int fd);
+void perf_header__write(struct perf_header *self, int fd, bool at_exit);
 
 void perf_header__add_attr(struct perf_header *self,
 			   struct perf_header_attr *attr);
@@ -49,7 +49,6 @@ void perf_header_attr__add_id(struct perf_header_attr *self, u64 id);
 u64 perf_header__sample_type(struct perf_header *header);
 struct perf_event_attr *
 perf_header__find_attr(u64 id, struct perf_header *header);
-void perf_header__feat_trace_info(struct perf_header *header);
 void perf_header__set_feat(struct perf_header *self, int feat);
 bool perf_header__has_feat(const struct perf_header *self, int feat);
 

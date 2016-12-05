@@ -1353,7 +1353,7 @@ static const struct driver_info ax8817x_info = {
 	.status = asix_status,
 	.link_reset = ax88172_link_reset,
 	.reset = ax88172_link_reset,
-	.flags =  FLAG_ETHER,
+	.flags =  FLAG_ETHER | FLAG_LINK_INTR,
 	.data = 0x00130103,
 };
 
@@ -1363,7 +1363,7 @@ static const struct driver_info dlink_dub_e100_info = {
 	.status = asix_status,
 	.link_reset = ax88172_link_reset,
 	.reset = ax88172_link_reset,
-	.flags =  FLAG_ETHER,
+	.flags =  FLAG_ETHER | FLAG_LINK_INTR,
 	.data = 0x009f9d9f,
 };
 
@@ -1373,7 +1373,7 @@ static const struct driver_info netgear_fa120_info = {
 	.status = asix_status,
 	.link_reset = ax88172_link_reset,
 	.reset = ax88172_link_reset,
-	.flags =  FLAG_ETHER,
+	.flags =  FLAG_ETHER | FLAG_LINK_INTR,
 	.data = 0x00130103,
 };
 
@@ -1383,7 +1383,7 @@ static const struct driver_info hawking_uf200_info = {
 	.status = asix_status,
 	.link_reset = ax88172_link_reset,
 	.reset = ax88172_link_reset,
-	.flags =  FLAG_ETHER,
+	.flags =  FLAG_ETHER | FLAG_LINK_INTR,
 	.data = 0x001f1d1f,
 };
 
@@ -1393,7 +1393,7 @@ static const struct driver_info ax88772_info = {
 	.status = asix_status,
 	.link_reset = ax88772_link_reset,
 	.reset = ax88772_link_reset,
-	.flags = FLAG_ETHER | FLAG_FRAMING_AX,
+	.flags = FLAG_ETHER | FLAG_FRAMING_AX | FLAG_LINK_INTR,
 	.rx_fixup = asix_rx_fixup,
 	.tx_fixup = asix_tx_fixup,
 };
@@ -1404,7 +1404,7 @@ static const struct driver_info ax88178_info = {
 	.status = asix_status,
 	.link_reset = ax88178_link_reset,
 	.reset = ax88178_link_reset,
-	.flags = FLAG_ETHER | FLAG_FRAMING_AX,
+	.flags = FLAG_ETHER | FLAG_FRAMING_AX | FLAG_LINK_INTR,
 	.rx_fixup = asix_rx_fixup,
 	.tx_fixup = asix_tx_fixup,
 };

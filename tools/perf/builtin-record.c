@@ -378,39 +378,11 @@ static void open_counters(int cpu, pid_t pid)
 	nr_cpu++;
 }
 
-static bool write_buildid_table(void)
-{
-	struct dso *pos;
-	bool have_buildid = false;
-
-	list_for_each_entry(pos, &dsos, node) {
-		struct build_id_event b;
-		size_t len;
-
-		if (filename__read_build_id(pos->long_name,
-					    &b.build_id,
-					    sizeof(b.build_id)) < 0)
-			continue;
-		have_buildid = true;
-		memset(&b.header, 0, sizeof(b.header));
-		len = strlen(pos->long_name) + 1;
-		len = ALIGN(len, 64);
-		b.header.size = sizeof(b) + len;
-		write_output(&b, sizeof(b));
-		write_output(pos->long_name, len);
-	}
-
-	return have_buildid;
-}
-
 static void atexit_header(void)
 {
 	header->data_size += bytes_written;
 
-	if (write_buildid_table())
-		perf_header__set_feat(header, HEADER_BUILD_ID);
-
-	perf_header__write(header, output);
+	perf_header__write(header, output, true);
 }
 
 static int __cmd_record(int argc, const char **argv)
@@ -459,11 +431,11 @@ static int __cmd_record(int argc, const char **argv)
 		header = perf_header__new();
 
 	if (raw_samples) {
-		perf_header__feat_trace_info(header);
+		perf_header__set_feat(header, HEADER_TRACE_INFO);
 	} else {
 		for (i = 0; i < nr_counters; i++) {
 			if (attrs[i].sample_type & PERF_SAMPLE_RAW) {
-				perf_header__feat_trace_info(header);
+				perf_header__set_feat(header, HEADER_TRACE_INFO);
 				break;
 			}
 		}
@@ -487,7 +459,7 @@ static int __cmd_record(int argc, const char **argv)
 	}
 
 	if (file_new)
-		perf_header__write(header, output);
+		perf_header__write(header, output, false);
 
 	if (!system_wide)
 		event__synthesize_thread(pid, process_synthesized_event);
@@ -497,13 +469,22 @@ static int __cmd_record(int argc, const char **argv)
 	if (target_pid == -1 && argc) {
 		pid = fork();
 		if (pid < 0)
-			perror("failed to fork");
+			die("failed to fork");
 
 		if (!pid) {
 			if (execvp(argv[0], (char **)argv)) {
 				perror(argv[0]);
 				exit(-1);
 			}
+		} else {
+			/*
+			 * Wait a bit for the execv'ed child to appear
+			 * and be updated in /proc
+			 * FIXME: Do you know a less heuristical solution?
+			 */
+			usleep(1000);
+			event__synthesize_thread(pid,
+						 process_synthesized_event);
 		}
 
 		child_pid = pid;
