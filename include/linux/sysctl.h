@@ -1041,6 +1041,7 @@ struct ctl_table
 	struct ctl_table *child;
 	struct ctl_table *parent;	/* Automatically set */
 	proc_handler *proc_handler;	/* Callback for text formatting */
+	ctl_handler *strategy;
 	void *extra1;
 	void *extra2;
 };

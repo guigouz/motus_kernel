@@ -2651,6 +2651,285 @@ int proc_doulongvec_ms_jiffies_minmax(struct ctl_table *table, int write,
 
 #endif /* CONFIG_PROC_FS */
 
+#ifdef CONFIG_SYSCTL_SYSCALL
+/*
+ * General sysctl support routines 
+ */
+
+/* The generic sysctl data routine (used if no strategy routine supplied) */
+int sysctl_data(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	size_t len;
+
+	/* Get out of I don't have a variable */
+	if (!table->data || !table->maxlen)
+		return -ENOTDIR;
+
+	if (oldval && oldlenp) {
+		if (get_user(len, oldlenp))
+			return -EFAULT;
+		if (len) {
+			if (len > table->maxlen)
+				len = table->maxlen;
+			if (copy_to_user(oldval, table->data, len))
+				return -EFAULT;
+			if (put_user(len, oldlenp))
+				return -EFAULT;
+		}
+	}
+
+	if (newval && newlen) {
+		if (newlen > table->maxlen)
+			newlen = table->maxlen;
+
+		if (copy_from_user(table->data, newval, newlen))
+			return -EFAULT;
+	}
+	return 1;
+}
+
+/* The generic string strategy routine: */
+int sysctl_string(struct ctl_table *table,
+		  void __user *oldval, size_t __user *oldlenp,
+		  void __user *newval, size_t newlen)
+{
+	if (!table->data || !table->maxlen) 
+		return -ENOTDIR;
+	
+	if (oldval && oldlenp) {
+		size_t bufsize;
+		if (get_user(bufsize, oldlenp))
+			return -EFAULT;
+		if (bufsize) {
+			size_t len = strlen(table->data), copied;
+
+			/* This shouldn't trigger for a well-formed sysctl */
+			if (len > table->maxlen)
+				len = table->maxlen;
+
+			/* Copy up to a max of bufsize-1 bytes of the string */
+			copied = (len >= bufsize) ? bufsize - 1 : len;
+
+			if (copy_to_user(oldval, table->data, copied) ||
+			    put_user(0, (char __user *)(oldval + copied)))
+				return -EFAULT;
+			if (put_user(len, oldlenp))
+				return -EFAULT;
+		}
+	}
+	if (newval && newlen) {
+		size_t len = newlen;
+		if (len > table->maxlen)
+			len = table->maxlen;
+		if(copy_from_user(table->data, newval, len))
+			return -EFAULT;
+		if (len == table->maxlen)
+			len--;
+		((char *) table->data)[len] = 0;
+	}
+	return 1;
+}
+
+/*
+ * This function makes sure that all of the integers in the vector
+ * are between the minimum and maximum values given in the arrays
+ * table->extra1 and table->extra2, respectively.
+ */
+int sysctl_intvec(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+
+	if (newval && newlen) {
+		int __user *vec = (int __user *) newval;
+		int *min = (int *) table->extra1;
+		int *max = (int *) table->extra2;
+		size_t length;
+		int i;
+
+		if (newlen % sizeof(int) != 0)
+			return -EINVAL;
+
+		if (!table->extra1 && !table->extra2)
+			return 0;
+
+		if (newlen > table->maxlen)
+			newlen = table->maxlen;
+		length = newlen / sizeof(int);
+
+		for (i = 0; i < length; i++) {
+			int value;
+			if (get_user(value, vec + i))
+				return -EFAULT;
+			if (min && value < min[i])
+				return -EINVAL;
+			if (max && value > max[i])
+				return -EINVAL;
+		}
+	}
+	return 0;
+}
+
+/* Strategy function to convert jiffies to seconds */ 
+int sysctl_jiffies(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	if (oldval && oldlenp) {
+		size_t olen;
+
+		if (get_user(olen, oldlenp))
+			return -EFAULT;
+		if (olen) {
+			int val;
+
+			if (olen < sizeof(int))
+				return -EINVAL;
+
+			val = *(int *)(table->data) / HZ;
+			if (put_user(val, (int __user *)oldval))
+				return -EFAULT;
+			if (put_user(sizeof(int), oldlenp))
+				return -EFAULT;
+		}
+	}
+	if (newval && newlen) { 
+		int new;
+		if (newlen != sizeof(int))
+			return -EINVAL; 
+		if (get_user(new, (int __user *)newval))
+			return -EFAULT;
+		*(int *)(table->data) = new*HZ; 
+	}
+	return 1;
+}
+
+/* Strategy function to convert jiffies to seconds */ 
+int sysctl_ms_jiffies(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	if (oldval && oldlenp) {
+		size_t olen;
+
+		if (get_user(olen, oldlenp))
+			return -EFAULT;
+		if (olen) {
+			int val;
+
+			if (olen < sizeof(int))
+				return -EINVAL;
+
+			val = jiffies_to_msecs(*(int *)(table->data));
+			if (put_user(val, (int __user *)oldval))
+				return -EFAULT;
+			if (put_user(sizeof(int), oldlenp))
+				return -EFAULT;
+		}
+	}
+	if (newval && newlen) { 
+		int new;
+		if (newlen != sizeof(int))
+			return -EINVAL; 
+		if (get_user(new, (int __user *)newval))
+			return -EFAULT;
+		*(int *)(table->data) = msecs_to_jiffies(new);
+	}
+	return 1;
+}
+
+
+
+#else /* CONFIG_SYSCTL_SYSCALL */
+
+
+SYSCALL_DEFINE1(sysctl, struct __sysctl_args __user *, args)
+{
+	struct __sysctl_args tmp;
+	int error;
+
+	if (copy_from_user(&tmp, args, sizeof(tmp)))
+		return -EFAULT;
+
+	error = deprecated_sysctl_warning(&tmp);
+
+	/* If no error reading the parameters then just -ENOSYS ... */
+	if (!error)
+		error = -ENOSYS;
+
+	return error;
+}
+
+int sysctl_data(struct ctl_table *table,
+		  void __user *oldval, size_t __user *oldlenp,
+		  void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+int sysctl_string(struct ctl_table *table,
+		  void __user *oldval, size_t __user *oldlenp,
+		  void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+int sysctl_intvec(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+int sysctl_jiffies(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+int sysctl_ms_jiffies(struct ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	return -ENOSYS;
+}
+
+#endif /* CONFIG_SYSCTL_SYSCALL */
+
+static int deprecated_sysctl_warning(struct __sysctl_args *args)
+{
+	static int msg_count;
+	int name[CTL_MAXNAME];
+	int i;
+
+	/* Check args->nlen. */
+	if (args->nlen < 0 || args->nlen > CTL_MAXNAME)
+		return -ENOTDIR;
+
+	/* Read in the sysctl name for better debug message logging */
+	for (i = 0; i < args->nlen; i++)
+		if (get_user(name[i], args->name + i))
+			return -EFAULT;
+
+	/* Ignore accesses to kernel.version */
+	if ((args->nlen == 2) && (name[0] == CTL_KERN) && (name[1] == KERN_VERSION))
+		return 0;
+
+	if (msg_count < 5) {
+		msg_count++;
+		printk(KERN_INFO
+			"warning: process `%s' used the deprecated sysctl "
+			"system call with ", current->comm);
+		for (i = 0; i < args->nlen; i++)
+			printk("%d.", name[i]);
+		printk("\n");
+	}
+	return 0;
+}
+
 /*
  * No sense putting this after each symbol definition, twice,
  * exception granted :-)

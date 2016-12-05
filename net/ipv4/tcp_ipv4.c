@@ -803,18 +803,18 @@ static void syn_flood_warning(struct sk_buff *skb)
 /*
  * Save and compile IPv4 options into the request_sock if needed.
  */
-static struct ip_options_rcu *tcp_v4_save_options(struct sock *sk,
+static struct ip_options *tcp_v4_save_options(struct sock *sk,
 						  struct sk_buff *skb)
 {
 	const struct ip_options *opt = &(IPCB(skb)->opt);
-	struct ip_options_rcu *dopt = NULL;
+	struct ip_options *dopt = NULL;
 
 	if (opt && opt->optlen) {
 		int opt_size = sizeof(*dopt) + opt->optlen;
 
 		dopt = kmalloc(opt_size, GFP_ATOMIC);
 		if (dopt) {
-			if (ip_options_echo(&dopt->opt, skb)) {
+			if (ip_options_echo(dopt, skb)) {
 				kfree(dopt);
 				dopt = NULL;
 			}
