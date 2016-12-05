@@ -833,6 +833,10 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 		replaced_count = mext_replace_branches(handle, orig_inode,
 						donor_inode, orig_blk_offset,
 						block_len_in_page, err);
+
+		/* Clear the inode cache not to refer to the old data */
+		ext4_ext_invalidate_cache(orig_inode);
+		ext4_ext_invalidate_cache(donor_inode);
 		goto out2;
 	}
 
@@ -891,6 +895,10 @@ move_extent_per_page(struct file *o_filp, struct inode *donor_inode,
 		} else
 			goto out;
 	}
+
+	/* Clear the inode cache not to refer to the old data */
+	ext4_ext_invalidate_cache(orig_inode);
+	ext4_ext_invalidate_cache(donor_inode);
 
 	if (!page_has_buffers(page))
 		create_empty_buffers(page, 1 << orig_inode->i_blkbits, 0);
@@ -1359,7 +1367,7 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 			/* Count how many blocks we have exchanged */
 			*moved_len += block_len_in_page;
 			if (ret1 < 0)
-				break;
+				goto out;
 			if (*moved_len > len) {
 				ext4_error(orig_inode->i_sb, __func__,
 					"We replaced blocks too much! "
