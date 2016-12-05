@@ -296,10 +296,10 @@ static void igb_cache_ring_register(struct igb_adapter *adapter)
 		 * and continue consuming queues in the same sequence
 		 */
 		if (adapter->vfs_allocated_count) {
-			for (; i < adapter->num_rx_queues; i++)
+			for (; i < adapter->rss_queues; i++)
 				adapter->rx_ring[i].reg_idx = rbase_offset +
 				                              Q_IDX_82576(i);
-			for (; j < adapter->num_tx_queues; j++)
+			for (; j < adapter->rss_queues; j++)
 				adapter->tx_ring[j].reg_idx = rbase_offset +
 				                              Q_IDX_82576(j);
 		}
@@ -618,14 +618,15 @@ static void igb_set_interrupt_capability(struct igb_adapter *adapter)
 	int numvecs, i;
 
 	/* Number of supported queues. */
-	adapter->num_rx_queues = min_t(u32, IGB_MAX_RX_QUEUES, num_online_cpus());
-	adapter->num_tx_queues = min_t(u32, IGB_MAX_TX_QUEUES, num_online_cpus());
+	adapter->num_rx_queues = adapter->rss_queues;
+	adapter->num_tx_queues = adapter->rss_queues;
 
 	/* start with one vector for every rx queue */
 	numvecs = adapter->num_rx_queues;
 
 	/* if tx handler is seperate add 1 for every tx queue */
-	numvecs += adapter->num_tx_queues;
+	if (!(adapter->flags & IGB_FLAG_QUEUE_PAIRS))
+		numvecs += adapter->num_tx_queues;
 
 	/* store the number of vectors reserved for queues */
 	adapter->num_q_vectors = numvecs;
@@ -666,6 +667,7 @@ msi_only:
 	}
 #endif
 	adapter->vfs_allocated_count = 0;
+	adapter->rss_queues = 1;
 	adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
 	adapter->num_rx_queues = 1;
 	adapter->num_tx_queues = 1;
@@ -1566,56 +1568,6 @@ static int __devinit igb_probe(struct pci_dev *pdev,
 	}
 
 #endif
-	switch (hw->mac.type) {
-	case e1000_82576:
-		/*
-		 * Initialize hardware timer: we keep it running just in case
-		 * that some program needs it later on.
-		 */
-		memset(&adapter->cycles, 0, sizeof(adapter->cycles));
-		adapter->cycles.read = igb_read_clock;
-		adapter->cycles.mask = CLOCKSOURCE_MASK(64);
-		adapter->cycles.mult = 1;
-		/**
-		 * Scale the NIC clock cycle by a large factor so that
-		 * relatively small clock corrections can be added or
-		 * substracted at each clock tick. The drawbacks of a large
-		 * factor are a) that the clock register overflows more quickly
-		 * (not such a big deal) and b) that the increment per tick has
-		 * to fit into 24 bits.  As a result we need to use a shift of
-		 * 19 so we can fit a value of 16 into the TIMINCA register.
-		 */
-		adapter->cycles.shift = IGB_82576_TSYNC_SHIFT;
-		wr32(E1000_TIMINCA,
-		                (1 << E1000_TIMINCA_16NS_SHIFT) |
-		                (16 << IGB_82576_TSYNC_SHIFT));
-
-		/* Set registers so that rollover occurs soon to test this. */
-		wr32(E1000_SYSTIML, 0x00000000);
-		wr32(E1000_SYSTIMH, 0xFF800000);
-		wrfl();
-
-		timecounter_init(&adapter->clock,
-				 &adapter->cycles,
-				 ktime_to_ns(ktime_get_real()));
-		/*
-		 * Synchronize our NIC clock against system wall clock. NIC
-		 * time stamp reading requires ~3us per sample, each sample
-		 * was pretty stable even under load => only require 10
-		 * samples for each offset comparison.
-		 */
-		memset(&adapter->compare, 0, sizeof(adapter->compare));
-		adapter->compare.source = &adapter->clock;
-		adapter->compare.target = ktime_get_real;
-		adapter->compare.num_samples = 10;
-		timecompare_update(&adapter->compare, 0);
-		break;
-	case e1000_82575:
-		/* 82575 does not support timesync */
-	default:
-		break;
-	}
-
 	dev_info(&pdev->dev, "Intel(R) Gigabit Ethernet Network Connection\n");
 	/* print bus type/speed/width info */
 	dev_info(&pdev->dev, "%s: (PCIe:%s:%s) %pM\n",
@@ -1781,6 +1733,70 @@ static void __devinit igb_probe_vfs(struct igb_adapter * adapter)
 #endif /* CONFIG_PCI_IOV */
 }
 
+
+/**
+ * igb_init_hw_timer - Initialize hardware timer used with IEEE 1588 timestamp
+ * @adapter: board private structure to initialize
+ *
+ * igb_init_hw_timer initializes the function pointer and values for the hw
+ * timer found in hardware.
+ **/
+static void igb_init_hw_timer(struct igb_adapter *adapter)
+{
+	struct e1000_hw *hw = &adapter->hw;
+
+	switch (hw->mac.type) {
+	case e1000_82576:
+		/*
+		 * Initialize hardware timer: we keep it running just in case
+		 * that some program needs it later on.
+		 */
+		memset(&adapter->cycles, 0, sizeof(adapter->cycles));
+		adapter->cycles.read = igb_read_clock;
+		adapter->cycles.mask = CLOCKSOURCE_MASK(64);
+		adapter->cycles.mult = 1;
+		/**
+		 * Scale the NIC clock cycle by a large factor so that
+		 * relatively small clock corrections can be added or
+		 * substracted at each clock tick. The drawbacks of a large
+		 * factor are a) that the clock register overflows more quickly
+		 * (not such a big deal) and b) that the increment per tick has
+		 * to fit into 24 bits.  As a result we need to use a shift of
+		 * 19 so we can fit a value of 16 into the TIMINCA register.
+		 */
+		adapter->cycles.shift = IGB_82576_TSYNC_SHIFT;
+		wr32(E1000_TIMINCA,
+		                (1 << E1000_TIMINCA_16NS_SHIFT) |
+		                (16 << IGB_82576_TSYNC_SHIFT));
+
+		/* Set registers so that rollover occurs soon to test this. */
+		wr32(E1000_SYSTIML, 0x00000000);
+		wr32(E1000_SYSTIMH, 0xFF800000);
+		wrfl();
+
+		timecounter_init(&adapter->clock,
+				 &adapter->cycles,
+				 ktime_to_ns(ktime_get_real()));
+		/*
+		 * Synchronize our NIC clock against system wall clock. NIC
+		 * time stamp reading requires ~3us per sample, each sample
+		 * was pretty stable even under load => only require 10
+		 * samples for each offset comparison.
+		 */
+		memset(&adapter->compare, 0, sizeof(adapter->compare));
+		adapter->compare.source = &adapter->clock;
+		adapter->compare.target = ktime_get_real;
+		adapter->compare.num_samples = 10;
+		timecompare_update(&adapter->compare, 0);
+		break;
+	case e1000_82575:
+		/* 82575 does not support timesync */
+	default:
+		break;
+	}
+
+}
+
 /**
  * igb_sw_init - Initialize general software structures (struct igb_adapter)
  * @adapter: board private structure to initialize
@@ -1810,12 +1826,24 @@ static int __devinit igb_sw_init(struct igb_adapter *adapter)
 		adapter->vfs_allocated_count = max_vfs;
 
 #endif /* CONFIG_PCI_IOV */
+	adapter->rss_queues = min_t(u32, IGB_MAX_RX_QUEUES, num_online_cpus());
+
+	/*
+	 * if rss_queues > 4 or vfs are going to be allocated with rss_queues
+	 * then we should combine the queues into a queue pair in order to
+	 * conserve interrupts due to limited supply
+	 */
+	if ((adapter->rss_queues > 4) ||
+	    ((adapter->rss_queues > 1) && (adapter->vfs_allocated_count > 6)))
+		adapter->flags |= IGB_FLAG_QUEUE_PAIRS;
+
 	/* This call may decrease the number of queues */
 	if (igb_init_interrupt_scheme(adapter)) {
 		dev_err(&pdev->dev, "Unable to allocate memory for queues\n");
 		return -ENOMEM;
 	}
 
+	igb_init_hw_timer(adapter);
 	igb_probe_vfs(adapter);
 
 	/* Explicitly disable IRQ since the NIC can be in any state. */
@@ -2000,7 +2028,7 @@ static int igb_setup_all_tx_resources(struct igb_adapter *adapter)
 		}
 	}
 
-	for (i = 0; i < IGB_MAX_TX_QUEUES; i++) {
+	for (i = 0; i < IGB_ABS_MAX_TX_QUEUES; i++) {
 		int r_idx = i % adapter->num_tx_queues;
 		adapter->multi_tx_table[i] = &adapter->tx_ring[r_idx];
 	}
@@ -2184,7 +2212,7 @@ static void igb_setup_mrqc(struct igb_adapter *adapter)
 		array_wr32(E1000_RSSRK(0), j, rsskey);
 	}
 
-	num_rx_queues = adapter->num_rx_queues;
+	num_rx_queues = adapter->rss_queues;
 
 	if (adapter->vfs_allocated_count) {
 		/* 82575 and 82576 supports 2 RSS queues for VMDq */
@@ -2240,7 +2268,7 @@ static void igb_setup_mrqc(struct igb_adapter *adapter)
 				E1000_VT_CTL_DEFAULT_POOL_SHIFT;
 			wr32(E1000_VT_CTL, vtctl);
 		}
-		if (adapter->num_rx_queues > 1)
+		if (adapter->rss_queues > 1)
 			mrqc = E1000_MRQC_ENABLE_VMDQ_RSS_2Q;
 		else
 			mrqc = E1000_MRQC_ENABLE_VMDQ;
@@ -2370,7 +2398,7 @@ static inline void igb_set_vmolr(struct igb_adapter *adapter, int vfn)
 	/* clear all bits that might not be set */
 	vmolr &= ~(E1000_VMOLR_BAM | E1000_VMOLR_RSSE);
 
-	if (adapter->num_rx_queues > 1 && vfn == adapter->vfs_allocated_count)
+	if (adapter->rss_queues > 1 && vfn == adapter->vfs_allocated_count)
 		vmolr |= E1000_VMOLR_RSSE; /* enable RSS */
 	/*
 	 * for VMDq only allow the VFs and pool 0 to accept broadcast and
@@ -2915,7 +2943,6 @@ static void igb_watchdog_task(struct work_struct *work)
                                                    watchdog_task);
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
-	struct igb_ring *tx_ring = adapter->tx_ring;
 	u32 link;
 	int i;
 
@@ -2985,22 +3012,24 @@ static void igb_watchdog_task(struct work_struct *work)
 	igb_update_stats(adapter);
 	igb_update_adaptive(hw);
 
-	if (!netif_carrier_ok(netdev)) {
-		if (igb_desc_unused(tx_ring) + 1 < tx_ring->count) {
+	for (i = 0; i < adapter->num_tx_queues; i++) {
+		struct igb_ring *tx_ring = &adapter->tx_ring[i];
+		if (!netif_carrier_ok(netdev)) {
 			/* We've lost link, so the controller stops DMA,
 			 * but we've got queued Tx work that's never going
 			 * to get done, so reset controller to flush Tx.
 			 * (Do the reset outside of interrupt context). */
-			adapter->tx_timeout_count++;
-			schedule_work(&adapter->reset_task);
-			/* return immediately since reset is imminent */
-			return;
+			if (igb_desc_unused(tx_ring) + 1 < tx_ring->count) {
+				adapter->tx_timeout_count++;
+				schedule_work(&adapter->reset_task);
+				/* return immediately since reset is imminent */
+				return;
+			}
 		}
-	}
 
-	/* Force detection of hung controller every watchdog period */
-	for (i = 0; i < adapter->num_tx_queues; i++)
-		adapter->tx_ring[i].detect_tx_hung = true;
+		/* Force detection of hung controller every watchdog period */
+		tx_ring->detect_tx_hung = true;
+	}
 
 	/* Cause software interrupt to ensure rx ring is cleaned */
 	if (adapter->msix_entries) {
@@ -3761,7 +3790,7 @@ static int igb_change_mtu(struct net_device *netdev, int new_mtu)
 
 void igb_update_stats(struct igb_adapter *adapter)
 {
-	struct net_device *netdev = adapter->netdev;
+	struct net_device_stats *net_stats = igb_get_stats(adapter->netdev);
 	struct e1000_hw *hw = &adapter->hw;
 	struct pci_dev *pdev = adapter->pdev;
 	u32 rnbc;
@@ -3785,13 +3814,13 @@ void igb_update_stats(struct igb_adapter *adapter)
 	for (i = 0; i < adapter->num_rx_queues; i++) {
 		u32 rqdpc_tmp = rd32(E1000_RQDPC(i)) & 0x0FFF;
 		adapter->rx_ring[i].rx_stats.drops += rqdpc_tmp;
-		netdev->stats.rx_fifo_errors += rqdpc_tmp;
+		net_stats->rx_fifo_errors += rqdpc_tmp;
 		bytes += adapter->rx_ring[i].rx_stats.bytes;
 		packets += adapter->rx_ring[i].rx_stats.packets;
 	}
 
-	netdev->stats.rx_bytes = bytes;
-	netdev->stats.rx_packets = packets;
+	net_stats->rx_bytes = bytes;
+	net_stats->rx_packets = packets;
 
 	bytes = 0;
 	packets = 0;
@@ -3799,8 +3828,8 @@ void igb_update_stats(struct igb_adapter *adapter)
 		bytes += adapter->tx_ring[i].tx_stats.bytes;
 		packets += adapter->tx_ring[i].tx_stats.packets;
 	}
-	netdev->stats.tx_bytes = bytes;
-	netdev->stats.tx_packets = packets;
+	net_stats->tx_bytes = bytes;
+	net_stats->tx_packets = packets;
 
 	/* read stats registers */
 	adapter->stats.crcerrs += rd32(E1000_CRCERRS);
@@ -3837,7 +3866,7 @@ void igb_update_stats(struct igb_adapter *adapter)
 	rd32(E1000_GOTCH); /* clear GOTCL */
 	rnbc = rd32(E1000_RNBC);
 	adapter->stats.rnbc += rnbc;
-	netdev->stats.rx_fifo_errors += rnbc;
+	net_stats->rx_fifo_errors += rnbc;
 	adapter->stats.ruc += rd32(E1000_RUC);
 	adapter->stats.rfc += rd32(E1000_RFC);
 	adapter->stats.rjc += rd32(E1000_RJC);
@@ -3878,29 +3907,29 @@ void igb_update_stats(struct igb_adapter *adapter)
 	adapter->stats.icrxdmtc += rd32(E1000_ICRXDMTC);
 
 	/* Fill out the OS statistics structure */
-	netdev->stats.multicast = adapter->stats.mprc;
-	netdev->stats.collisions = adapter->stats.colc;
+	net_stats->multicast = adapter->stats.mprc;
+	net_stats->collisions = adapter->stats.colc;
 
 	/* Rx Errors */
 
 	/* RLEC on some newer hardware can be incorrect so build
 	 * our own version based on RUC and ROC */
-	netdev->stats.rx_errors = adapter->stats.rxerrc +
+	net_stats->rx_errors = adapter->stats.rxerrc +
 		adapter->stats.crcerrs + adapter->stats.algnerrc +
 		adapter->stats.ruc + adapter->stats.roc +
 		adapter->stats.cexterr;
-	netdev->stats.rx_length_errors = adapter->stats.ruc +
-					      adapter->stats.roc;
-	netdev->stats.rx_crc_errors = adapter->stats.crcerrs;
-	netdev->stats.rx_frame_errors = adapter->stats.algnerrc;
-	netdev->stats.rx_missed_errors = adapter->stats.mpc;
+	net_stats->rx_length_errors = adapter->stats.ruc +
+				      adapter->stats.roc;
+	net_stats->rx_crc_errors = adapter->stats.crcerrs;
+	net_stats->rx_frame_errors = adapter->stats.algnerrc;
+	net_stats->rx_missed_errors = adapter->stats.mpc;
 
 	/* Tx Errors */
-	netdev->stats.tx_errors = adapter->stats.ecol +
-				       adapter->stats.latecol;
-	netdev->stats.tx_aborted_errors = adapter->stats.ecol;
-	netdev->stats.tx_window_errors = adapter->stats.latecol;
-	netdev->stats.tx_carrier_errors = adapter->stats.tncrs;
+	net_stats->tx_errors = adapter->stats.ecol +
+			       adapter->stats.latecol;
+	net_stats->tx_aborted_errors = adapter->stats.ecol;
+	net_stats->tx_window_errors = adapter->stats.latecol;
+	net_stats->tx_carrier_errors = adapter->stats.tncrs;
 
 	/* Tx Dropped needs to be maintained elsewhere */
 
@@ -4923,6 +4952,7 @@ static bool igb_clean_rx_irq_adv(struct igb_q_vector *q_vector,
 	struct sk_buff *skb;
 	bool cleaned = false;
 	int cleaned_count = 0;
+	int current_node = numa_node_id();
 	unsigned int total_bytes = 0, total_packets = 0;
 	unsigned int i;
 	u32 staterr;
@@ -4977,7 +5007,8 @@ static bool igb_clean_rx_irq_adv(struct igb_q_vector *q_vector,
 						buffer_info->page_offset,
 						length);
 
-			if (page_count(buffer_info->page) != 1)
+			if ((page_count(buffer_info->page) != 1) ||
+			    (page_to_nid(buffer_info->page) != current_node))
 				buffer_info->page = NULL;
 			else
 				get_page(buffer_info->page);

@@ -1207,6 +1207,7 @@ static void ixgbe_check_lsc(struct ixgbe_adapter *adapter)
 	adapter->link_check_timeout = jiffies;
 	if (!test_bit(__IXGBE_DOWN, &adapter->state)) {
 		IXGBE_WRITE_REG(hw, IXGBE_EIMC, IXGBE_EIMC_LSC);
+		IXGBE_WRITE_FLUSH(hw);
 		schedule_work(&adapter->watchdog_task);
 	}
 }
@@ -3632,10 +3633,10 @@ static int ixgbe_set_interrupt_capability(struct ixgbe_adapter *adapter)
 	 * It's easy to be greedy for MSI-X vectors, but it really
 	 * doesn't do us much good if we have a lot more vectors
 	 * than CPU's.  So let's be conservative and only ask for
-	 * (roughly) twice the number of vectors as there are CPU's.
+	 * (roughly) the same number of vectors as there are CPU's.
 	 */
 	v_budget = min(adapter->num_rx_queues + adapter->num_tx_queues,
-	               (int)(num_online_cpus() * 2)) + NON_Q_VECTORS;
+	               (int)num_online_cpus()) + NON_Q_VECTORS;
 
 	/*
 	 * At the same time, hardware can only support a maximum of

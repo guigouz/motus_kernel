@@ -59,10 +59,10 @@ struct igb_adapter;
 #define MAX_Q_VECTORS                      8
 
 /* Transmit and receive queues */
-#define IGB_MAX_RX_QUEUES     (adapter->vfs_allocated_count ? \
-                               (adapter->vfs_allocated_count > 6 ? 1 : 2) : 4)
-#define IGB_MAX_TX_QUEUES     IGB_MAX_RX_QUEUES
-#define IGB_ABS_MAX_TX_QUEUES     4
+#define IGB_MAX_RX_QUEUES                  (adapter->vfs_allocated_count ? 2 : \
+                                           (hw->mac.type > e1000_82575 ? 8 : 4))
+#define IGB_ABS_MAX_TX_QUEUES              8
+#define IGB_MAX_TX_QUEUES                  IGB_MAX_RX_QUEUES
 
 #define IGB_MAX_VF_MC_ENTRIES              30
 #define IGB_MAX_VF_FUNCTIONS               8
@@ -249,10 +249,6 @@ struct igb_adapter {
 	u16 link_speed;
 	u16 link_duplex;
 
-	unsigned int total_tx_bytes;
-	unsigned int total_tx_packets;
-	unsigned int total_rx_bytes;
-	unsigned int total_rx_packets;
 	/* Interrupt Throttle Rate */
 	u32 rx_itr_setting;
 	u32 tx_itr_setting;
@@ -315,6 +311,7 @@ struct igb_adapter {
 	u16 rx_ring_count;
 	unsigned int vfs_allocated_count;
 	struct vf_data_storage *vf_data;
+	u32 rss_queues;
 };
 
 #define IGB_FLAG_HAS_MSI           (1 << 0)
