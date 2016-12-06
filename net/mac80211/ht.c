@@ -164,5 +164,7 @@ void ieee80211_process_delba(struct ieee80211_sub_if_data *sdata,
 			___ieee80211_stop_tx_ba_session(sta, tid,
 							WLAN_BACK_RECIPIENT);
 		spin_unlock_bh(&sta->lock);
+		ieee80211_stop_tx_ba_session(&sta->sta, tid,
+					     WLAN_BACK_RECIPIENT);
 	}
 }

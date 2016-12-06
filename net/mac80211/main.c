@@ -296,14 +296,14 @@ static void ieee80211_tasklet_handler(unsigned long data)
 			break;
 		case IEEE80211_DELBA_MSG:
 			ra_tid = (struct ieee80211_ra_tid *) &skb->cb;
-			ieee80211_stop_tx_ba_cb(local_to_hw(local),
-						ra_tid->ra, ra_tid->tid);
+			ieee80211_stop_tx_ba_cb(ra_tid->vif, ra_tid->ra,
+						ra_tid->tid);
 			dev_kfree_skb(skb);
 			break;
 		case IEEE80211_ADDBA_MSG:
 			ra_tid = (struct ieee80211_ra_tid *) &skb->cb;
-			ieee80211_start_tx_ba_cb(local_to_hw(local),
-						 ra_tid->ra, ra_tid->tid);
+			ieee80211_start_tx_ba_cb(ra_tid->vif, ra_tid->ra,
+						 ra_tid->tid);
 			dev_kfree_skb(skb);
 			break ;
 		default:
@@ -600,6 +600,11 @@ void ieee80211_tx_status(struct ieee80211_hw *hw, struct sk_buff *skb)
 	list_for_each_entry_rcu(sdata, &local->interfaces, list) {
 		if (sdata->vif.type == NL80211_IFTYPE_MONITOR) {
 			if (!netif_running(sdata->dev))
+				continue;
+
+			if ((sdata->u.mntr_flags & MONITOR_FLAG_COOK_FRAMES) &&
+			    !(info->flags & IEEE80211_TX_CTL_INJECTED) &&
+			    (type == IEEE80211_FTYPE_DATA))
 				continue;
 
 			if (prev_dev) {
