@@ -34,57 +34,12 @@
 
 #include "mscan.h"
 
-
 #define DRV_NAME "mpc5xxx_can"
 
 static struct of_device_id mpc52xx_cdm_ids[] __devinitdata = {
 	{ .compatible = "fsl,mpc5200-cdm", },
-	{ .compatible = "fsl,mpc5200b-cdm", },
 	{}
 };
-
-/*
- * Get the frequency of the external oscillator clock connected
- * to the SYS_XTAL_IN pin, or return 0 if it cannot be determined.
- */
-static unsigned int  __devinit mpc52xx_can_xtal_freq(struct of_device *of)
-{
-	struct mpc52xx_cdm  __iomem *cdm;
-	struct device_node *np_cdm;
-	unsigned int freq;
-	u32 val;
-
-	freq = mpc5xxx_get_bus_frequency(of->node);
-	if (!freq)
-		return 0;
-
-	/*
-	 * Determine SYS_XTAL_IN frequency from the clock domain settings
-	 */
-	np_cdm = of_find_matching_node(NULL, mpc52xx_cdm_ids);
-	if (!np_cdm) {
-		dev_err(&of->dev, "can't get clock node!\n");
-		return 0;
-	}
-	cdm = of_iomap(np_cdm, 0);
-	of_node_put(np_cdm);
-
-	if (in_8(&cdm->ipb_clk_sel) & 0x1)
-		freq *= 2;
-	val  = in_be32(&cdm->rstcfg);
-	if (val & (1 << 5))
-		freq *= 8;
-	else
-		freq *= 4;
-	if (val & (1 << 6))
-		freq /= 12;
-	else
-		freq /= 16;
-
-	iounmap(cdm);
-
-	return freq;
-}
 
 /*
  * Get frequency of the MSCAN clock source
@@ -99,13 +54,39 @@ static unsigned int  __devinit mpc52xx_can_clock_freq(struct of_device *of,
 						      int clock_src)
 {
 	unsigned int pvr;
+	struct mpc52xx_cdm  __iomem *cdm;
+	struct device_node *np_cdm;
+	unsigned int freq;
+	u32 val;
 
 	pvr = mfspr(SPRN_PVR);
 
-	if (clock_src == MSCAN_CLKSRC_BUS || pvr == 0x80822011)
-		return mpc5xxx_get_bus_frequency(of->node);
+	freq = mpc5xxx_get_bus_frequency(of->node);
+	if (!freq)
+		return 0;
 
-	return mpc52xx_can_xtal_freq(of);
+	if (clock_src == MSCAN_CLKSRC_BUS || pvr == 0x80822011)
+		return freq;
+
+	/* Determine SYS_XTAL_IN frequency from the clock domain settings */
+	np_cdm = of_find_matching_node(NULL, mpc52xx_cdm_ids);
+	if (!np_cdm) {
+		dev_err(&of->dev, "can't get clock node!\n");
+		return 0;
+	}
+	cdm = of_iomap(np_cdm, 0);
+	of_node_put(np_cdm);
+
+	if (in_8(&cdm->ipb_clk_sel) & 0x1)
+		freq *= 2;
+	val = in_be32(&cdm->rstcfg);
+
+	freq *= (val & (1 << 5)) ? 8 : 4;
+	freq /= (val & (1 << 6)) ? 12 : 16;
+
+	iounmap(cdm);
+
+	return freq;
 }
 
 static int __devinit mpc5xxx_can_probe(struct of_device *ofdev,
@@ -149,7 +130,7 @@ static int __devinit mpc5xxx_can_probe(struct of_device *ofdev,
 	 * choice as it has less jitter. For this reason, it is selected
 	 * by default.
 	 */
-	clk_src = of_get_property(np, "fsl,mscan-clk-src", NULL);
+	clk_src = of_get_property(np, "fsl,mscan-clock-source", NULL);
 	if (clk_src && strcmp(clk_src, "ip") == 0)
 		clock_src = MSCAN_CLKSRC_BUS;
 	else
@@ -222,7 +203,7 @@ static int mpc5xxx_can_resume(struct of_device *ofdev)
 	struct mscan_regs *regs = (struct mscan_regs *)priv->reg_base;
 
 	regs->canctl0 |= MSCAN_INITRQ;
-	while ((regs->canctl1 & MSCAN_INITAK) == 0)
+	while (!(regs->canctl1 & MSCAN_INITAK))
 		udelay(10);
 
 	regs->canctl1 = saved_regs.canctl1;
@@ -246,7 +227,6 @@ static int mpc5xxx_can_resume(struct of_device *ofdev)
 
 static struct of_device_id __devinitdata mpc5xxx_can_table[] = {
 	{.compatible = "fsl,mpc5200-mscan"},
-	{.compatible = "fsl,mpc5200b-mscan"},
 	{},
 };
 
