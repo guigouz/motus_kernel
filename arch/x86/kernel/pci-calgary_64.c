@@ -250,7 +250,7 @@ static unsigned long iommu_range_alloc(struct device *dev,
 			if (panic_on_overflow)
 				panic("Calgary: fix the allocator.\n");
 			else
-				return bad_dma_address;
+				return DMA_ERROR_CODE;
 		}
 	}
 
@@ -266,12 +266,15 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 			      void *vaddr, unsigned int npages, int direction)
 {
 	unsigned long entry;
-	dma_addr_t ret = bad_dma_address;
+	dma_addr_t ret;
 
 	entry = iommu_range_alloc(dev, tbl, npages);
 
-	if (unlikely(entry == bad_dma_address))
-		goto error;
+	if (unlikely(entry == DMA_ERROR_CODE)) {
+		printk(KERN_WARNING "Calgary: failed to allocate %u pages in "
+		       "iommu %p\n", npages, tbl);
+		return DMA_ERROR_CODE;
+	}
 
 	/* set the return dma address */
 	ret = (entry << PAGE_SHIFT) | ((unsigned long)vaddr & ~PAGE_MASK);
@@ -279,13 +282,7 @@ static dma_addr_t iommu_alloc(struct device *dev, struct iommu_table *tbl,
 	/* put the TCEs in the HW table */
 	tce_build(tbl, entry, npages, (unsigned long)vaddr & PAGE_MASK,
 		  direction);
-
 	return ret;
-
-error:
-	printk(KERN_WARNING "Calgary: failed to allocate %u pages in "
-	       "iommu %p\n", npages, tbl);
-	return bad_dma_address;
 }
 
 static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
@@ -296,8 +293,8 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
 	unsigned long flags;
 
 	/* were we called with bad_dma_address? */
-	badend = bad_dma_address + (EMERGENCY_PAGES * PAGE_SIZE);
-	if (unlikely((dma_addr >= bad_dma_address) && (dma_addr < badend))) {
+	badend = DMA_ERROR_CODE + (EMERGENCY_PAGES * PAGE_SIZE);
+	if (unlikely((dma_addr >= DMA_ERROR_CODE) && (dma_addr < badend))) {
 		WARN(1, KERN_ERR "Calgary: driver tried unmapping bad DMA "
 		       "address 0x%Lx\n", dma_addr);
 		return;
@@ -381,7 +378,7 @@ static int calgary_map_sg(struct device *dev, struct scatterlist *sg,
 		npages = iommu_num_pages(vaddr, s->length, PAGE_SIZE);
 
 		entry = iommu_range_alloc(dev, tbl, npages);
-		if (entry == bad_dma_address) {
+		if (entry == DMA_ERROR_CODE) {
 			/* makes sure unmap knows to stop */
 			s->dma_length = 0;
 			goto error;
@@ -399,7 +396,7 @@ static int calgary_map_sg(struct device *dev, struct scatterlist *sg,
 error:
 	calgary_unmap_sg(dev, sg, nelems, dir, NULL);
 	for_each_sg(sg, s, nelems, i) {
-		sg->dma_address = bad_dma_address;
+		sg->dma_address = DMA_ERROR_CODE;
 		sg->dma_length = 0;
 	}
 	return 0;
@@ -454,7 +451,7 @@ static void* calgary_alloc_coherent(struct device *dev, size_t size,
 
 	/* set up tces to cover the allocated range */
 	mapping = iommu_alloc(dev, tbl, ret, npages, DMA_BIDIRECTIONAL);
-	if (mapping == bad_dma_address)
+	if (mapping == DMA_ERROR_CODE)
 		goto free;
 	*dma_handle = mapping;
 	return ret;
@@ -735,7 +732,7 @@ static void __init calgary_reserve_regions(struct pci_dev *dev)
 	struct iommu_table *tbl = pci_iommu(dev->bus);
 
 	/* reserve EMERGENCY_PAGES from bad_dma_address and up */
-	iommu_range_reserve(tbl, bad_dma_address, EMERGENCY_PAGES);
+	iommu_range_reserve(tbl, DMA_ERROR_CODE, EMERGENCY_PAGES);
 
 	/* avoid the BIOS/VGA first 640KB-1MB region */
 	/* for CalIOC2 - avoid the entire first MB */
@@ -1363,8 +1360,6 @@ static int __init calgary_iommu_init(void)
 		       "falling back to no_iommu\n", ret);
 		return ret;
 	}
-
-	bad_dma_address = 0x0;
 
 	return 0;
 }
