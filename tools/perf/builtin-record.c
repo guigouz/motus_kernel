@@ -220,7 +220,11 @@ static struct perf_header_attr *get_header_attr(struct perf_event_attr *a, int n
 		h_attr = header->attr[nr];
 	} else {
 		h_attr = perf_header_attr__new(a);
-		perf_header__add_attr(header, h_attr);
+		if (h_attr != NULL)
+			if (perf_header__add_attr(header, h_attr) < 0) {
+				perf_header_attr__delete(h_attr);
+				h_attr = NULL;
+			}
 	}
 
 	return h_attr;
@@ -308,6 +312,8 @@ try_again:
 	}
 
 	h_attr = get_header_attr(attr, counter);
+	if (h_attr == NULL)
+		die("nomem\n");
 
 	if (!file_new) {
 		if (memcmp(&h_attr->attr, attr, sizeof(*attr))) {
@@ -321,7 +327,10 @@ try_again:
 		exit(-1);
 	}
 
-	perf_header_attr__add_id(h_attr, read_data.id);
+	if (perf_header_attr__add_id(h_attr, read_data.id) < 0) {
+		pr_warning("Not enough memory to add id\n");
+		exit(-1);
+	}
 
 	assert(fd[nr_cpu][counter] >= 0);
 	fcntl(fd[nr_cpu][counter], F_SETFL, O_NONBLOCK);
@@ -429,6 +438,11 @@ static int __cmd_record(int argc, const char **argv)
 		header = perf_header__read(output);
 	else
 		header = perf_header__new();
+
+	if (header == NULL) {
+		pr_err("Not enough memory for reading perf file header\n");
+		return -1;
+	}
 
 	if (raw_samples) {
 		perf_header__set_feat(header, HEADER_TRACE_INFO);

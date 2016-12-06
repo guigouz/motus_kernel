@@ -60,7 +60,7 @@ static int			system_wide			=      0;
 static int			default_interval		=      0;
 
 static int			count_filter			=      5;
-static int			print_entries			=     15;
+static int			print_entries;
 
 static int			target_pid			=     -1;
 static int			inherit				=      0;
@@ -75,6 +75,9 @@ static int			freq				=   1000; /* 1 KHz */
 static int			delay_secs			=      2;
 static int			zero                            =      0;
 static int			dump_symtab                     =      0;
+
+static bool			hide_kernel_symbols		=  false;
+static bool			hide_user_symbols		=  false;
 
 /*
  * Source
@@ -104,6 +107,7 @@ struct sym_entry {
 	unsigned long		snap_count;
 	double			weight;
 	int			skip;
+	u8			origin;
 	struct map		*map;
 	struct source_line	*source;
 	struct source_line	*lines;
@@ -114,6 +118,36 @@ struct sym_entry {
 /*
  * Source functions
  */
+
+/* most GUI terminals set LINES (although some don't export it) */
+static int term_rows(void)
+{
+	char *lines_string = getenv("LINES");
+	int n_lines;
+
+	if (lines_string && (n_lines = atoi(lines_string)) > 0)
+		return n_lines;
+#ifdef TIOCGWINSZ
+	else {
+		struct winsize ws;
+		if (!ioctl(1, TIOCGWINSZ, &ws) && ws.ws_row)
+			return ws.ws_row;
+	}
+#endif
+	return 25;
+}
+
+static void update_print_entries(void)
+{
+	print_entries = term_rows();
+	if (print_entries > 9)
+		print_entries -= 9;
+}
+
+static void sig_winch_handler(int sig __used)
+{
+	update_print_entries();
+}
 
 static void parse_source(struct sym_entry *syme)
 {
@@ -400,6 +434,13 @@ static void print_sym_table(void)
 	list_for_each_entry_safe_from(syme, n, &active_symbols, node) {
 		syme->snap_count = syme->count[snap];
 		if (syme->snap_count != 0) {
+			if ((hide_user_symbols &&
+			     syme->origin == PERF_RECORD_MISC_USER) ||
+			    (hide_kernel_symbols &&
+			     syme->origin == PERF_RECORD_MISC_KERNEL)) {
+				list_remove_active_sym(syme);
+				continue;
+			}
 			syme->weight = sym_weight(syme);
 			rb_insert_active_sym(&tmp, syme);
 			sum_ksamples += syme->snap_count;
@@ -607,6 +648,12 @@ static void print_mapped_keys(void)
 	if (nr_counters > 1)
 		fprintf(stdout, "\t[w]     toggle display weighted/count[E]r. \t(%d)\n", display_weighted ? 1 : 0);
 
+	fprintf(stdout,
+		"\t[K]     hide kernel_symbols symbols.             \t(%s)\n",
+		hide_kernel_symbols ? "yes" : "no");
+	fprintf(stdout,
+		"\t[U]     hide user symbols.               \t(%s)\n",
+		hide_user_symbols ? "yes" : "no");
 	fprintf(stdout, "\t[z]     toggle sample zeroing.             \t(%d)\n", zero ? 1 : 0);
 	fprintf(stdout, "\t[qQ]    quit.\n");
 }
@@ -620,6 +667,8 @@ static int key_mapped(int c)
 		case 'z':
 		case 'q':
 		case 'Q':
+		case 'K':
+		case 'U':
 			return 1;
 		case 'E':
 		case 'w':
@@ -668,6 +717,11 @@ static void handle_keypress(int c)
 			break;
 		case 'e':
 			prompt_integer(&print_entries, "Enter display entries (lines)");
+			if (print_entries == 0) {
+				update_print_entries();
+				signal(SIGWINCH, sig_winch_handler);
+			} else
+				signal(SIGWINCH, SIG_DFL);
 			break;
 		case 'E':
 			if (nr_counters > 1) {
@@ -692,6 +746,9 @@ static void handle_keypress(int c)
 		case 'F':
 			prompt_percent(&sym_pcnt_filter, "Enter details display event filter (percent)");
 			break;
+		case 'K':
+			hide_kernel_symbols = !hide_kernel_symbols;
+			break;
 		case 'q':
 		case 'Q':
 			printf("exiting.\n");
@@ -710,6 +767,9 @@ static void handle_keypress(int c)
 				__zero_source_counters(syme);
 				pthread_mutex_unlock(&syme->source_lock);
 			}
+			break;
+		case 'U':
+			hide_user_symbols = !hide_user_symbols;
 			break;
 		case 'w':
 			display_weighted = ~display_weighted;
@@ -822,11 +882,16 @@ static void event__process_sample(const event_t *self, int counter)
 	struct map *map;
 	struct sym_entry *syme;
 	struct symbol *sym;
+	u8 origin = self->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
-	switch (self->header.misc & PERF_RECORD_MISC_CPUMODE_MASK) {
+	switch (origin) {
 	case PERF_RECORD_MISC_USER: {
-		struct thread *thread = threads__findnew(self->ip.pid);
+		struct thread *thread;
 
+		if (hide_user_symbols)
+			return;
+
+		thread = threads__findnew(self->ip.pid);
 		if (thread == NULL)
 			return;
 
@@ -850,6 +915,9 @@ static void event__process_sample(const event_t *self, int counter)
 			return;
 		/* Fall thru */
 	case PERF_RECORD_MISC_KERNEL:
+		if (hide_kernel_symbols)
+			return;
+
 		sym = kernel_maps__find_symbol(ip, &map);
 		if (sym == NULL)
 			return;
@@ -862,6 +930,7 @@ static void event__process_sample(const event_t *self, int counter)
 
 	if (!syme->skip) {
 		syme->count[counter]++;
+		syme->origin = origin;
 		record_precise_ip(syme, counter, ip);
 		pthread_mutex_lock(&active_symbols_lock);
 		if (list_empty(&syme->node) || !syme->node.next)
@@ -1143,6 +1212,8 @@ static const struct option options[] = {
 	OPT_INTEGER('C', "CPU", &profile_cpu,
 		    "CPU to profile on"),
 	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
+	OPT_BOOLEAN('K', "hide_kernel_symbols", &hide_kernel_symbols,
+		    "hide kernel symbols"),
 	OPT_INTEGER('m', "mmap-pages", &mmap_pages,
 		    "number of mmap data pages"),
 	OPT_INTEGER('r', "realtime", &realtime_prio,
@@ -1165,6 +1236,8 @@ static const struct option options[] = {
 		    "profile at this frequency"),
 	OPT_INTEGER('E', "entries", &print_entries,
 		    "display this many functions"),
+	OPT_BOOLEAN('U', "hide_user_symbols", &hide_user_symbols,
+		    "hide user symbols"),
 	OPT_BOOLEAN('v', "verbose", &verbose,
 		    "be more verbose (show counter open errors, etc)"),
 	OPT_END()
@@ -1227,6 +1300,11 @@ int cmd_top(int argc, const char **argv, const char *prefix __used)
 
 	if (target_pid != -1 || profile_cpu != -1)
 		nr_cpus = 1;
+
+	if (print_entries == 0) {
+		update_print_entries();
+		signal(SIGWINCH, sig_winch_handler);
+	}
 
 	return __cmd_top();
 }
