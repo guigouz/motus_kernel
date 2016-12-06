@@ -133,12 +133,9 @@ static int getaddr_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	int dev_idx = 0, dev_start_idx = cb->args[0];
 	int addr_idx = 0, addr_start_idx = cb->args[1];
 
-	if (!net_eq(net, &init_net))
-		goto skip;
-
-	pndevs = phonet_device_list(net);
-	spin_lock_bh(&pndevs->lock);
-	list_for_each_entry(pnd, &pndevs->list, list) {
+	pndevs = phonet_device_list(sock_net(skb->sk));
+	rcu_read_lock();
+	list_for_each_entry_rcu(pnd, &pndevs->list, list) {
 		u8 addr;
 
 		if (dev_idx > dev_start_idx)
@@ -160,8 +157,7 @@ static int getaddr_dumpit(struct sk_buff *skb, struct netlink_callback *cb)
 	}
 
 out:
-	spin_unlock_bh(&pndevs->lock);
-skip:
+	rcu_read_unlock();
 	cb->args[0] = dev_idx;
 	cb->args[1] = addr_idx;
 
