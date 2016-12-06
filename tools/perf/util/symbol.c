@@ -109,13 +109,24 @@ static size_t symbol__fprintf(struct symbol *self, FILE *fp)
 		       self->start, self->end, self->name);
 }
 
+static void dso__set_long_name(struct dso *self, char *name)
+{
+	self->long_name = name;
+	self->long_name_len = strlen(name);
+}
+
+static void dso__set_basename(struct dso *self)
+{
+	self->short_name = basename(self->long_name);
+}
+
 struct dso *dso__new(const char *name)
 {
 	struct dso *self = malloc(sizeof(*self) + strlen(name) + 1);
 
 	if (self != NULL) {
 		strcpy(self->name, name);
-		self->long_name = self->name;
+		dso__set_long_name(self, self->name);
 		self->short_name = self->name;
 		self->syms = RB_ROOT;
 		self->find_symbol = dso__find_symbol;
@@ -381,30 +392,6 @@ delete_symbol:
 			count++;
 		}
 	}
-
-	/*
-	 * Now that we have all sorted out, just set the ->end of all
-	 * symbols
-	 */
-	prevnd = rb_first(&self->syms);
-
-	if (prevnd == NULL)
-		goto out_delete_line;
-
-	for (nd = rb_next(prevnd); nd; nd = rb_next(nd)) {
-		struct symbol *prev = rb_entry(prevnd, struct symbol, rb_node),
-			      *curr = rb_entry(nd, struct symbol, rb_node);
-
-		prev->end = curr->start - 1;
-		if (prev->hist) {
-			free(prev->hist);
-			prev->hist = calloc(sizeof(u64), prev->end - prev->start);
-		}
-		prevnd = nd;
-	}
-
-	free(line);
-	fclose(file);
 
 	return count;
 }
@@ -912,7 +899,7 @@ bool fetch_build_id_table(struct list_head *head)
 			continue;
 		have_buildid = true;
 		memset(&b.header, 0, sizeof(b.header));
-		len = strlen(pos->long_name) + 1;
+		len = pos->long_name_len + 1;
 		len = ALIGN(len, 64);
 		b.header.size = sizeof(b) + len;
 
@@ -1171,33 +1158,61 @@ static int dsos__load_modules_sym_dir(char *dirname, symbol_filter_t filter)
 		return -1;
 	}
 
-	return count;
-}
+	while ((dent = readdir(dir)) != NULL) {
+		char path[PATH_MAX];
 
-static inline void dso__fill_symbol_holes(struct dso *self)
-{
-	struct symbol *prev = NULL;
-	struct rb_node *nd;
+		if (dent->d_type == DT_DIR) {
+			if (!strcmp(dent->d_name, ".") ||
+			    !strcmp(dent->d_name, ".."))
+				continue;
 
-	for (nd = rb_last(&self->syms); nd; nd = rb_prev(nd)) {
-		struct symbol *pos = rb_entry(nd, struct symbol, rb_node);
+			snprintf(path, sizeof(path), "%s/%s",
+				 dirname, dent->d_name);
+			err = dsos__load_modules_sym_dir(path, filter);
+			if (err < 0)
+				goto failure;
+		} else {
+			char *dot = strrchr(dent->d_name, '.'),
+			     dso_name[PATH_MAX];
+			struct map *map;
+			struct rb_node *last;
+			char *long_name;
 
-		if (prev) {
-			u64 hole = 0;
-			int alias = pos->start == prev->start;
+			if (dot == NULL || strcmp(dot, ".ko"))
+				continue;
+			snprintf(dso_name, sizeof(dso_name), "[%.*s]",
+				 (int)(dot - dent->d_name), dent->d_name);
 
-			if (!alias)
-				hole = prev->start - pos->end - 1;
+			strxfrchar(dso_name, '-', '_');
+			map = kernel_maps__find_by_dso_name(dso_name);
+			if (map == NULL)
+				continue;
 
-			if (hole || alias) {
-				if (alias)
-					pos->end = prev->end;
-				else if (hole)
-					pos->end = prev->start - 1;
-				if (pos->hist) {
-					free(pos->hist);
-					pos->hist = calloc(sizeof(u64), pos->end - pos->start);
-				}
+			snprintf(path, sizeof(path), "%s/%s",
+				 dirname, dent->d_name);
+
+			long_name = strdup(path);
+			if (long_name == NULL)
+				goto failure;
+			dso__set_long_name(map->dso, long_name);
+			dso__set_basename(map->dso);
+
+			err = dso__load_module_sym(map->dso, map, filter);
+			if (err < 0)
+				goto failure;
+			last = rb_last(&map->dso->syms);
+			if (last) {
+				struct symbol *sym;
+				/*
+				 * We do this here as well, even having the
+				 * symbol size found in the symtab because
+				 * misannotated ASM symbols may have the size
+				 * set to zero.
+				 */
+				dso__fixup_sym_end(map->dso);
+
+				sym = rb_entry(last, struct symbol, rb_node);
+				map->end = map->start + sym->end;
 			}
 		}
 		nr_symbols += err;
@@ -1419,8 +1434,10 @@ struct dso *dsos__findnew(const char *name)
 
 	if (!dso) {
 		dso = dso__new(name);
-		if (dso != NULL)
+		if (dso != NULL) {
 			dsos__add(dso);
+			dso__set_basename(dso);
+		}
 	}
 
 	return dso;
