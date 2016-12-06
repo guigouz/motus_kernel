@@ -382,6 +382,30 @@ delete_symbol:
 		}
 	}
 
+	/*
+	 * Now that we have all sorted out, just set the ->end of all
+	 * symbols
+	 */
+	prevnd = rb_first(&self->syms);
+
+	if (prevnd == NULL)
+		goto out_delete_line;
+
+	for (nd = rb_next(prevnd); nd; nd = rb_next(nd)) {
+		struct symbol *prev = rb_entry(prevnd, struct symbol, rb_node),
+			      *curr = rb_entry(nd, struct symbol, rb_node);
+
+		prev->end = curr->start - 1;
+		if (prev->hist) {
+			free(prev->hist);
+			prev->hist = calloc(sizeof(u64), prev->end - prev->start);
+		}
+		prevnd = nd;
+	}
+
+	free(line);
+	fclose(file);
+
 	return count;
 }
 
@@ -1147,58 +1171,33 @@ static int dsos__load_modules_sym_dir(char *dirname, symbol_filter_t filter)
 		return -1;
 	}
 
-	while ((dent = readdir(dir)) != NULL) {
-		char path[PATH_MAX];
+	return count;
+}
 
-		if (dent->d_type == DT_DIR) {
-			if (!strcmp(dent->d_name, ".") ||
-			    !strcmp(dent->d_name, ".."))
-				continue;
+static inline void dso__fill_symbol_holes(struct dso *self)
+{
+	struct symbol *prev = NULL;
+	struct rb_node *nd;
 
-			snprintf(path, sizeof(path), "%s/%s",
-				 dirname, dent->d_name);
-			err = dsos__load_modules_sym_dir(path, filter);
-			if (err < 0)
-				goto failure;
-		} else {
-			char *dot = strrchr(dent->d_name, '.'),
-			     dso_name[PATH_MAX];
-			struct map *map;
-			struct rb_node *last;
+	for (nd = rb_last(&self->syms); nd; nd = rb_prev(nd)) {
+		struct symbol *pos = rb_entry(nd, struct symbol, rb_node);
 
-			if (dot == NULL || strcmp(dot, ".ko"))
-				continue;
-			snprintf(dso_name, sizeof(dso_name), "[%.*s]",
-				 (int)(dot - dent->d_name), dent->d_name);
+		if (prev) {
+			u64 hole = 0;
+			int alias = pos->start == prev->start;
 
-			strxfrchar(dso_name, '-', '_');
-			map = kernel_maps__find_by_dso_name(dso_name);
-			if (map == NULL)
-				continue;
+			if (!alias)
+				hole = prev->start - pos->end - 1;
 
-			snprintf(path, sizeof(path), "%s/%s",
-				 dirname, dent->d_name);
-
-			map->dso->long_name = strdup(path);
-			if (map->dso->long_name == NULL)
-				goto failure;
-
-			err = dso__load_module_sym(map->dso, map, filter);
-			if (err < 0)
-				goto failure;
-			last = rb_last(&map->dso->syms);
-			if (last) {
-				struct symbol *sym;
-				/*
-				 * We do this here as well, even having the
-				 * symbol size found in the symtab because
-				 * misannotated ASM symbols may have the size
-				 * set to zero.
-				 */
-				dso__fixup_sym_end(map->dso);
-
-				sym = rb_entry(last, struct symbol, rb_node);
-				map->end = map->start + sym->end;
+			if (hole || alias) {
+				if (alias)
+					pos->end = prev->end;
+				else if (hole)
+					pos->end = prev->start - 1;
+				if (pos->hist) {
+					free(pos->hist);
+					pos->hist = calloc(sizeof(u64), pos->end - pos->start);
+				}
 			}
 		}
 		nr_symbols += err;
