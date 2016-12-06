@@ -513,7 +513,7 @@ tulip_open(struct net_device *dev)
 
 	tulip_init_ring (dev);
 
-	retval = request_irq(dev->irq, &tulip_interrupt, IRQF_SHARED, dev->name, dev);
+	retval = request_irq(dev->irq, tulip_interrupt, IRQF_SHARED, dev->name, dev);
 	if (retval)
 		goto free_ring;
 
@@ -1801,7 +1801,7 @@ static int tulip_resume(struct pci_dev *pdev)
 		return retval;
 	}
 
-	if ((retval = request_irq(dev->irq, &tulip_interrupt, IRQF_SHARED, dev->name, dev))) {
+	if ((retval = request_irq(dev->irq, tulip_interrupt, IRQF_SHARED, dev->name, dev))) {
 		printk (KERN_ERR "tulip: request_irq failed in resume\n");
 		return retval;
 	}

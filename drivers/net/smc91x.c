@@ -2060,12 +2060,9 @@ static int __devinit smc_probe(struct net_device *dev, void __iomem *ioaddr,
 	}
 
 	/* Grab the IRQ */
-#ifndef CONFIG_SMC91X_POLL
-	retval = request_irq(dev->irq, &smc_interrupt, irq_flags,
-			     dev->name, dev);
-	if (retval)
-		goto err_out;
-#endif
+	retval = request_irq(dev->irq, smc_interrupt, irq_flags, dev->name, dev);
+      	if (retval)
+      		goto err_out;
 
 #ifdef CONFIG_ARCH_PXA
 #  ifdef SMC_USE_PXA_DMA
