@@ -11,7 +11,6 @@
  *
  * Copyright 1999, 2000 Precision Insight, Inc., Cedar Park, Texas.
  * Copyright 2000 VA Linux Systems, Inc., Sunnyvale, California.
- * Copyright (c) 2009, Code Aurora Forum.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -56,9 +55,6 @@ int drm_irq_by_busid(struct drm_device *dev, void *data,
 		     struct drm_file *file_priv)
 {
 	struct drm_irq_busid *p = data;
-
-	if (drm_core_check_feature(dev, DRIVER_USE_PLATFORM_DEVICE))
-		return -EINVAL;
 
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_IRQ))
 		return -EINVAL;
@@ -214,7 +210,7 @@ int drm_irq_install(struct drm_device *dev)
 	if (!drm_core_check_feature(dev, DRIVER_HAVE_IRQ))
 		return -EINVAL;
 
-	if (drm_dev_to_irq(dev) == 0)
+	if (dev->pdev->irq == 0)
 		return -EINVAL;
 
 	mutex_lock(&dev->struct_mutex);
@@ -232,7 +228,7 @@ int drm_irq_install(struct drm_device *dev)
 	dev->irq_enabled = 1;
 	mutex_unlock(&dev->struct_mutex);
 
-	DRM_DEBUG("irq=%d\n", drm_dev_to_irq(dev));
+	DRM_DEBUG("irq=%d\n", dev->pdev->irq);
 
 	/* Before installing handler */
 	dev->driver->irq_preinstall(dev);
@@ -305,14 +301,14 @@ int drm_irq_uninstall(struct drm_device * dev)
 	if (!irq_enabled)
 		return -EINVAL;
 
-	DRM_DEBUG("irq=%d\n", drm_dev_to_irq(dev));
+	DRM_DEBUG("irq=%d\n", dev->pdev->irq);
 
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		vga_client_register(dev->pdev, NULL, NULL, NULL);
 
 	dev->driver->irq_uninstall(dev);
 
-	free_irq(drm_dev_to_irq(dev), dev);
+	free_irq(dev->pdev->irq, dev);
 
 	return 0;
 }
@@ -344,7 +340,7 @@ int drm_control(struct drm_device *dev, void *data,
 		if (drm_core_check_feature(dev, DRIVER_MODESET))
 			return 0;
 		if (dev->if_version < DRM_IF_VERSION(1, 2) &&
-		    ctl->irq != drm_dev_to_irq(dev))
+		    ctl->irq != dev->pdev->irq)
 			return -EINVAL;
 		return drm_irq_install(dev);
 	case DRM_UNINST_HANDLER:
@@ -433,21 +429,15 @@ int drm_vblank_get(struct drm_device *dev, int crtc)
 
 	spin_lock_irqsave(&dev->vbl_lock, irqflags);
 	/* Going from 0->1 means we have to enable interrupts again */
-	if (atomic_add_return(1, &dev->vblank_refcount[crtc]) == 1) {
-		if (!dev->vblank_enabled[crtc]) {
-			ret = dev->driver->enable_vblank(dev, crtc);
-			DRM_DEBUG("enabling vblank on crtc %d, ret: %d\n", crtc, ret);
-			if (ret)
-				atomic_dec(&dev->vblank_refcount[crtc]);
-			else {
-				dev->vblank_enabled[crtc] = 1;
-				drm_update_vblank_count(dev, crtc);
-			}
-		}
-	} else {
-		if (!dev->vblank_enabled[crtc]) {
+	if (atomic_add_return(1, &dev->vblank_refcount[crtc]) == 1 &&
+	    !dev->vblank_enabled[crtc]) {
+		ret = dev->driver->enable_vblank(dev, crtc);
+		DRM_DEBUG("enabling vblank on crtc %d, ret: %d\n", crtc, ret);
+		if (ret)
 			atomic_dec(&dev->vblank_refcount[crtc]);
-			ret = -EINVAL;
+		else {
+			dev->vblank_enabled[crtc] = 1;
+			drm_update_vblank_count(dev, crtc);
 		}
 	}
 	spin_unlock_irqrestore(&dev->vbl_lock, irqflags);
@@ -473,18 +463,6 @@ void drm_vblank_put(struct drm_device *dev, int crtc)
 		mod_timer(&dev->vblank_disable_timer, jiffies + 5*DRM_HZ);
 }
 EXPORT_SYMBOL(drm_vblank_put);
-
-void drm_vblank_off(struct drm_device *dev, int crtc)
-{
-	unsigned long irqflags;
-
-	spin_lock_irqsave(&dev->vbl_lock, irqflags);
-	DRM_WAKEUP(&dev->vbl_queue[crtc]);
-	dev->vblank_enabled[crtc] = 0;
-	dev->last_vblank[crtc] = dev->driver->get_vblank_counter(dev, crtc);
-	spin_unlock_irqrestore(&dev->vbl_lock, irqflags);
-}
-EXPORT_SYMBOL(drm_vblank_off);
 
 /**
  * drm_vblank_pre_modeset - account for vblanks across mode sets
@@ -544,8 +522,7 @@ int drm_modeset_ctl(struct drm_device *dev, void *data,
 		    struct drm_file *file_priv)
 {
 	struct drm_modeset_ctl *modeset = data;
-	int ret = 0;
-	unsigned int crtc;
+	int crtc, ret = 0;
 
 	/* If drm_vblank_init() hasn't been called yet, just no-op */
 	if (!dev->num_crtcs)
@@ -608,7 +585,6 @@ static int drm_queue_vblank_event(struct drm_device *dev, int pipe,
 	if ((vblwait->request.type & _DRM_VBLANK_NEXTONMISS) &&
 	    (seq - vblwait->request.sequence) <= (1 << 23)) {
 		vblwait->request.sequence = seq + 1;
-		vblwait->reply.sequence = vblwait->request.sequence;
 	}
 
 	DRM_DEBUG("event on vblank count %d, current %d, crtc %d\n",
@@ -651,7 +627,7 @@ int drm_wait_vblank(struct drm_device *dev, void *data,
 	int ret = 0;
 	unsigned int flags, seq, crtc;
 
-	if ((!drm_dev_to_irq(dev)) || (!dev->irq_enabled))
+	if ((!dev->pdev->irq) || (!dev->irq_enabled))
 		return -EINVAL;
 
 	if (vblwait->request.type & _DRM_VBLANK_SIGNAL)
