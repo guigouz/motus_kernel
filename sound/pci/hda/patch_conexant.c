@@ -403,9 +403,7 @@ static void conexant_report_jack(struct hda_codec *codec, hda_nid_t nid)
 		for (i = 0; i < spec->jacks.used; i++) {
 			if (jacks->nid == nid) {
 				unsigned int present;
-				present = snd_hda_codec_read(codec, nid, 0,
-						AC_VERB_GET_PIN_SENSE, 0) &
-					AC_PINSENSE_PRESENCE;
+				present = snd_hda_jack_detect(codec, nid);
 
 				present = (present) ? jacks->type : 0 ;
 
@@ -756,8 +754,7 @@ static void cxt5045_hp_automic(struct hda_codec *codec)
 	};
 	unsigned int present;
 
-	present = snd_hda_codec_read(codec, 0x12, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) & 0x80000000;
+	present = snd_hda_jack_detect(codec, 0x12);
 	if (present)
 		snd_hda_sequence_write(codec, mic_jack_on);
 	else
@@ -771,8 +768,7 @@ static void cxt5045_hp_automute(struct hda_codec *codec)
 	struct conexant_spec *spec = codec->spec;
 	unsigned int bits;
 
-	spec->hp_present = snd_hda_codec_read(codec, 0x11, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) & 0x80000000;
+	spec->hp_present = snd_hda_jack_detect(codec, 0x11);
 
 	bits = (spec->hp_present || !spec->cur_eapd) ? HDA_AMP_MUTE : 0; 
 	snd_hda_codec_amp_stereo(codec, 0x10, HDA_OUTPUT, 0,
@@ -1252,8 +1248,7 @@ static void cxt5047_hp_automute(struct hda_codec *codec)
 	struct conexant_spec *spec = codec->spec;
 	unsigned int bits;
 
-	spec->hp_present = snd_hda_codec_read(codec, 0x13, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) & 0x80000000;
+	spec->hp_present = snd_hda_jack_detect(codec, 0x13);
 
 	bits = (spec->hp_present || !spec->cur_eapd) ? HDA_AMP_MUTE : 0;
 	/* See the note in cxt5047_hp_master_sw_put */
@@ -1276,8 +1271,7 @@ static void cxt5047_hp_automic(struct hda_codec *codec)
 	};
 	unsigned int present;
 
-	present = snd_hda_codec_read(codec, 0x15, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) & 0x80000000;
+	present = snd_hda_jack_detect(codec, 0x15);
 	if (present)
 		snd_hda_sequence_write(codec, mic_jack_on);
 	else
@@ -1645,9 +1639,7 @@ static void cxt5051_portb_automic(struct hda_codec *codec)
 
 	if (spec->no_auto_mic)
 		return;
-	present = snd_hda_codec_read(codec, 0x17, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) &
-		AC_PINSENSE_PRESENCE;
+	present = snd_hda_jack_detect(codec, 0x17);
 	snd_hda_codec_write(codec, 0x14, 0,
 			    AC_VERB_SET_CONNECT_SEL,
 			    present ? 0x01 : 0x00);
@@ -1662,9 +1654,7 @@ static void cxt5051_portc_automic(struct hda_codec *codec)
 
 	if (spec->no_auto_mic)
 		return;
-	present = snd_hda_codec_read(codec, 0x18, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) &
-		AC_PINSENSE_PRESENCE;
+	present = snd_hda_jack_detect(codec, 0x18);
 	if (present)
 		spec->cur_adc_idx = 1;
 	else
@@ -1685,9 +1675,7 @@ static void cxt5051_hp_automute(struct hda_codec *codec)
 {
 	struct conexant_spec *spec = codec->spec;
 
-	spec->hp_present = snd_hda_codec_read(codec, 0x16, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) &
-		AC_PINSENSE_PRESENCE;
+	spec->hp_present = snd_hda_jack_detect(codec, 0x16);
 	cxt5051_update_speaker(codec);
 }
 
@@ -2035,8 +2023,7 @@ static void cxt5066_automic(struct hda_codec *codec)
 	};
 	unsigned int present;
 
-	present = snd_hda_codec_read(codec, 0x1a, 0,
-				     AC_VERB_GET_PIN_SENSE, 0) & 0x80000000;
+	present = snd_hda_jack_detect(codec, 0x1a);
 	if (present) {
 		snd_printdd("CXT5066: external microphone detected\n");
 		snd_hda_sequence_write(codec, ext_mic_present);
@@ -2053,12 +2040,10 @@ static void cxt5066_hp_automute(struct hda_codec *codec)
 	unsigned int portA, portD;
 
 	/* Port A */
-	portA = snd_hda_codec_read(codec, 0x19, 0, AC_VERB_GET_PIN_SENSE, 0)
-		& AC_PINSENSE_PRESENCE;
+	portA = snd_hda_jack_detect(codec, 0x19);
 
 	/* Port D */
-	portD = (snd_hda_codec_read(codec, 0x1c, 0, AC_VERB_GET_PIN_SENSE, 0)
-		& AC_PINSENSE_PRESENCE) << 1;
+	portD = snd_hda_jack_detect(codec, 0x1c);
 
 	spec->hp_present = !!(portA | portD);
 	snd_printdd("CXT5066: hp automute portA=%x portD=%x present=%d\n",

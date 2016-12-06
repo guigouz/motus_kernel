@@ -1356,6 +1356,7 @@ rollback:
 				nb->notifier_call(nb, NETDEV_DOWN, dev);
 			}
 			nb->notifier_call(nb, NETDEV_UNREGISTER, dev);
+			nb->notifier_call(nb, NETDEV_UNREGISTER_PERNET, dev);
 		}
 	}
 
@@ -4745,7 +4746,8 @@ static void net_set_todo(struct net_device *dev)
 
 static void rollback_registered_many(struct list_head *head)
 {
-	struct net_device *dev;
+	struct net_device *dev, *aux, *fdev;
+	LIST_HEAD(pernet_list);
 
 	BUG_ON(dev_boot_phase);
 	ASSERT_RTNL();
@@ -4803,8 +4805,24 @@ static void rollback_registered_many(struct list_head *head)
 
 	synchronize_net();
 
-	list_for_each_entry(dev, head, unreg_list)
+	list_for_each_entry_safe(dev, aux, head, unreg_list) {
+		int new_net = 1;
+		list_for_each_entry(fdev, &pernet_list, unreg_list) {
+			if (dev_net(dev) == dev_net(fdev)) {
+				new_net = 0;
+				dev_put(dev);
+				break;
+			}
+		}
+		if (new_net)
+			list_move(&dev->unreg_list, &pernet_list);
+	}
+
+	list_for_each_entry_safe(dev, aux, &pernet_list, unreg_list) {
+		call_netdevice_notifiers(NETDEV_UNREGISTER_PERNET, dev);
+		list_move(&dev->unreg_list, head);
 		dev_put(dev);
+	}
 }
 
 static void rollback_registered(struct net_device *dev)
@@ -5104,6 +5122,8 @@ static void netdev_wait_allrefs(struct net_device *dev)
 
 			/* Rebroadcast unregister notification */
 			call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
+			/* don't resend NETDEV_UNREGISTER_PERNET, _PERNET users
+			 * should have already handle it the first time */
 
 			if (test_bit(__LINK_STATE_LINKWATCH_PENDING,
 				     &dev->state)) {
@@ -5199,6 +5219,32 @@ void netdev_run_todo(void)
 }
 
 /**
+ *	dev_txq_stats_fold - fold tx_queues stats
+ *	@dev: device to get statistics from
+ *	@stats: struct net_device_stats to hold results
+ */
+void dev_txq_stats_fold(const struct net_device *dev,
+			struct net_device_stats *stats)
+{
+	unsigned long tx_bytes = 0, tx_packets = 0, tx_dropped = 0;
+	unsigned int i;
+	struct netdev_queue *txq;
+
+	for (i = 0; i < dev->num_tx_queues; i++) {
+		txq = netdev_get_tx_queue(dev, i);
+		tx_bytes   += txq->tx_bytes;
+		tx_packets += txq->tx_packets;
+		tx_dropped += txq->tx_dropped;
+	}
+	if (tx_bytes || tx_packets || tx_dropped) {
+		stats->tx_bytes   = tx_bytes;
+		stats->tx_packets = tx_packets;
+		stats->tx_dropped = tx_dropped;
+	}
+}
+EXPORT_SYMBOL(dev_txq_stats_fold);
+
+/**
  *	dev_get_stats	- get network device statistics
  *	@dev: device to get statistics from
  *
@@ -5212,25 +5258,9 @@ const struct net_device_stats *dev_get_stats(struct net_device *dev)
 
 	if (ops->ndo_get_stats)
 		return ops->ndo_get_stats(dev);
-	else {
-		unsigned long tx_bytes = 0, tx_packets = 0, tx_dropped = 0;
-		struct net_device_stats *stats = &dev->stats;
-		unsigned int i;
-		struct netdev_queue *txq;
 
-		for (i = 0; i < dev->num_tx_queues; i++) {
-			txq = netdev_get_tx_queue(dev, i);
-			tx_bytes   += txq->tx_bytes;
-			tx_packets += txq->tx_packets;
-			tx_dropped += txq->tx_dropped;
-		}
-		if (tx_bytes || tx_packets || tx_dropped) {
-			stats->tx_bytes   = tx_bytes;
-			stats->tx_packets = tx_packets;
-			stats->tx_dropped = tx_dropped;
-		}
-		return stats;
-	}
+	dev_txq_stats_fold(dev, &dev->stats);
+	return &dev->stats;
 }
 EXPORT_SYMBOL(dev_get_stats);
 
@@ -5405,6 +5435,10 @@ EXPORT_SYMBOL(unregister_netdevice_queue);
  *	unregister_netdevice_many - unregister many devices
  *	@head: list of devices
  *
+ *	WARNING: Calling this modifies the given list
+ *	(in rollback_registered_many). It may change the order of the elements
+ *	in the list. However, you can assume it does not add or delete elements
+ *	to/from the list.
  */
 void unregister_netdevice_many(struct list_head *head)
 {
@@ -5524,6 +5558,7 @@ int dev_change_net_namespace(struct net_device *dev, struct net *net, const char
 	   this device. They should clean all the things.
 	*/
 	call_netdevice_notifiers(NETDEV_UNREGISTER, dev);
+	call_netdevice_notifiers(NETDEV_UNREGISTER_PERNET, dev);
 
 	/*
 	 *	Flush the unicast and multicast chains
