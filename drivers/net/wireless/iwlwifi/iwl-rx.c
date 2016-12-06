@@ -636,6 +636,24 @@ void iwl_rx_statistics(struct iwl_priv *priv,
 }
 EXPORT_SYMBOL(iwl_rx_statistics);
 
+void iwl_reply_statistics(struct iwl_priv *priv,
+			      struct iwl_rx_mem_buffer *rxb)
+{
+	struct iwl_rx_packet *pkt = rxb_addr(rxb);
+
+	if (le32_to_cpu(pkt->u.stats.flag) & UCODE_STATISTICS_CLEAR_MSK) {
+		memset(&priv->statistics, 0,
+			sizeof(struct iwl_notif_statistics));
+#ifdef CONFIG_IWLWIFI_DEBUG
+		memset(&priv->accum_statistics, 0,
+			sizeof(struct iwl_notif_statistics));
+#endif
+		IWL_DEBUG_RX(priv, "Statistics have been cleared\n");
+	}
+	iwl_rx_statistics(priv, rxb);
+}
+EXPORT_SYMBOL(iwl_reply_statistics);
+
 #define PERFECT_RSSI (-20) /* dBm */
 #define WORST_RSSI (-95)   /* dBm */
 #define RSSI_RANGE (PERFECT_RSSI - WORST_RSSI)
@@ -1011,7 +1029,6 @@ void iwl_rx_reply_rx(struct iwl_priv *priv,
 	struct iwl4965_rx_mpdu_res_start *amsdu;
 	u32 len;
 	u32 ampdu_status;
-	u16 fc;
 	u32 rate_n_flags;
 
 	/**
@@ -1144,20 +1161,8 @@ void iwl_rx_reply_rx(struct iwl_priv *priv,
 		priv->last_tsf = le64_to_cpu(phy_res->timestamp);
 	}
 
-	fc = le16_to_cpu(header->frame_control);
-	switch (fc & IEEE80211_FCTL_FTYPE) {
-	case IEEE80211_FTYPE_MGMT:
-	case IEEE80211_FTYPE_DATA:
-		if (priv->iw_mode == NL80211_IFTYPE_AP)
-			iwl_update_ps_mode(priv, fc  & IEEE80211_FCTL_PM,
-						header->addr2);
-		/* fall through */
-	default:
-		iwl_pass_packet_to_mac80211(priv, header, len, ampdu_status,
-				rxb, &rx_status);
-		break;
-
-	}
+	iwl_pass_packet_to_mac80211(priv, header, len, ampdu_status,
+				    rxb, &rx_status);
 }
 EXPORT_SYMBOL(iwl_rx_reply_rx);
 

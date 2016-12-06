@@ -310,7 +310,7 @@ static void iwl_free_frame(struct iwl_priv *priv, struct iwl_frame *frame)
 	list_add(&frame->list, &priv->free_frames);
 }
 
-static unsigned int iwl_fill_beacon_frame(struct iwl_priv *priv,
+static u32 iwl_fill_beacon_frame(struct iwl_priv *priv,
 					  struct ieee80211_hdr *hdr,
 					  int left)
 {
@@ -327,34 +327,74 @@ static unsigned int iwl_fill_beacon_frame(struct iwl_priv *priv,
 	return priv->ibss_beacon->len;
 }
 
+/* Parse the beacon frame to find the TIM element and set tim_idx & tim_size */
+static void iwl_set_beacon_tim(struct iwl_priv *priv,
+		struct iwl_tx_beacon_cmd *tx_beacon_cmd,
+		u8 *beacon, u32 frame_size)
+{
+	u16 tim_idx;
+	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)beacon;
+
+	/*
+	 * The index is relative to frame start but we start looking at the
+	 * variable-length part of the beacon.
+	 */
+	tim_idx = mgmt->u.beacon.variable - beacon;
+
+	/* Parse variable-length elements of beacon to find WLAN_EID_TIM */
+	while ((tim_idx < (frame_size - 2)) &&
+			(beacon[tim_idx] != WLAN_EID_TIM))
+		tim_idx += beacon[tim_idx+1] + 2;
+
+	/* If TIM field was found, set variables */
+	if ((tim_idx < (frame_size - 1)) && (beacon[tim_idx] == WLAN_EID_TIM)) {
+		tx_beacon_cmd->tim_idx = cpu_to_le16(tim_idx);
+		tx_beacon_cmd->tim_size = beacon[tim_idx+1];
+	} else
+		IWL_WARN(priv, "Unable to find TIM Element in beacon\n");
+}
+
 static unsigned int iwl_hw_get_beacon_cmd(struct iwl_priv *priv,
-				       struct iwl_frame *frame, u8 rate)
+				       struct iwl_frame *frame)
 {
 	struct iwl_tx_beacon_cmd *tx_beacon_cmd;
-	unsigned int frame_size;
+	u32 frame_size;
+	u32 rate_flags;
+	u32 rate;
+	/*
+	 * We have to set up the TX command, the TX Beacon command, and the
+	 * beacon contents.
+	 */
 
+	/* Initialize memory */
 	tx_beacon_cmd = &frame->u.beacon;
 	memset(tx_beacon_cmd, 0, sizeof(*tx_beacon_cmd));
 
-	tx_beacon_cmd->tx.sta_id = priv->hw_params.bcast_sta_id;
-	tx_beacon_cmd->tx.stop_time.life_time = TX_CMD_LIFE_TIME_INFINITE;
-
+	/* Set up TX beacon contents */
 	frame_size = iwl_fill_beacon_frame(priv, tx_beacon_cmd->frame,
 				sizeof(frame->u) - sizeof(*tx_beacon_cmd));
+	if (WARN_ON_ONCE(frame_size > MAX_MPDU_SIZE))
+		return 0;
 
-	BUG_ON(frame_size > MAX_MPDU_SIZE);
+	/* Set up TX command fields */
 	tx_beacon_cmd->tx.len = cpu_to_le16((u16)frame_size);
-
-	if ((rate == IWL_RATE_1M_PLCP) || (rate >= IWL_RATE_2M_PLCP))
-		tx_beacon_cmd->tx.rate_n_flags =
-			iwl_hw_set_rate_n_flags(rate, RATE_MCS_CCK_MSK);
-	else
-		tx_beacon_cmd->tx.rate_n_flags =
-			iwl_hw_set_rate_n_flags(rate, 0);
-
+	tx_beacon_cmd->tx.sta_id = priv->hw_params.bcast_sta_id;
+	tx_beacon_cmd->tx.stop_time.life_time = TX_CMD_LIFE_TIME_INFINITE;
 	tx_beacon_cmd->tx.tx_flags = TX_CMD_FLG_SEQ_CTL_MSK |
-				     TX_CMD_FLG_TSF_MSK |
-				     TX_CMD_FLG_STA_RATE_MSK;
+		TX_CMD_FLG_TSF_MSK | TX_CMD_FLG_STA_RATE_MSK;
+
+	/* Set up TX beacon command fields */
+	iwl_set_beacon_tim(priv, tx_beacon_cmd, (u8 *)tx_beacon_cmd->frame,
+			frame_size);
+
+	/* Set up packet rate and flags */
+	rate = iwl_rate_get_lowest_plcp(priv);
+	priv->mgmt_tx_ant = iwl_toggle_tx_ant(priv, priv->mgmt_tx_ant);
+	rate_flags = iwl_ant_idx_to_flags(priv->mgmt_tx_ant);
+	if ((rate >= IWL_FIRST_CCK_RATE) && (rate <= IWL_LAST_CCK_RATE))
+		rate_flags |= RATE_MCS_CCK_MSK;
+	tx_beacon_cmd->tx.rate_n_flags = iwl_hw_set_rate_n_flags(rate,
+			rate_flags);
 
 	return sizeof(*tx_beacon_cmd) + frame_size;
 }
@@ -363,19 +403,20 @@ static int iwl_send_beacon_cmd(struct iwl_priv *priv)
 	struct iwl_frame *frame;
 	unsigned int frame_size;
 	int rc;
-	u8 rate;
 
 	frame = iwl_get_free_frame(priv);
-
 	if (!frame) {
 		IWL_ERR(priv, "Could not obtain free frame buffer for beacon "
 			  "command.\n");
 		return -ENOMEM;
 	}
 
-	rate = iwl_rate_get_lowest_plcp(priv);
-
-	frame_size = iwl_hw_get_beacon_cmd(priv, frame, rate);
+	frame_size = iwl_hw_get_beacon_cmd(priv, frame);
+	if (!frame_size) {
+		IWL_ERR(priv, "Error configuring the beacon command\n");
+		iwl_free_frame(priv, frame);
+		return -EINVAL;
+	}
 
 	rc = iwl_send_cmd_pdu(priv, REPLY_TX_BEACON, frame_size,
 			      &frame->u.cmd[0]);
@@ -612,7 +653,7 @@ static void iwl_bg_statistics_periodic(unsigned long data)
 	if (!iwl_is_ready_rf(priv))
 		return;
 
-	iwl_send_statistics_request(priv, CMD_ASYNC);
+	iwl_send_statistics_request(priv, CMD_ASYNC, false);
 }
 
 static void iwl_rx_beacon_notif(struct iwl_priv *priv,
@@ -729,7 +770,7 @@ static void iwl_setup_rx_handlers(struct iwl_priv *priv)
 	 * statistics request from the host as well as for the periodic
 	 * statistics notifications (after received beacons) from the uCode.
 	 */
-	priv->rx_handlers[REPLY_STATISTICS_CMD] = iwl_rx_statistics;
+	priv->rx_handlers[REPLY_STATISTICS_CMD] = iwl_reply_statistics;
 	priv->rx_handlers[STATISTICS_NOTIFICATION] = iwl_rx_statistics;
 
 	iwl_setup_spectrum_handlers(priv);
@@ -2522,6 +2563,10 @@ void iwl_config_ap(struct iwl_priv *priv)
 			IWL_WARN(priv, "REPLY_RXON_TIMING failed - "
 					"Attempting to continue.\n");
 
+		/* AP has all antennas */
+		priv->chain_noise_data.active_chains =
+			priv->hw_params.valid_rx_ant;
+		iwl_set_rxon_ht(priv, &priv->current_ht_config);
 		if (priv->cfg->ops->hcmd->set_rxon_chain)
 			priv->cfg->ops->hcmd->set_rxon_chain(priv);
 
@@ -2550,6 +2595,7 @@ void iwl_config_ap(struct iwl_priv *priv)
 		/* restore RXON assoc */
 		priv->staging_rxon.filter_flags |= RXON_FILTER_ASSOC_MSK;
 		iwlcore_commit_rxon(priv);
+		iwl_reset_qos(priv);
 		spin_lock_irqsave(&priv->lock, flags);
 		iwl_activate_qos(priv, 1);
 		spin_unlock_irqrestore(&priv->lock, flags);
@@ -2696,6 +2742,45 @@ static int iwl_mac_get_stats(struct ieee80211_hw *hw,
 	IWL_DEBUG_MAC80211(priv, "leave\n");
 
 	return 0;
+}
+
+static void iwl_mac_sta_notify(struct ieee80211_hw *hw,
+			       struct ieee80211_vif *vif,
+			       enum sta_notify_cmd cmd,
+			       struct ieee80211_sta *sta)
+{
+	struct iwl_priv *priv = hw->priv;
+	struct iwl_station_priv *sta_priv = (void *)sta->drv_priv;
+	int sta_id;
+
+	/*
+	 * TODO: We really should use this callback to
+	 *	 actually maintain the station table in
+	 *	 the device.
+	 */
+
+	switch (cmd) {
+	case STA_NOTIFY_ADD:
+		atomic_set(&sta_priv->pending_frames, 0);
+		if (vif->type == NL80211_IFTYPE_AP)
+			sta_priv->client = true;
+		break;
+	case STA_NOTIFY_SLEEP:
+		WARN_ON(!sta_priv->client);
+		sta_priv->asleep = true;
+		if (atomic_read(&sta_priv->pending_frames) > 0)
+			ieee80211_sta_block_awake(hw, sta, true);
+		break;
+	case STA_NOTIFY_AWAKE:
+		WARN_ON(!sta_priv->client);
+		sta_priv->asleep = false;
+		sta_id = iwl_find_station(priv, sta->addr);
+		if (sta_id != IWL_INVALID_STATION)
+			iwl_sta_modify_ps_wake(priv, sta_id);
+		break;
+	default:
+		break;
+	}
 }
 
 /*****************************************************************************
@@ -2892,7 +2977,7 @@ static ssize_t show_statistics(struct device *d,
 		return -EAGAIN;
 
 	mutex_lock(&priv->mutex);
-	rc = iwl_send_statistics_request(priv, 0);
+	rc = iwl_send_statistics_request(priv, CMD_SYNC, false);
 	mutex_unlock(&priv->mutex);
 
 	if (rc) {
@@ -3129,7 +3214,8 @@ static struct ieee80211_ops iwl_hw_ops = {
 	.reset_tsf = iwl_mac_reset_tsf,
 	.bss_info_changed = iwl_bss_info_changed,
 	.ampdu_action = iwl_mac_ampdu_action,
-	.hw_scan = iwl_mac_hw_scan
+	.hw_scan = iwl_mac_hw_scan,
+	.sta_notify = iwl_mac_sta_notify,
 };
 
 static int iwl_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)

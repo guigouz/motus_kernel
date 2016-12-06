@@ -209,6 +209,7 @@ u8 iwl_toggle_tx_ant(struct iwl_priv *priv, u8 ant)
 	}
 	return ant;
 }
+EXPORT_SYMBOL(iwl_toggle_tx_ant);
 
 const u8 iwl_bcast_addr[ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 EXPORT_SYMBOL(iwl_bcast_addr);
@@ -1991,16 +1992,21 @@ int iwl_send_bt_config(struct iwl_priv *priv)
 }
 EXPORT_SYMBOL(iwl_send_bt_config);
 
-int iwl_send_statistics_request(struct iwl_priv *priv, u8 flags)
+int iwl_send_statistics_request(struct iwl_priv *priv, u8 flags, bool clear)
 {
-	u32 stat_flags = 0;
-	struct iwl_host_cmd cmd = {
-		.id = REPLY_STATISTICS_CMD,
-		.flags = flags,
-		.len = sizeof(stat_flags),
-		.data = (u8 *) &stat_flags,
+	struct iwl_statistics_cmd statistics_cmd = {
+		.configuration_flags =
+			clear ? IWL_STATS_CONF_CLEAR_STATS : 0,
 	};
-	return iwl_send_cmd(priv, &cmd);
+
+	if (flags & CMD_ASYNC)
+		return iwl_send_cmd_pdu_async(priv, REPLY_STATISTICS_CMD,
+					       sizeof(struct iwl_statistics_cmd),
+					       &statistics_cmd, NULL);
+	else
+		return iwl_send_cmd_pdu(priv, REPLY_STATISTICS_CMD,
+					sizeof(struct iwl_statistics_cmd),
+					&statistics_cmd);
 }
 EXPORT_SYMBOL(iwl_send_statistics_request);
 
@@ -2490,6 +2496,14 @@ void iwl_bss_info_changed(struct ieee80211_hw *hw,
 				&priv->staging_rxon,
 				sizeof(struct iwl_rxon_cmd));
 		}
+	}
+
+	if ((changes & BSS_CHANGED_BEACON_ENABLED) &&
+	    vif->bss_conf.enable_beacon) {
+		memcpy(priv->staging_rxon.bssid_addr,
+		       bss_conf->bssid, ETH_ALEN);
+		memcpy(priv->bssid, bss_conf->bssid, ETH_ALEN);
+		iwlcore_config_ap(priv);
 	}
 
 	mutex_unlock(&priv->mutex);

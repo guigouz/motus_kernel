@@ -28,7 +28,6 @@
  *****************************************************************************/
 
 #include <linux/etherdevice.h>
-#include <linux/sched.h>
 #include <net/mac80211.h>
 #include "iwl-eeprom.h"
 #include "iwl-dev.h"
@@ -60,8 +59,7 @@ static const u16 default_tid_to_tx_fifo[] = {
 static inline int iwl_alloc_dma_ptr(struct iwl_priv *priv,
 				    struct iwl_dma_ptr *ptr, size_t size)
 {
-	ptr->addr = dma_alloc_coherent(&priv->pci_dev->dev, size, &ptr->dma,
-				       GFP_KERNEL);
+	ptr->addr = pci_alloc_consistent(priv->pci_dev, size, &ptr->dma);
 	if (!ptr->addr)
 		return -ENOMEM;
 	ptr->size = size;
@@ -74,7 +72,7 @@ static inline void iwl_free_dma_ptr(struct iwl_priv *priv,
 	if (unlikely(!ptr->addr))
 		return;
 
-	dma_free_coherent(&priv->pci_dev->dev, ptr->size, ptr->addr, ptr->dma);
+	pci_free_consistent(priv->pci_dev, ptr->size, ptr->addr, ptr->dma);
 	memset(ptr, 0, sizeof(*ptr));
 }
 
@@ -121,20 +119,6 @@ int iwl_txq_update_write_ptr(struct iwl_priv *priv, struct iwl_tx_queue *txq)
 EXPORT_SYMBOL(iwl_txq_update_write_ptr);
 
 
-void iwl_free_tfds_in_queue(struct iwl_priv *priv,
-			    int sta_id, int tid, int freed)
-{
-	if (priv->stations[sta_id].tid[tid].tfds_in_queue >= freed)
-		priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
-	else {
-		IWL_DEBUG_TX(priv, "free more than tfds_in_queue (%u:%d)\n",
-			priv->stations[sta_id].tid[tid].tfds_in_queue,
-			freed);
-		priv->stations[sta_id].tid[tid].tfds_in_queue = 0;
-	}
-}
-EXPORT_SYMBOL(iwl_free_tfds_in_queue);
-
 /**
  * iwl_tx_queue_free - Deallocate DMA queue.
  * @txq: Transmit queue to deallocate.
@@ -164,8 +148,8 @@ void iwl_tx_queue_free(struct iwl_priv *priv, int txq_id)
 
 	/* De-alloc circular buffer of TFDs */
 	if (txq->q.n_bd)
-		dma_free_coherent(dev, priv->hw_params.tfd_size *
-				  txq->q.n_bd, txq->tfds, txq->q.dma_addr);
+		pci_free_consistent(dev, priv->hw_params.tfd_size *
+				    txq->q.n_bd, txq->tfds, txq->q.dma_addr);
 
 	/* De-alloc array of per-TFD driver data */
 	kfree(txq->txb);
@@ -206,8 +190,8 @@ void iwl_cmd_queue_free(struct iwl_priv *priv)
 
 	/* De-alloc circular buffer of TFDs */
 	if (txq->q.n_bd)
-		dma_free_coherent(dev, priv->hw_params.tfd_size * txq->q.n_bd,
-				  txq->tfds, txq->q.dma_addr);
+		pci_free_consistent(dev, priv->hw_params.tfd_size *
+				    txq->q.n_bd, txq->tfds, txq->q.dma_addr);
 
 	/* deallocate arrays */
 	kfree(txq->cmd);
@@ -298,7 +282,7 @@ static int iwl_queue_init(struct iwl_priv *priv, struct iwl_queue *q,
 static int iwl_tx_queue_alloc(struct iwl_priv *priv,
 			      struct iwl_tx_queue *txq, u32 id)
 {
-	struct device *dev = &priv->pci_dev->dev;
+	struct pci_dev *dev = priv->pci_dev;
 	size_t tfd_sz = priv->hw_params.tfd_size * TFD_QUEUE_SIZE_MAX;
 
 	/* Driver private data, only for Tx (not command) queues,
@@ -317,8 +301,8 @@ static int iwl_tx_queue_alloc(struct iwl_priv *priv,
 
 	/* Circular buffer of transmit frame descriptors (TFDs),
 	 * shared with device */
-	txq->tfds = dma_alloc_coherent(dev, tfd_sz, &txq->q.dma_addr,
-				       GFP_KERNEL);
+	txq->tfds = pci_alloc_consistent(dev, tfd_sz, &txq->q.dma_addr);
+
 	if (!txq->tfds) {
 		IWL_ERR(priv, "pci_alloc_consistent(%zd) failed\n", tfd_sz);
 		goto error;
@@ -725,6 +709,8 @@ int iwl_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
 {
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
+	struct ieee80211_sta *sta = info->control.sta;
+	struct iwl_station_priv *sta_priv = NULL;
 	struct iwl_tx_queue *txq;
 	struct iwl_queue *q;
 	struct iwl_device_cmd *out_cmd;
@@ -787,6 +773,24 @@ int iwl_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
 
 	IWL_DEBUG_TX(priv, "station Id %d\n", sta_id);
 
+	if (sta)
+		sta_priv = (void *)sta->drv_priv;
+
+	if (sta_priv && sta_id != priv->hw_params.bcast_sta_id &&
+	    sta_priv->asleep) {
+		WARN_ON(!(info->flags & IEEE80211_TX_CTL_PSPOLL_RESPONSE));
+		/*
+		 * This sends an asynchronous command to the device,
+		 * but we can rely on it being processed before the
+		 * next frame is processed -- and the next frame to
+		 * this station is the one that will consume this
+		 * counter.
+		 * For now set the counter to just 1 since we do not
+		 * support uAPSD yet.
+		 */
+		iwl_sta_modify_sleep_tx_count(priv, sta_id, 1);
+	}
+
 	txq_id = skb_get_queue_mapping(skb);
 	if (ieee80211_is_data_qos(fc)) {
 		qc = ieee80211_get_qos_ctl(hdr);
@@ -800,10 +804,8 @@ int iwl_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
 		hdr->seq_ctrl |= cpu_to_le16(seq_number);
 		seq_number += 0x10;
 		/* aggregation is on for this <sta,tid> */
-		if (info->flags & IEEE80211_TX_CTL_AMPDU &&
-		    priv->stations[sta_id].tid[tid].agg.state == IWL_AGG_ON) {
+		if (info->flags & IEEE80211_TX_CTL_AMPDU)
 			txq_id = priv->stations[sta_id].tid[tid].agg.txq_id;
-		}
 	}
 
 	txq = &priv->txq[txq_id];
@@ -947,6 +949,17 @@ int iwl_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
 	q->write_ptr = iwl_queue_inc_wrap(q->write_ptr, q->n_bd);
 	ret = iwl_txq_update_write_ptr(priv, txq);
 	spin_unlock_irqrestore(&priv->lock, flags);
+
+	/*
+	 * At this point the frame is "transmitted" successfully
+	 * and we will get a TX status notification eventually,
+	 * regardless of the value of ret. "ret" only indicates
+	 * whether or not we should update the write pointer.
+	 */
+
+	/* avoid atomic ops if it isn't an associated client */
+	if (sta_priv && sta_priv->client)
+		atomic_inc(&sta_priv->pending_frames);
 
 	if (ret)
 		return ret;
@@ -1092,13 +1105,30 @@ int iwl_enqueue_hcmd(struct iwl_priv *priv, struct iwl_host_cmd *cmd)
 	return ret ? ret : idx;
 }
 
+static void iwl_tx_status(struct iwl_priv *priv, struct sk_buff *skb)
+{
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *) skb->data;
+	struct ieee80211_sta *sta;
+	struct iwl_station_priv *sta_priv;
+
+	sta = ieee80211_find_sta(priv->vif, hdr->addr1);
+	if (sta) {
+		sta_priv = (void *)sta->drv_priv;
+		/* avoid atomic ops if this isn't a client */
+		if (sta_priv->client &&
+		    atomic_dec_return(&sta_priv->pending_frames) == 0)
+			ieee80211_sta_block_awake(priv->hw, sta, false);
+	}
+
+	ieee80211_tx_status_irqsafe(priv->hw, skb);
+}
+
 int iwl_tx_queue_reclaim(struct iwl_priv *priv, int txq_id, int index)
 {
 	struct iwl_tx_queue *txq = &priv->txq[txq_id];
 	struct iwl_queue *q = &txq->q;
 	struct iwl_tx_info *tx_info;
 	int nfreed = 0;
-	struct ieee80211_hdr *hdr;
 
 	if ((index >= q->n_bd) || (iwl_queue_used(q, index) == 0)) {
 		IWL_ERR(priv, "Read index for DMA queue txq id (%d), index %d, "
@@ -1112,21 +1142,14 @@ int iwl_tx_queue_reclaim(struct iwl_priv *priv, int txq_id, int index)
 	     q->read_ptr = iwl_queue_inc_wrap(q->read_ptr, q->n_bd)) {
 
 		tx_info = &txq->txb[txq->q.read_ptr];
-
-		if (WARN_ON_ONCE(tx_info->skb == NULL))
-			continue;
-
-		hdr = (struct ieee80211_hdr *)tx_info->skb[0]->data;
-		if (ieee80211_is_data_qos(hdr->frame_control))
-			nfreed++;
-
-		ieee80211_tx_status_irqsafe(priv->hw, tx_info->skb[0]);
+		iwl_tx_status(priv, tx_info->skb[0]);
 		tx_info->skb[0] = NULL;
 
 		if (priv->cfg->ops->lib->txq_inval_byte_cnt_tbl)
 			priv->cfg->ops->lib->txq_inval_byte_cnt_tbl(priv, txq);
 
 		priv->cfg->ops->lib->txq_free_tfd(priv, txq);
+		nfreed++;
 	}
 	return nfreed;
 }
@@ -1303,7 +1326,7 @@ int iwl_tx_agg_stop(struct iwl_priv *priv , const u8 *ra, u16 tid)
 {
 	int tx_fifo_id, txq_id, sta_id, ssn = -1;
 	struct iwl_tid_data *tid_data;
-	int write_ptr, read_ptr;
+	int ret, write_ptr, read_ptr;
 	unsigned long flags;
 
 	if (!ra) {
@@ -1326,16 +1349,8 @@ int iwl_tx_agg_stop(struct iwl_priv *priv , const u8 *ra, u16 tid)
 		return -ENXIO;
 	}
 
-	if (priv->stations[sta_id].tid[tid].agg.state ==
-				IWL_EMPTYING_HW_QUEUE_ADDBA) {
-		IWL_DEBUG_HT(priv, "AGG stop before setup done\n");
-		ieee80211_stop_tx_ba_cb_irqsafe(priv->hw, ra, tid);
-		priv->stations[sta_id].tid[tid].agg.state = IWL_AGG_OFF;
-		return 0;
-	}
-
 	if (priv->stations[sta_id].tid[tid].agg.state != IWL_AGG_ON)
-		IWL_WARN(priv, "Stopping AGG while state not ON or starting\n");
+		IWL_WARN(priv, "Stopping AGG while state not IWL_AGG_ON\n");
 
 	tid_data = &priv->stations[sta_id].tid[tid];
 	ssn = (tid_data->seq_number & IEEE80211_SCTL_SEQ) >> 4;
@@ -1355,16 +1370,12 @@ int iwl_tx_agg_stop(struct iwl_priv *priv , const u8 *ra, u16 tid)
 	priv->stations[sta_id].tid[tid].agg.state = IWL_AGG_OFF;
 
 	spin_lock_irqsave(&priv->lock, flags);
-	/*
-	 * the only reason this call can fail is queue number out of range,
-	 * which can happen if uCode is reloaded and all the station
-	 * information are lost. if it is outside the range, there is no need
-	 * to deactivate the uCode queue, just return "success" to allow
-	 *  mac80211 to clean up it own data.
-	 */
-	priv->cfg->ops->lib->txq_agg_disable(priv, txq_id, ssn,
+	ret = priv->cfg->ops->lib->txq_agg_disable(priv, txq_id, ssn,
 						   tx_fifo_id);
 	spin_unlock_irqrestore(&priv->lock, flags);
+
+	if (ret)
+		return ret;
 
 	ieee80211_stop_tx_ba_cb_irqsafe(priv->hw, ra, tid);
 
@@ -1507,11 +1518,6 @@ void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
 	sta_id = ba_resp->sta_id;
 	tid = ba_resp->tid;
 	agg = &priv->stations[sta_id].tid[tid].agg;
-	if (unlikely(agg->txq_id != scd_flow)) {
-		IWL_ERR(priv, "BA scd_flow %d does not match txq_id %d\n",
-			scd_flow, agg->txq_id);
-		return;
-	}
 
 	/* Find index just before block-ack window */
 	index = iwl_queue_dec_wrap(ba_resp_scd_ssn & 0xff, txq->q.n_bd);
@@ -1543,7 +1549,7 @@ void iwl_rx_reply_compressed_ba(struct iwl_priv *priv,
 	if (txq->q.read_ptr != (ba_resp_scd_ssn & 0xff)) {
 		/* calculate mac80211 ampdu sw queue to wake */
 		int freed = iwl_tx_queue_reclaim(priv, scd_flow, index);
-		iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
+		priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
 
 		if ((iwl_queue_space(&txq->q) > txq->q.low_mark) &&
 		    priv->mac80211_registered &&

@@ -2497,7 +2497,7 @@ static void iwl3945_alive_start(struct iwl_priv *priv)
 	priv->active_rate = priv->rates_mask;
 	priv->active_rate_basic = priv->rates_mask & IWL_BASIC_RATES_MASK;
 
-	iwl_power_update_mode(priv, false);
+	iwl_power_update_mode(priv, true);
 
 	if (iwl_is_associated(priv)) {
 		struct iwl3945_rxon_cmd *active_rxon =
@@ -3653,7 +3653,7 @@ static ssize_t show_statistics(struct device *d,
 		return -EAGAIN;
 
 	mutex_lock(&priv->mutex);
-	rc = iwl_send_statistics_request(priv, 0);
+	rc = iwl_send_statistics_request(priv, CMD_SYNC, false);
 	mutex_unlock(&priv->mutex);
 
 	if (rc) {
