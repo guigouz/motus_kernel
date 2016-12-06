@@ -100,6 +100,10 @@ struct ceph_mds_session {
 
 	struct ceph_connection s_con;
 
+	struct ceph_authorizer *s_authorizer;
+	void             *s_authorizer_buf, *s_authorizer_reply_buf;
+	size_t            s_authorizer_buf_len, s_authorizer_reply_buf_len;
+
 	/* protected by s_cap_lock */
 	spinlock_t        s_cap_lock;
 	u32               s_cap_gen;  /* inc each time we get mds stale msg */
@@ -282,7 +286,7 @@ extern void ceph_put_mds_session(struct ceph_mds_session *s);
 extern int ceph_send_msg_mds(struct ceph_mds_client *mdsc,
 			     struct ceph_msg *msg, int mds);
 
-extern void ceph_mdsc_init(struct ceph_mds_client *mdsc,
+extern int ceph_mdsc_init(struct ceph_mds_client *mdsc,
 			   struct ceph_client *client);
 extern void ceph_mdsc_close_sessions(struct ceph_mds_client *mdsc);
 extern void ceph_mdsc_stop(struct ceph_mds_client *mdsc);
