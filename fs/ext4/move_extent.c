@@ -957,7 +957,7 @@ out2:
 static int
 mext_check_arguments(struct inode *orig_inode,
 		     struct inode *donor_inode, __u64 orig_start,
-		     __u64 donor_start, __u64 *len)
+		     __u64 donor_start, __u64 *len, __u64 moved_len)
 {
 	ext4_lblk_t orig_blocks, donor_blocks;
 	unsigned int blkbits = orig_inode->i_blkbits;
@@ -1010,6 +1010,13 @@ mext_check_arguments(struct inode *orig_inode,
 		ext4_debug("ext4 move extent: orig and donor's start "
 			"offset are not same [ino:orig %lu, donor %lu]\n",
 			orig_inode->i_ino, donor_inode->i_ino);
+		return -EINVAL;
+	}
+
+	if (moved_len) {
+		ext4_debug("ext4 move extent: moved_len should be 0 "
+			"[ino:orig %lu, donor %lu]\n", orig_inode->i_ino,
+			donor_inode->i_ino);
 		return -EINVAL;
 	}
 
