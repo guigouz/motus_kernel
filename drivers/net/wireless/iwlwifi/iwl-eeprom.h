@@ -127,19 +127,21 @@ struct iwl_eeprom_channel {
  *    Enhanced regulatory tx power portion of eeprom image can be broken down
  *    into individual structures; each one is 8 bytes in size and contain the
  *    following information
+ * @common: (desc + channel) not used by driver, should _NOT_ be "zero"
  * @chain_a_max_pwr: chain a max power in 1/2 dBm
  * @chain_b_max_pwr: chain b max power in 1/2 dBm
  * @chain_c_max_pwr: chain c max power in 1/2 dBm
+ * @reserved: not used, should be "zero"
  * @mimo2_max_pwr: mimo2 max power in 1/2 dBm
  * @mimo3_max_pwr: mimo3 max power in 1/2 dBm
  *
  */
 struct iwl_eeprom_enhanced_txpwr {
-	__le16 common;
+	u16 common;
 	s8 chain_a_max;
 	s8 chain_b_max;
 	s8 chain_c_max;
-	s8 reserved1;
+	s8 reserved;
 	s8 mimo2_max;
 	s8 mimo3_max;
 } __attribute__ ((packed));
@@ -358,7 +360,7 @@ struct iwl_eeprom_calib_subband_info {
 struct iwl_eeprom_calib_info {
 	u8 saturation_power24;	/* half-dBm (e.g. "34" = 17 dBm) */
 	u8 saturation_power52;	/* half-dBm */
-	__le16 voltage;		/* signed */
+	s16 voltage;		/* signed */
 	struct iwl_eeprom_calib_subband_info
 		band_info[EEPROM_TX_POWER_BANDS];
 } __attribute__ ((packed));
