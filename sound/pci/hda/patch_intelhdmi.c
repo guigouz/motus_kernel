@@ -62,8 +62,6 @@ struct intel_hdmi_spec {
 	/*
 	 * HDMI sink attached to each pin
 	 */
-	bool		sink_present[INTEL_HDMI_PINS];
-	bool		sink_eldv[INTEL_HDMI_PINS];
 	struct hdmi_eld sink_eld[INTEL_HDMI_PINS];
 
 	/*
@@ -433,7 +431,7 @@ static void hdmi_debug_channel_mapping(struct hda_codec *codec, hda_nid_t nid)
 		slot = snd_hda_codec_read(codec, nid, 0,
 						AC_VERB_GET_HDMI_CHAN_SLOT, i);
 		printk(KERN_DEBUG "HDMI: ASP channel %d => slot %d\n",
-						slot >> 4, slot & 0x7);
+						slot >> 4, slot & 0xf);
 	}
 #endif
 }
@@ -509,12 +507,12 @@ static void hdmi_fill_audio_infoframe(struct hda_codec *codec,
 	hdmi_debug_dip_size(codec, pin_nid);
 	hdmi_clear_dip_buffers(codec, pin_nid); /* be paranoid */
 
-	for (i = 0; i < sizeof(ai); i++)
+	for (i = 0; i < sizeof(*ai); i++)
 		sum += params[i];
 	ai->checksum = - sum;
 
 	hdmi_set_dip_index(codec, pin_nid, 0x0, 0x0);
-	for (i = 0; i < sizeof(ai); i++)
+	for (i = 0; i < sizeof(*ai); i++)
 		hdmi_write_dip_byte(codec, pin_nid, params[i]);
 }
 
@@ -645,7 +643,7 @@ static void hdmi_setup_audio_infoframe(struct hda_codec *codec, hda_nid_t nid,
 	for (i = 0; i < spec->num_pins; i++) {
 		if (spec->pin_cvt[i] != nid)
 			continue;
-		if (spec->sink_present[i] != true)
+		if (!spec->sink_eld[i].monitor_present)
 			continue;
 
 		pin_nid = spec->pin[i];
@@ -675,8 +673,8 @@ static void hdmi_intrinsic_event(struct hda_codec *codec, unsigned int res)
 	if (index < 0)
 		return;
 
-	spec->sink_present[index] = pind;
-	spec->sink_eldv[index] = eldv;
+	spec->sink_eld[index].monitor_present = pind;
+	spec->sink_eld[index].eld_valid = eldv;
 
 	if (pind && eldv) {
 		hdmi_parse_eld(codec, index);
