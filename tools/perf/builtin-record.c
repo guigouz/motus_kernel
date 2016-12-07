@@ -400,7 +400,7 @@ static int __cmd_record(int argc, const char **argv)
 	struct stat st;
 	pid_t pid = 0;
 	int flags;
-	int ret;
+	int err;
 	unsigned long waking = 0;
 
 	page_size = sysconf(_SC_PAGE_SIZE);
@@ -434,14 +434,16 @@ static int __cmd_record(int argc, const char **argv)
 		exit(-1);
 	}
 
-	if (!file_new)
-		header = perf_header__read(output);
-	else
-		header = perf_header__new();
-
+	header = perf_header__new();
 	if (header == NULL) {
 		pr_err("Not enough memory for reading perf file header\n");
 		return -1;
+	}
+
+	if (!file_new) {
+		err = perf_header__read(header, output);
+		if (err < 0)
+			return err;
 	}
 
 	if (raw_samples) {
@@ -472,8 +474,11 @@ static int __cmd_record(int argc, const char **argv)
 		}
 	}
 
-	if (file_new)
-		perf_header__write(header, output, false);
+	if (file_new) {
+		err = perf_header__write(header, output, false);
+		if (err < 0)
+			return err;
+	}
 
 	if (!system_wide)
 		event__synthesize_thread(pid, process_synthesized_event);
@@ -527,7 +532,7 @@ static int __cmd_record(int argc, const char **argv)
 		if (hits == samples) {
 			if (done)
 				break;
-			ret = poll(event_array, nr_poll, -1);
+			err = poll(event_array, nr_poll, -1);
 			waking++;
 		}
 

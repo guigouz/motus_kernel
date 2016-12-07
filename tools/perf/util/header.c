@@ -78,16 +78,24 @@ struct perf_header *perf_header__new(void)
 	return self;
 }
 
+void perf_header__delete(struct perf_header *self)
+{
+	int i;
+
+	for (i = 0; i < self->attrs; ++i)
+		perf_header_attr__delete(self->attr[i]);
+
+	free(self->attr);
+	free(self);
+}
+
 int perf_header__add_attr(struct perf_header *self,
 			  struct perf_header_attr *attr)
 {
-	int pos = self->attrs;
-
 	if (self->frozen)
 		return -1;
 
-	self->attrs++;
-	if (self->attrs > self->size) {
+	if (self->attrs == self->size) {
 		int nsize = self->size * 2;
 		struct perf_header_attr **nattr;
 
@@ -98,7 +106,8 @@ int perf_header__add_attr(struct perf_header *self,
 		self->size = nsize;
 		self->attr = nattr;
 	}
-	self->attr[pos] = attr;
+
+	self->attr[self->attrs++] = attr;
 	return 0;
 }
 
@@ -167,7 +176,7 @@ static int do_write(int fd, const void *buf, size_t size)
 		int ret = write(fd, buf, size);
 
 		if (ret < 0)
-			return -1;
+			return -errno;
 
 		size -= ret;
 		buf += ret;
@@ -181,6 +190,7 @@ static int dsos__write_buildid_table(int fd)
 	struct dso *pos;
 
 	list_for_each_entry(pos, &dsos, node) {
+		int err;
 		struct build_id_event b;
 		size_t len;
 
@@ -191,33 +201,35 @@ static int dsos__write_buildid_table(int fd)
 		memset(&b, 0, sizeof(b));
 		memcpy(&b.build_id, pos->build_id, sizeof(pos->build_id));
 		b.header.size = sizeof(b) + len;
-		if (do_write(fd, &b, sizeof(b)) < 0 ||
-		    do_write(fd, pos->long_name, len) < 0)
-			return -1;
+		err = do_write(fd, &b, sizeof(b));
+		if (err < 0)
+			return err;
+		err = do_write(fd, pos->long_name, len);
+		if (err < 0)
+			return err;
 	}
 
 	return 0;
 }
 
-static void
-perf_header__adds_write(struct perf_header *self, int fd)
+static int perf_header__adds_write(struct perf_header *self, int fd)
 {
 	int nr_sections;
 	struct perf_file_section *feat_sec;
 	int sec_size;
 	u64 sec_start;
-	int idx = 0;
+	int idx = 0, err;
 
 	if (dsos__read_build_ids())
 		perf_header__set_feat(self, HEADER_BUILD_ID);
 
 	nr_sections = bitmap_weight(self->adds_features, HEADER_FEAT_BITS);
 	if (!nr_sections)
-		return;
+		return 0;
 
 	feat_sec = calloc(sizeof(*feat_sec), nr_sections);
-	if (!feat_sec)
-		die("No memory");
+	if (feat_sec == NULL)
+		return -ENOMEM;
 
 	sec_size = sizeof(*feat_sec) * nr_sections;
 
@@ -249,23 +261,29 @@ perf_header__adds_write(struct perf_header *self, int fd)
 
 		/* Write build-ids */
 		buildid_sec->offset = lseek(fd, 0, SEEK_CUR);
-		if (dsos__write_buildid_table(fd) < 0)
-			die("failed to write buildid table");
+		err = dsos__write_buildid_table(fd);
+		if (err < 0) {
+			pr_debug("failed to write buildid table\n");
+			goto out_free;
+		}
 		buildid_sec->size = lseek(fd, 0, SEEK_CUR) - buildid_sec->offset;
 	}
 
 	lseek(fd, sec_start, SEEK_SET);
-	if (do_write(fd, feat_sec, sec_size) < 0)
-		die("failed to write feature section");
+	err = do_write(fd, feat_sec, sec_size);
+	if (err < 0)
+		pr_debug("failed to write feature section\n");
+out_free:
 	free(feat_sec);
+	return err;
 }
 
-void perf_header__write(struct perf_header *self, int fd, bool at_exit)
+int perf_header__write(struct perf_header *self, int fd, bool at_exit)
 {
 	struct perf_file_header f_header;
 	struct perf_file_attr   f_attr;
 	struct perf_header_attr	*attr;
-	int i;
+	int i, err;
 
 	lseek(fd, sizeof(f_header), SEEK_SET);
 
@@ -274,8 +292,11 @@ void perf_header__write(struct perf_header *self, int fd, bool at_exit)
 		attr = self->attr[i];
 
 		attr->id_offset = lseek(fd, 0, SEEK_CUR);
-		if (do_write(fd, attr->id, attr->ids * sizeof(u64)) < 0)
-			die("failed to write perf header");
+		err = do_write(fd, attr->id, attr->ids * sizeof(u64));
+		if (err < 0) {
+			pr_debug("failed to write perf header\n");
+			return err;
+		}
 	}
 
 
@@ -291,20 +312,30 @@ void perf_header__write(struct perf_header *self, int fd, bool at_exit)
 				.size   = attr->ids * sizeof(u64),
 			}
 		};
-		if (do_write(fd, &f_attr, sizeof(f_attr)) < 0)
-			die("failed to write perf header attribute");
+		err = do_write(fd, &f_attr, sizeof(f_attr));
+		if (err < 0) {
+			pr_debug("failed to write perf header attribute\n");
+			return err;
+		}
 	}
 
 	self->event_offset = lseek(fd, 0, SEEK_CUR);
 	self->event_size = event_count * sizeof(struct perf_trace_event_type);
-	if (events)
-		if (do_write(fd, events, self->event_size) < 0)
-			die("failed to write perf header events");
+	if (events) {
+		err = do_write(fd, events, self->event_size);
+		if (err < 0) {
+			pr_debug("failed to write perf header events\n");
+			return err;
+		}
+	}
 
 	self->data_offset = lseek(fd, 0, SEEK_CUR);
 
-	if (at_exit)
-		perf_header__adds_write(self, fd);
+	if (at_exit) {
+		err = perf_header__adds_write(self, fd);
+		if (err < 0)
+			return err;
+	}
 
 	f_header = (struct perf_file_header){
 		.magic	   = PERF_MAGIC,
@@ -327,11 +358,15 @@ void perf_header__write(struct perf_header *self, int fd, bool at_exit)
 	memcpy(&f_header.adds_features, &self->adds_features, sizeof(self->adds_features));
 
 	lseek(fd, 0, SEEK_SET);
-	if (do_write(fd, &f_header, sizeof(f_header)) < 0)
-		die("failed to write perf header");
+	err = do_write(fd, &f_header, sizeof(f_header));
+	if (err < 0) {
+		pr_debug("failed to write perf header\n");
+		return err;
+	}
 	lseek(fd, self->data_offset + self->data_size, SEEK_SET);
 
 	self->frozen = 1;
+	return 0;
 }
 
 static void do_read(int fd, void *buf, size_t size)
@@ -441,19 +476,17 @@ static int perf_file_section__process(struct perf_file_section *self,
 	return 0;
 }
 
-struct perf_header *perf_header__read(int fd)
+int perf_header__read(struct perf_header *self, int fd)
 {
-	struct perf_header	*self = perf_header__new();
 	struct perf_file_header f_header;
 	struct perf_file_attr	f_attr;
 	u64			f_id;
 	int nr_attrs, nr_ids, i, j;
 
-	if (self == NULL)
-		die("nomem");
-
-	if (perf_file_header__read(&f_header, self, fd) < 0)
-		die("incompatible file format");
+	if (perf_file_header__read(&f_header, self, fd) < 0) {
+		pr_debug("incompatible file format\n");
+		return -EINVAL;
+	}
 
 	nr_attrs = f_header.attrs.size / sizeof(f_attr);
 	lseek(fd, f_header.attrs.offset, SEEK_SET);
@@ -467,7 +500,7 @@ struct perf_header *perf_header__read(int fd)
 
 		attr = perf_header_attr__new(&f_attr.attr);
 		if (attr == NULL)
-			 die("nomem");
+			 return -ENOMEM;
 
 		nr_ids = f_attr.ids.size / sizeof(u64);
 		lseek(fd, f_attr.ids.offset, SEEK_SET);
@@ -475,11 +508,15 @@ struct perf_header *perf_header__read(int fd)
 		for (j = 0; j < nr_ids; j++) {
 			do_read(fd, &f_id, sizeof(f_id));
 
-			if (perf_header_attr__add_id(attr, f_id) < 0)
-				die("nomem");
+			if (perf_header_attr__add_id(attr, f_id) < 0) {
+				perf_header_attr__delete(attr);
+				return -ENOMEM;
+			}
 		}
-		if (perf_header__add_attr(self, attr) < 0)
-			 die("nomem");
+		if (perf_header__add_attr(self, attr) < 0) {
+			perf_header_attr__delete(attr);
+			return -ENOMEM;
+		}
 
 		lseek(fd, tmp, SEEK_SET);
 	}
@@ -487,8 +524,8 @@ struct perf_header *perf_header__read(int fd)
 	if (f_header.event_types.size) {
 		lseek(fd, f_header.event_types.offset, SEEK_SET);
 		events = malloc(f_header.event_types.size);
-		if (!events)
-			die("nomem");
+		if (events == NULL)
+			return -ENOMEM;
 		do_read(fd, events, f_header.event_types.size);
 		event_count =  f_header.event_types.size / sizeof(struct perf_trace_event_type);
 	}
@@ -498,8 +535,7 @@ struct perf_header *perf_header__read(int fd)
 	lseek(fd, self->data_offset, SEEK_SET);
 
 	self->frozen = 1;
-
-	return self;
+	return 0;
 }
 
 u64 perf_header__sample_type(struct perf_header *header)
