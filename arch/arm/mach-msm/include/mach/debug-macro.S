@@ -39,6 +39,7 @@
 	tst	\rd, #0x04
 	beq	1001b
 1002:
+	beq	1001b
 	.endm
 #else
 	.macro	addruart,rx

@@ -147,6 +147,33 @@
 #define MSM_DEBUG_UART_SIZE   SZ_4K
 #endif
 
+#define MSM_SDC1_PHYS         0xA0400000
+#define MSM_SDC1_SIZE         SZ_4K
+
+#define MSM_SDC2_PHYS         0xA0500000
+#define MSM_SDC2_SIZE         SZ_4K
+
+#define MSM_SDC3_PHYS         0xA0600000
+#define MSM_SDC3_SIZE         SZ_4K
+
+#define MSM_SDC4_PHYS         0xA0700000
+#define MSM_SDC4_SIZE         SZ_4K
+
+#define MSM_I2C_PHYS          0xA9900000
+#define MSM_I2C_SIZE          SZ_4K
+
+#define MSM_HSUSB_PHYS        0xA0800000
+#define MSM_HSUSB_SIZE        SZ_4K
+
+#define MSM_PMDH_PHYS         0xAA600000
+#define MSM_PMDH_SIZE         SZ_4K
+
+#define MSM_EMDH_PHYS         0xAA700000
+#define MSM_EMDH_SIZE         SZ_4K
+
+#define MSM_MDP_PHYS          0xAA200000
+#define MSM_MDP_SIZE          0x000F0000
+
 #define MSM_MDC_BASE	      IOMEM(0xE0200000)
 #define MSM_MDC_PHYS	      0xAA500000
 #define MSM_MDC_SIZE	      SZ_1M
