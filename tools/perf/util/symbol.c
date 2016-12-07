@@ -12,6 +12,10 @@
 #include <limits.h>
 #include <sys/utsname.h>
 
+#ifndef NT_GNU_BUILD_ID
+#define NT_GNU_BUILD_ID 3
+#endif
+
 enum dso_origin {
 	DSO__ORIG_KERNEL = 0,
 	DSO__ORIG_JAVA_JIT,
@@ -27,6 +31,8 @@ static void dsos__add(struct dso *dso);
 static struct dso *dsos__find(const char *name);
 static struct map *map__new2(u64 start, struct dso *dso);
 static void kernel_maps__insert(struct map *map);
+static int dso__load_kernel_sym(struct dso *self, struct map *map,
+				symbol_filter_t filter);
 unsigned int symbol__priv_size;
 
 static struct rb_root kernel_maps;
@@ -70,11 +76,11 @@ static void kernel_maps__fixup_end(void)
 		prev->end = curr->start - 1;
 	}
 
-	nd = rb_last(&curr->dso->syms);
-	if (nd) {
-		struct symbol *sym = rb_entry(nd, struct symbol, rb_node);
-		curr->end = sym->end;
-	}
+	/*
+	 * We still haven't the actual symbols, so guess the
+	 * last map final address.
+	 */
+	curr->end = ~0UL;
 }
 
 static struct symbol *symbol__new(u64 start, u64 len, const char *name)
@@ -112,6 +118,8 @@ static size_t symbol__fprintf(struct symbol *self, FILE *fp)
 
 static void dso__set_long_name(struct dso *self, char *name)
 {
+	if (name == NULL)
+		return;
 	self->long_name = name;
 	self->long_name_len = strlen(name);
 }
@@ -324,7 +332,7 @@ out_failure:
  * kernel range is broken in several maps, named [kernel].N, as we don't have
  * the original ELF section names vmlinux have.
  */
-static int kernel_maps__split_kallsyms(symbol_filter_t filter, int use_modules)
+static int kernel_maps__split_kallsyms(symbol_filter_t filter)
 {
 	struct map *map = kernel_map;
 	struct symbol *pos;
@@ -340,9 +348,6 @@ static int kernel_maps__split_kallsyms(symbol_filter_t filter, int use_modules)
 
 		module = strchr(pos->name, '\t');
 		if (module) {
-			if (!use_modules)
-				goto delete_symbol;
-
 			*module++ = '\0';
 
 			if (strcmp(map->dso->name, module)) {
@@ -382,7 +387,6 @@ static int kernel_maps__split_kallsyms(symbol_filter_t filter, int use_modules)
 		}
 
 		if (filter && filter(map, pos)) {
-delete_symbol:
 			rb_erase(&pos->rb_node, &kernel_map->dso->syms);
 			symbol__delete(pos);
 		} else {
@@ -398,17 +402,18 @@ delete_symbol:
 }
 
 
-static int kernel_maps__load_kallsyms(symbol_filter_t filter, int use_modules)
+static int kernel_maps__load_kallsyms(symbol_filter_t filter)
 {
 	if (kernel_maps__load_all_kallsyms())
 		return -1;
 
 	dso__fixup_sym_end(kernel_map->dso);
+	kernel_map->dso->origin = DSO__ORIG_KERNEL;
 
-	return kernel_maps__split_kallsyms(filter, use_modules);
+	return kernel_maps__split_kallsyms(filter);
 }
 
-static size_t kernel_maps__fprintf(FILE *fp)
+size_t kernel_maps__fprintf(FILE *fp)
 {
 	size_t printed = fprintf(fp, "Kernel maps:\n");
 	struct rb_node *nd;
@@ -884,6 +889,11 @@ out_close:
 	return err;
 }
 
+static bool dso__build_id_equal(const struct dso *self, u8 *build_id)
+{
+	return memcmp(self->build_id, build_id, sizeof(self->build_id)) == 0;
+}
+
 bool dsos__read_build_ids(void)
 {
 	bool have_build_id = false;
@@ -899,13 +909,19 @@ bool dsos__read_build_ids(void)
 	return have_build_id;
 }
 
+/*
+ * Align offset to 4 bytes as needed for note name and descriptor data.
+ */
+#define NOTE_ALIGN(n) (((n) + 3) & -4U)
+
 int filename__read_build_id(const char *filename, void *bf, size_t size)
 {
 	int fd, err = -1;
 	GElf_Ehdr ehdr;
 	GElf_Shdr shdr;
-	Elf_Data *build_id_data;
+	Elf_Data *data;
 	Elf_Scn *sec;
+	void *ptr;
 	Elf *elf;
 
 	if (size < BUILD_ID_SIZE)
@@ -928,14 +944,37 @@ int filename__read_build_id(const char *filename, void *bf, size_t size)
 
 	sec = elf_section_by_name(elf, &ehdr, &shdr,
 				  ".note.gnu.build-id", NULL);
-	if (sec == NULL)
+	if (sec == NULL) {
+		sec = elf_section_by_name(elf, &ehdr, &shdr,
+					  ".notes", NULL);
+		if (sec == NULL)
+			goto out_elf_end;
+	}
+
+	data = elf_getdata(sec, NULL);
+	if (data == NULL)
 		goto out_elf_end;
 
-	build_id_data = elf_getdata(sec, NULL);
-	if (build_id_data == NULL)
-		goto out_elf_end;
-	memcpy(bf, build_id_data->d_buf + 16, BUILD_ID_SIZE);
-	err = BUILD_ID_SIZE;
+	ptr = data->d_buf;
+	while (ptr < (data->d_buf + data->d_size)) {
+		GElf_Nhdr *nhdr = ptr;
+		int namesz = NOTE_ALIGN(nhdr->n_namesz),
+		    descsz = NOTE_ALIGN(nhdr->n_descsz);
+		const char *name;
+
+		ptr += sizeof(*nhdr);
+		name = ptr;
+		ptr += namesz;
+		if (nhdr->n_type == NT_GNU_BUILD_ID &&
+		    nhdr->n_namesz == sizeof("GNU")) {
+			if (memcmp(name, "GNU", sizeof("GNU")) == 0) {
+				memcpy(bf, ptr, BUILD_ID_SIZE);
+				err = BUILD_ID_SIZE;
+				break;
+			}
+		}
+		ptr += descsz;
+	}
 out_elf_end:
 	elf_end(elf);
 out_close:
@@ -963,8 +1002,8 @@ int sysfs__read_build_id(const char *filename, void *build_id, size_t size)
 		if (read(fd, &nhdr, sizeof(nhdr)) != sizeof(nhdr))
 			break;
 
-		namesz = (nhdr.n_namesz + 3) & -4U;
-		descsz = (nhdr.n_descsz + 3) & -4U;
+		namesz = NOTE_ALIGN(nhdr.n_namesz);
+		descsz = NOTE_ALIGN(nhdr.n_descsz);
 		if (nhdr.n_type == NT_GNU_BUILD_ID &&
 		    nhdr.n_namesz == sizeof("GNU")) {
 			if (read(fd, bf, namesz) != namesz)
@@ -1008,13 +1047,17 @@ char dso__symtab_origin(const struct dso *self)
 int dso__load(struct dso *self, struct map *map, symbol_filter_t filter)
 {
 	int size = PATH_MAX;
-	char *name = malloc(size);
+	char *name;
 	u8 build_id[BUILD_ID_SIZE];
 	int ret = -1;
 	int fd;
 
 	self->loaded = 1;
 
+	if (self->kernel)
+		return dso__load_kernel_sym(self, map, filter);
+
+	name = malloc(size);
 	if (!name)
 		return -1;
 
@@ -1070,8 +1113,7 @@ more:
 						    sizeof(build_id)) < 0)
 				goto more;
 compare_build_id:
-			if (memcmp(build_id, self->build_id,
-				   sizeof(self->build_id)) != 0)
+			if (!dso__build_id_equal(self, build_id))
 				goto more;
 		}
 
@@ -1106,7 +1148,8 @@ static void kernel_maps__insert(struct map *map)
 	maps__insert(&kernel_maps, map);
 }
 
-struct symbol *kernel_maps__find_symbol(u64 ip, struct map **mapp)
+struct symbol *kernel_maps__find_symbol(u64 ip, struct map **mapp,
+					symbol_filter_t filter)
 {
 	struct map *map = maps__find(&kernel_maps, ip);
 
@@ -1115,7 +1158,7 @@ struct symbol *kernel_maps__find_symbol(u64 ip, struct map **mapp)
 
 	if (map) {
 		ip = map->map_ip(map, ip);
-		return map->dso->find_symbol(map->dso, ip);
+		return map__find_symbol(map, ip, filter);
 	}
 
 	return NULL;
@@ -1135,28 +1178,9 @@ struct map *kernel_maps__find_by_dso_name(const char *name)
 	return NULL;
 }
 
-static int dso__load_module_sym(struct dso *self, struct map *map,
-				symbol_filter_t filter)
-{
-	int err = 0, fd = open(self->long_name, O_RDONLY);
-
-	self->loaded = 1;
-
-	if (fd < 0) {
-		pr_err("%s: cannot open %s\n", __func__, self->long_name);
-		return err;
-	}
-
-	err = dso__load_sym(self, map, self->long_name, fd, filter, 0, 1);
-	close(fd);
-
-	return err;
-}
-
-static int dsos__load_modules_sym_dir(char *dirname, symbol_filter_t filter)
+static int dsos__set_modules_path_dir(char *dirname)
 {
 	struct dirent *dent;
-	int nr_symbols = 0, err;
 	DIR *dir = opendir(dirname);
 
 	if (!dir) {
@@ -1174,14 +1198,12 @@ static int dsos__load_modules_sym_dir(char *dirname, symbol_filter_t filter)
 
 			snprintf(path, sizeof(path), "%s/%s",
 				 dirname, dent->d_name);
-			err = dsos__load_modules_sym_dir(path, filter);
-			if (err < 0)
+			if (dsos__set_modules_path_dir(path) < 0)
 				goto failure;
 		} else {
 			char *dot = strrchr(dent->d_name, '.'),
 			     dso_name[PATH_MAX];
 			struct map *map;
-			struct rb_node *last;
 			char *long_name;
 
 			if (dot == NULL || strcmp(dot, ".ko"))
@@ -1201,36 +1223,16 @@ static int dsos__load_modules_sym_dir(char *dirname, symbol_filter_t filter)
 			if (long_name == NULL)
 				goto failure;
 			dso__set_long_name(map->dso, long_name);
-			dso__set_basename(map->dso);
-
-			err = dso__load_module_sym(map->dso, map, filter);
-			if (err < 0)
-				goto failure;
-			last = rb_last(&map->dso->syms);
-			if (last) {
-				struct symbol *sym;
-				/*
-				 * We do this here as well, even having the
-				 * symbol size found in the symtab because
-				 * misannotated ASM symbols may have the size
-				 * set to zero.
-				 */
-				dso__fixup_sym_end(map->dso);
-
-				sym = rb_entry(last, struct symbol, rb_node);
-				map->end = map->start + sym->end;
-			}
 		}
-		nr_symbols += err;
 	}
 
-	return nr_symbols;
+	return 0;
 failure:
 	closedir(dir);
 	return -1;
 }
 
-static int dsos__load_modules_sym(symbol_filter_t filter)
+static int dsos__set_modules_path(void)
 {
 	struct utsname uts;
 	char modules_path[PATH_MAX];
@@ -1241,7 +1243,7 @@ static int dsos__load_modules_sym(symbol_filter_t filter)
 	snprintf(modules_path, sizeof(modules_path), "/lib/modules/%s/kernel",
 		 uts.release);
 
-	return dsos__load_modules_sym_dir(modules_path, filter);
+	return dsos__set_modules_path_dir(modules_path);
 }
 
 /*
@@ -1263,7 +1265,7 @@ static struct map *map__new2(u64 start, struct dso *dso)
 	return self;
 }
 
-int dsos__load_modules(void)
+static int kernel_maps__create_module_maps(void)
 {
 	char *line = NULL;
 	size_t n;
@@ -1327,7 +1329,7 @@ int dsos__load_modules(void)
 	free(line);
 	fclose(file);
 
-	return 0;
+	return dsos__set_modules_path();
 
 out_delete_line:
 	free(line);
@@ -1338,13 +1340,37 @@ out_failure:
 static int dso__load_vmlinux(struct dso *self, struct map *map,
 			     const char *vmlinux, symbol_filter_t filter)
 {
-	int err, fd = open(vmlinux, O_RDONLY);
+	int err = -1, fd;
 
-	self->loaded = 1;
+	if (self->has_build_id) {
+		u8 build_id[BUILD_ID_SIZE];
 
+		if (filename__read_build_id(vmlinux, build_id,
+					    sizeof(build_id)) < 0) {
+			pr_debug("No build_id in %s, ignoring it\n", vmlinux);
+			return -1;
+		}
+		if (!dso__build_id_equal(self, build_id)) {
+			char expected_build_id[BUILD_ID_SIZE * 2 + 1],
+			     vmlinux_build_id[BUILD_ID_SIZE * 2 + 1];
+
+			build_id__sprintf(self->build_id,
+					  sizeof(self->build_id),
+					  expected_build_id);
+			build_id__sprintf(build_id, sizeof(build_id),
+					  vmlinux_build_id);
+			pr_debug("build_id in %s is %s while expected is %s, "
+				 "ignoring it\n", vmlinux, vmlinux_build_id,
+				 expected_build_id);
+			return -1;
+		}
+	}
+
+	fd = open(vmlinux, O_RDONLY);
 	if (fd < 0)
 		return -1;
 
+	self->loaded = 1;
 	err = dso__load_sym(self, map, self->long_name, fd, filter, 1, 0);
 
 	close(fd);
@@ -1352,69 +1378,29 @@ static int dso__load_vmlinux(struct dso *self, struct map *map,
 	return err;
 }
 
-int dso__load_kernel_sym(struct dso *self, symbol_filter_t filter, int use_modules)
+static int dso__load_kernel_sym(struct dso *self, struct map *map,
+				symbol_filter_t filter)
 {
-	int err = -1;
+	int err = dso__load_vmlinux(self, map, self->name, filter);
 
-	kernel_map = map__new2(0, self);
-	if (kernel_map == NULL)
-		goto out_delete_dso;
-
-	kernel_map->map_ip = kernel_map->unmap_ip = identity__map_ip;
-
-	if (use_modules && dsos__load_modules() < 0) {
-		pr_warning("Failed to load list of modules in use! "
-			   "Continuing...\n");
-		use_modules = 0;
+	if (err <= 0) {
+		err = kernel_maps__load_kallsyms(filter);
+		if (err > 0)
+                        dso__set_long_name(self, strdup("[kernel.kallsyms]"));
 	}
-
-	err = dso__load_vmlinux(self, kernel_map, self->name, filter);
-	if (err > 0 && use_modules) {
-		int syms = dsos__load_modules_sym(filter);
-
-		if (syms < 0)
-			pr_warning("Failed to read module symbols!"
-				   " Continuing...\n");
-		else
-			err += syms;
-	}
-
-	if (err <= 0)
-		err = kernel_maps__load_kallsyms(filter, use_modules);
 
 	if (err > 0) {
-		struct rb_node *node = rb_first(&self->syms);
-		struct symbol *sym = rb_entry(node, struct symbol, rb_node);
-
-		kernel_map->start = sym->start;
-		node = rb_last(&self->syms);
-		sym = rb_entry(node, struct symbol, rb_node);
-		kernel_map->end = sym->end;
-
-		self->origin = DSO__ORIG_KERNEL;
-		kernel_maps__insert(kernel_map);
-		/*
-		 * Now that we have all sorted out, just set the ->end of all
-		 * maps:
-		 */
-		kernel_maps__fixup_end();
-
-		if (verbose)
-			kernel_maps__fprintf(stderr);
+		map__fixup_start(map);
+		map__fixup_end(map);
 	}
 
 	return err;
-
-out_delete_dso:
-	dso__delete(self);
-	return -1;
 }
 
 LIST_HEAD(dsos);
 struct dso	*vdso;
 
 const char	*vmlinux_name = "vmlinux";
-int		modules;
 
 static void dsos__add(struct dso *dso)
 {
@@ -1466,36 +1452,56 @@ size_t dsos__fprintf_buildid(FILE *fp)
 	return ret;
 }
 
-struct dso *dsos__load_kernel(void)
+static int kernel_maps__create_kernel_map(void)
 {
 	struct dso *kernel = dso__new(vmlinux_name);
 
 	if (kernel == NULL)
-		return NULL;
+		return -1;
+
+	kernel_map = map__new2(0, kernel);
+	if (kernel_map == NULL)
+		goto out_delete_kernel_dso;
+
+	kernel_map->map_ip = kernel_map->unmap_ip = identity__map_ip;
 
 	kernel->short_name = "[kernel]";
+	kernel->kernel = 1;
 	vdso = dso__new("[vdso]");
-	if (!vdso)
-		return NULL;
+	if (vdso == NULL)
+		goto out_delete_kernel_map;
 
 	if (sysfs__read_build_id("/sys/kernel/notes", kernel->build_id,
 				 sizeof(kernel->build_id)) == 0)
 		kernel->has_build_id = true;
 
+	kernel_maps__insert(kernel_map);
 	dsos__add(kernel);
 	dsos__add(vdso);
 
-	return kernel;
+	return 0;
+
+out_delete_kernel_map:
+	map__delete(kernel_map);
+	kernel_map = NULL;
+out_delete_kernel_dso:
+	dso__delete(kernel);
+	return -1;
 }
 
-int load_kernel(symbol_filter_t filter)
+int kernel_maps__init(bool use_modules)
 {
-	struct dso *kernel = dsos__load_kernel();
-
-	if (kernel == NULL)
+	if (kernel_maps__create_kernel_map() < 0)
 		return -1;
 
-	return dso__load_kernel_sym(kernel, filter, modules);
+	if (use_modules && kernel_maps__create_module_maps() < 0)
+		pr_warning("Failed to load list of modules in use, "
+			   "continuing...\n");
+	/*
+	 * Now that we have all the maps created, just set the ->end of them:
+	 */
+	kernel_maps__fixup_end();
+	return 0;
 }
 
 void symbol__init(unsigned int priv_size)

@@ -33,6 +33,7 @@ static int		input;
 static int		full_paths;
 
 static int		print_line;
+static bool		use_modules;
 
 static unsigned long	page_size;
 static unsigned long	mmap_window = 32;
@@ -156,7 +157,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 
 	if (event->header.misc & PERF_RECORD_MISC_KERNEL) {
 		level = 'k';
-		sym = kernel_maps__find_symbol(ip, &map);
+		sym = kernel_maps__find_symbol(ip, &map, symbol_filter);
 		dump_printf(" ...... dso: %s\n",
 			    map ? map->dso->long_name : "<not found>");
 	} else if (event->header.misc & PERF_RECORD_MISC_USER) {
@@ -636,9 +637,9 @@ static int __cmd_annotate(void)
 		exit(0);
 	}
 
-	if (load_kernel(symbol_filter) < 0) {
-		perror("failed to load kernel symbols");
-		return EXIT_FAILURE;
+	if (kernel_maps__init(use_modules) < 0) {
+		pr_err("failed to create kernel maps for symbol resolution\b");
+		return -1;
 	}
 
 remap:
@@ -742,7 +743,7 @@ static const struct option options[] = {
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
 	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
-	OPT_BOOLEAN('m', "modules", &modules,
+	OPT_BOOLEAN('m', "modules", &use_modules,
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
 	OPT_BOOLEAN('l', "print-line", &print_line,
 		    "print matching source lines (may be slow)"),

@@ -830,6 +830,8 @@ static void handle_keypress(int c)
 		case 'q':
 		case 'Q':
 			printf("exiting.\n");
+			if (dump_symtab)
+				dsos__fprintf(stderr);
 			exit(0);
 		case 's':
 			prompt_symbol(&sym_filter_entry, "Enter details symbol");
@@ -946,22 +948,6 @@ static int symbol_filter(struct map *map, struct symbol *sym)
 	return 0;
 }
 
-static int parse_symbols(void)
-{
-	struct dso *kernel = dsos__load_kernel();
-
-	if (kernel == NULL)
-		return -1;
-
-	if (dso__load_kernel_sym(kernel, symbol_filter, 1) <= 0)
-		return -1;
-
-	if (dump_symtab)
-		dsos__fprintf(stderr);
-
-	return 0;
-}
-
 static void event__process_sample(const event_t *self, int counter)
 {
 	u64 ip = self->ip.ip;
@@ -1004,7 +990,7 @@ static void event__process_sample(const event_t *self, int counter)
 		if (hide_kernel_symbols)
 			return;
 
-		sym = kernel_maps__find_symbol(ip, &map);
+		sym = kernel_maps__find_symbol(ip, &map, symbol_filter);
 		if (sym == NULL)
 			return;
 		break;
@@ -1331,7 +1317,7 @@ static const struct option options[] = {
 
 int cmd_top(int argc, const char **argv, const char *prefix __used)
 {
-	int counter;
+	int counter, err;
 
 	page_size = sysconf(_SC_PAGE_SIZE);
 
@@ -1355,9 +1341,10 @@ int cmd_top(int argc, const char **argv, const char *prefix __used)
 	if (delay_secs < 1)
 		delay_secs = 1;
 
-	parse_symbols();
+	err = kernel_maps__init(true);
+	if (err < 0)
+		return err;
 	parse_source(sym_filter_entry);
-
 
 	/*
 	 * User specified count overrides default frequency.

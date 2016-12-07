@@ -36,6 +36,7 @@
 #include <linux/workqueue.h>
 #include <linux/io.h>
 #include <linux/netdevice.h>
+#include <linux/pci.h>
 
 #include "hw.h"
 
@@ -47,9 +48,9 @@ struct e1000_info;
 
 #ifdef DEBUG
 #define e_dbg(format, arg...) \
-	e_printk(KERN_DEBUG , adapter, format, ## arg)
+	e_printk(KERN_DEBUG , hw->adapter, format, ## arg)
 #else
-#define e_dbg(format, arg...) do { (void)(adapter); } while (0)
+#define e_dbg(format, arg...) do { (void)(hw); } while (0)
 #endif
 
 #define e_err(format, arg...) \
@@ -488,6 +489,7 @@ extern void e1000e_set_kmrn_lock_loss_workaround_ich8lan(struct e1000_hw *hw,
 extern void e1000e_igp3_phy_powerdown_workaround_ich8lan(struct e1000_hw *hw);
 extern void e1000e_gig_downshift_workaround_ich8lan(struct e1000_hw *hw);
 extern void e1000e_disable_gig_wol_ich8lan(struct e1000_hw *hw);
+extern s32 e1000_configure_k1_ich8lan(struct e1000_hw *hw, bool k1_enable);
 
 extern s32 e1000e_check_for_copper_link(struct e1000_hw *hw);
 extern s32 e1000e_check_for_fiber_link(struct e1000_hw *hw);
