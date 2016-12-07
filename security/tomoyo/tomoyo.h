@@ -19,8 +19,6 @@ struct linux_binprm;
 struct pt_regs;
 struct tomoyo_page_buffer;
 
-int tomoyo_check_file_perm(struct tomoyo_domain_info *domain,
-			   const char *filename, const u8 perm);
 int tomoyo_check_exec_perm(struct tomoyo_domain_info *domain,
 			   const struct tomoyo_path_info *filename,
 			   struct tomoyo_page_buffer *buf);
