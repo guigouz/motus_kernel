@@ -23,8 +23,7 @@
 #include <linux/input.h>
 #include <linux/gpio_keys.h>
 #include <linux/workqueue.h>
-
-#include <asm/gpio.h>
+#include <linux/gpio.h>
 
 struct gpio_button_data {
 	struct gpio_keys_button *button;
@@ -74,10 +73,62 @@ static irqreturn_t gpio_keys_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static int __devinit gpio_keys_setup_key(struct device *dev,
+					 struct gpio_button_data *bdata,
+					 struct gpio_keys_button *button)
+{
+	char *desc = button->desc ? button->desc : "gpio_keys";
+	int irq, error;
+
+	setup_timer(&bdata->timer, gpio_keys_timer, (unsigned long)bdata);
+	INIT_WORK(&bdata->work, gpio_keys_report_event);
+
+	error = gpio_request(button->gpio, desc);
+	if (error < 0) {
+		dev_err(dev, "failed to request GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail2;
+	}
+
+	error = gpio_direction_input(button->gpio);
+	if (error < 0) {
+		dev_err(dev, "failed to configure"
+			" direction for GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail3;
+	}
+
+	irq = gpio_to_irq(button->gpio);
+	if (irq < 0) {
+		error = irq;
+		dev_err(dev, "Unable to get irq number for GPIO %d, error %d\n",
+			button->gpio, error);
+		goto fail3;
+	}
+
+	error = request_irq(irq, gpio_keys_isr,
+			    IRQF_SHARED |
+			    IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+			    desc, bdata);
+	if (error) {
+		dev_err(dev, "Unable to claim irq %d; error %d\n",
+			irq, error);
+		goto fail3;
+	}
+
+	return 0;
+
+fail3:
+	gpio_free(button->gpio);
+fail2:
+	return error;
+}
+
 static int __devinit gpio_keys_probe(struct platform_device *pdev)
 {
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	struct gpio_keys_drvdata *ddata;
+	struct device *dev = &pdev->dev;
 	struct input_dev *input;
 	int i, error;
 	int wakeup = 0;
@@ -87,6 +138,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 			GFP_KERNEL);
 	input = input_allocate_device();
 	if (!ddata || !input) {
+		dev_err(dev, "failed to allocate state\n");
 		error = -ENOMEM;
 		goto fail1;
 	}
@@ -111,52 +163,14 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	for (i = 0; i < pdata->nbuttons; i++) {
 		struct gpio_keys_button *button = &pdata->buttons[i];
 		struct gpio_button_data *bdata = &ddata->data[i];
-		int irq;
 		unsigned int type = button->type ?: EV_KEY;
 
 		bdata->input = input;
 		bdata->button = button;
-		setup_timer(&bdata->timer,
-			    gpio_keys_timer, (unsigned long)bdata);
-		INIT_WORK(&bdata->work, gpio_keys_report_event);
 
-		error = gpio_request(button->gpio, button->desc ?: "gpio_keys");
-		if (error < 0) {
-			pr_err("gpio-keys: failed to request GPIO %d,"
-				" error %d\n", button->gpio, error);
+		error = gpio_keys_setup_key(dev, bdata, button);
+		if (error)
 			goto fail2;
-		}
-
-		error = gpio_direction_input(button->gpio);
-		if (error < 0) {
-			pr_err("gpio-keys: failed to configure input"
-				" direction for GPIO %d, error %d\n",
-				button->gpio, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
-
-		irq = gpio_to_irq(button->gpio);
-		if (irq < 0) {
-			error = irq;
-			pr_err("gpio-keys: Unable to get irq number"
-				" for GPIO %d, error %d\n",
-				button->gpio, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
-
-		error = request_irq(irq, gpio_keys_isr,
-				    IRQF_SHARED |
-				    IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
-				    button->desc ? button->desc : "gpio_keys",
-				    bdata);
-		if (error) {
-			pr_err("gpio-keys: Unable to claim irq %d; error %d\n",
-				irq, error);
-			gpio_free(button->gpio);
-			goto fail2;
-		}
 
 		if (button->wakeup)
 			wakeup = 1;
@@ -166,7 +180,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 
 	error = input_register_device(input);
 	if (error) {
-		pr_err("gpio-keys: Unable to register input device, "
+		dev_err(dev, "Unable to register input device, "
 			"error: %d\n", error);
 		goto fail2;
 	}
