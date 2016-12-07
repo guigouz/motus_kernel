@@ -2411,6 +2411,12 @@ static int smack_socket_sock_rcv_skb(struct sock *sk, struct sk_buff *skb)
 
 	netlbl_secattr_destroy(&secattr);
 
+#ifdef CONFIG_AUDIT
+	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_NET);
+	ad.a.u.net.family = sk->sk_family;
+	ad.a.u.net.netif = skb->skb_iif;
+	ipv4_skb_to_auditdata(skb, &ad.a, NULL);
+#endif
 	/*
 	 * Receiving a packet requires that the other end
 	 * be able to write here. Read access is not required.
@@ -2559,6 +2565,12 @@ static int smack_inet_conn_request(struct sock *sk, struct sk_buff *skb,
 		strncpy(smack, smack_known_huh.smk_known, SMK_MAXLEN);
 	netlbl_secattr_destroy(&secattr);
 
+#ifdef CONFIG_AUDIT
+	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_NET);
+	ad.a.u.net.family = family;
+	ad.a.u.net.netif = skb->skb_iif;
+	ipv4_skb_to_auditdata(skb, &ad.a, NULL);
+#endif
 	/*
 	 * Receiving a packet requires that the other end be able to write
 	 * here. Read access is not required.
