@@ -746,14 +746,24 @@ static void remove_session_caps(struct ceph_mds_session *session)
 static int wake_up_session_cb(struct inode *inode, struct ceph_cap *cap,
 			      void *arg)
 {
-	wake_up(&ceph_inode(inode)->i_cap_wq);
+	struct ceph_inode_info *ci = ceph_inode(inode);
+
+	wake_up(&ci->i_cap_wq);
+	if (arg) {
+		spin_lock(&inode->i_lock);
+		ci->i_wanted_max_size = 0;
+		ci->i_requested_max_size = 0;
+		spin_unlock(&inode->i_lock);
+	}
 	return 0;
 }
 
-static void wake_up_session_caps(struct ceph_mds_session *session)
+static void wake_up_session_caps(struct ceph_mds_session *session,
+				 int reconnect)
 {
 	dout("wake_up_session_caps %p mds%d\n", session, session->s_mds);
-	iterate_session_caps(session, wake_up_session_cb, NULL);
+	iterate_session_caps(session, wake_up_session_cb,
+			     (void *)(unsigned long)reconnect);
 }
 
 /*
@@ -794,6 +804,8 @@ static int send_renew_caps(struct ceph_mds_client *mdsc,
 
 /*
  * Note new cap ttl, and any transition from stale -> not stale (fresh?).
+ *
+ * Called under session->s_mutex
  */
 static void renewed_caps(struct ceph_mds_client *mdsc,
 			 struct ceph_mds_session *session, int is_renew)
@@ -822,7 +834,7 @@ static void renewed_caps(struct ceph_mds_client *mdsc,
 	spin_unlock(&session->s_cap_lock);
 
 	if (wake)
-		wake_up_session_caps(session);
+		wake_up_session_caps(session, 0);
 }
 
 /*
@@ -2248,6 +2260,7 @@ static void check_new_map(struct ceph_mds_client *mdsc,
 			pr_info("mds%d reconnect completed\n", s->s_mds);
 			kick_requests(mdsc, i, 1);
 			ceph_kick_flushing_caps(mdsc, s);
+			wake_up_session_caps(s, 1);
 		}
 	}
 }
@@ -2782,16 +2795,8 @@ void ceph_mdsc_handle_map(struct ceph_mds_client *mdsc, struct ceph_msg *msg)
 
 	ceph_decode_need(&p, end, sizeof(fsid)+2*sizeof(u32), bad);
 	ceph_decode_copy(&p, &fsid, sizeof(fsid));
-        if (mdsc->client->monc.have_fsid) {
-		if (ceph_fsid_compare(&fsid,
-				      &mdsc->client->monc.monmap->fsid)) {
-			pr_err("got mdsmap with wrong fsid\n");
-			return;
-		}
-	} else {
-		ceph_fsid_set(&mdsc->client->monc.monmap->fsid, &fsid);
-		mdsc->client->monc.have_fsid = true;
-	}
+	if (ceph_check_fsid(mdsc->client, &fsid) < 0)
+		return;
 	epoch = ceph_decode_32(&p);
 	maplen = ceph_decode_32(&p);
 	dout("handle_map epoch %u len %d\n", epoch, (int)maplen);
