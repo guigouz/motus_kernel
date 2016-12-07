@@ -746,4 +746,10 @@ choice
 		bool "Reset the entire chip"
 endchoice
 
+config MACH_TROUT
+	default y
+	bool "HTC Dream (aka trout)"
+	help
+	  Support for the HTC Dream, T-Mobile G1, Android ADP1 devices.
+
 endif
