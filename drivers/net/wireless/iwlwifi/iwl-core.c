@@ -256,7 +256,10 @@ int iwl_hw_nic_init(struct iwl_priv *priv)
 	/* nic_init */
 	spin_lock_irqsave(&priv->lock, flags);
 	priv->cfg->ops->lib->apm_ops.init(priv);
-	iwl_write32(priv, CSR_INT_COALESCING, 512 / 32);
+
+	/* Set interrupt coalescing timer to 512 usecs */
+	iwl_write8(priv, CSR_INT_COALESCING, 512 / 32);
+
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	ret = priv->cfg->ops->lib->apm_ops.set_pwr_src(priv, IWL_PWR_SRC_VMAIN);
@@ -447,13 +450,8 @@ static void iwlcore_init_ht_hw_capab(const struct iwl_priv *priv,
 	if (priv->cfg->ht_greenfield_support)
 		ht_info->cap |= IEEE80211_HT_CAP_GRN_FLD;
 	ht_info->cap |= IEEE80211_HT_CAP_SGI_20;
-	if (priv->cfg->support_sm_ps)
-		ht_info->cap |= (IEEE80211_HT_CAP_SM_PS &
-				     (WLAN_HT_CAP_SM_PS_DYNAMIC << 2));
-	else
-		ht_info->cap |= (IEEE80211_HT_CAP_SM_PS &
-				     (WLAN_HT_CAP_SM_PS_DISABLED << 2));
-
+	ht_info->cap |= (IEEE80211_HT_CAP_SM_PS &
+			     (priv->cfg->sm_ps_mode << 2));
 	max_bit_rate = MAX_BIT_RATE_20_MHZ;
 	if (priv->hw_params.ht40_channel & BIT(band)) {
 		ht_info->cap |= IEEE80211_HT_CAP_SUP_WIDTH_20_40;
@@ -1008,25 +1006,23 @@ static int iwl_get_idle_rx_chain_count(struct iwl_priv *priv, int active_cnt)
 	int idle_cnt = active_cnt;
 	bool is_cam = !test_bit(STATUS_POWER_PMI, &priv->status);
 
-	if (priv->cfg->support_sm_ps) {
-		/* # Rx chains when idling and maybe trying to save power */
-		switch (priv->current_ht_config.sm_ps) {
-		case WLAN_HT_CAP_SM_PS_STATIC:
-		case WLAN_HT_CAP_SM_PS_DYNAMIC:
-			idle_cnt = (is_cam) ? IWL_NUM_IDLE_CHAINS_DUAL :
-				IWL_NUM_IDLE_CHAINS_SINGLE;
-			break;
-		case WLAN_HT_CAP_SM_PS_DISABLED:
-			idle_cnt = (is_cam) ? active_cnt :
-				IWL_NUM_IDLE_CHAINS_SINGLE;
-			break;
-		case WLAN_HT_CAP_SM_PS_INVALID:
-		default:
-			IWL_ERR(priv, "invalid sm_ps mode %d\n",
-				priv->current_ht_config.sm_ps);
-			WARN_ON(1);
-			break;
-		}
+	/* # Rx chains when idling and maybe trying to save power */
+	switch (priv->cfg->sm_ps_mode) {
+	case WLAN_HT_CAP_SM_PS_STATIC:
+		idle_cnt = (is_cam) ? active_cnt : IWL_NUM_IDLE_CHAINS_SINGLE;
+		break;
+	case WLAN_HT_CAP_SM_PS_DYNAMIC:
+		idle_cnt = (is_cam) ? IWL_NUM_IDLE_CHAINS_DUAL :
+			IWL_NUM_IDLE_CHAINS_SINGLE;
+		break;
+	case WLAN_HT_CAP_SM_PS_DISABLED:
+		break;
+	case WLAN_HT_CAP_SM_PS_INVALID:
+	default:
+		IWL_ERR(priv, "invalid sm_ps mode %u\n",
+			priv->cfg->sm_ps_mode);
+		WARN_ON(1);
+		break;
 	}
 	return idle_cnt;
 }
@@ -1366,12 +1362,11 @@ void iwl_irq_handle_error(struct iwl_priv *priv)
 	/* Cancel currently queued command. */
 	clear_bit(STATUS_HCMD_ACTIVE, &priv->status);
 
+	priv->cfg->ops->lib->dump_nic_error_log(priv);
+	priv->cfg->ops->lib->dump_nic_event_log(priv, false);
 #ifdef CONFIG_IWLWIFI_DEBUG
-	if (iwl_get_debug_level(priv) & IWL_DL_FW_ERRORS) {
-		priv->cfg->ops->lib->dump_nic_error_log(priv);
-		priv->cfg->ops->lib->dump_nic_event_log(priv);
+	if (iwl_get_debug_level(priv) & IWL_DL_FW_ERRORS)
 		iwl_print_rx_config_cmd(priv);
-	}
 #endif
 
 	wake_up_interruptible(&priv->wait_command_queue);
@@ -2483,6 +2478,16 @@ void iwl_bss_info_changed(struct ieee80211_hw *hw,
 		} else {
 			priv->assoc_id = 0;
 			iwl_led_disassociate(priv);
+
+			/*
+			 * inform the ucode that there is no longer an
+			 * association and that no more packets should be
+			 * send
+			 */
+			priv->staging_rxon.filter_flags &=
+				~RXON_FILTER_ASSOC_MSK;
+			priv->staging_rxon.assoc_id = 0;
+			iwlcore_commit_rxon(priv);
 		}
 	}
 
@@ -3085,15 +3090,11 @@ const char *get_ctrl_string(int cmd)
 	}
 }
 
-void iwl_clear_tx_stats(struct iwl_priv *priv)
+void iwl_clear_traffic_stats(struct iwl_priv *priv)
 {
 	memset(&priv->tx_stats, 0, sizeof(struct traffic_stats));
-
-}
-
-void iwl_clear_rx_stats(struct iwl_priv *priv)
-{
 	memset(&priv->rx_stats, 0, sizeof(struct traffic_stats));
+	priv->led_tpt = 0;
 }
 
 /*
@@ -3186,6 +3187,7 @@ void iwl_update_stats(struct iwl_priv *priv, bool is_tx, __le16 fc, u16 len)
 		stats->data_cnt++;
 		stats->data_bytes += len;
 	}
+	iwl_leds_background(priv);
 }
 EXPORT_SYMBOL(iwl_update_stats);
 #endif

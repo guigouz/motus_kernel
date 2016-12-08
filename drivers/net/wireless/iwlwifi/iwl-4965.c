@@ -1827,7 +1827,7 @@ static u16 iwl4965_build_addsta_hcmd(const struct iwl_addsta_cmd *cmd, u8 *data)
 	addsta->add_immediate_ba_ssn = cmd->add_immediate_ba_ssn;
 	addsta->sleep_tx_count = cmd->sleep_tx_count;
 	addsta->reserved1 = cpu_to_le16(0);
-	addsta->reserved2 = cpu_to_le32(0);
+	addsta->reserved2 = cpu_to_le16(0);
 
 	return (u16)sizeof(struct iwl4965_addsta_cmd);
 }
@@ -2249,6 +2249,7 @@ struct iwl_cfg iwl4965_agn_cfg = {
 	.broken_powersave = true,
 	.led_compensation = 61,
 	.chain_noise_num_beacons = IWL4965_CAL_NUM_BEACONS,
+	.sm_ps_mode = WLAN_HT_CAP_SM_PS_DISABLED,
 };
 
 /* Module firmware */

@@ -47,9 +47,9 @@
 		goto err; 						\
 } while (0)
 
-#define DEBUGFS_ADD_FILE(name, parent) do {                             \
+#define DEBUGFS_ADD_FILE(name, parent, mode) do {                       \
 	dbgfs->dbgfs_##parent##_files.file_##name =                     \
-	debugfs_create_file(#name, S_IWUSR | S_IRUSR,                   \
+	debugfs_create_file(#name, mode,                                \
 				dbgfs->dir_##parent, priv,              \
 				&iwl_dbgfs_##name##_ops);               \
 	if (!(dbgfs->dbgfs_##parent##_files.file_##name))               \
@@ -160,7 +160,7 @@ static ssize_t iwl_dbgfs_tx_statistics_read(struct file *file,
 	return ret;
 }
 
-static ssize_t iwl_dbgfs_tx_statistics_write(struct file *file,
+static ssize_t iwl_dbgfs_clear_traffic_statistics_write(struct file *file,
 					const char __user *user_buf,
 					size_t count, loff_t *ppos)
 {
@@ -175,8 +175,7 @@ static ssize_t iwl_dbgfs_tx_statistics_write(struct file *file,
 		return -EFAULT;
 	if (sscanf(buf, "%x", &clear_flag) != 1)
 		return -EFAULT;
-	if (clear_flag == 1)
-		iwl_clear_tx_stats(priv);
+	iwl_clear_traffic_stats(priv);
 
 	return count;
 }
@@ -221,26 +220,6 @@ static ssize_t iwl_dbgfs_rx_statistics_read(struct file *file,
 	return ret;
 }
 
-static ssize_t iwl_dbgfs_rx_statistics_write(struct file *file,
-					const char __user *user_buf,
-					size_t count, loff_t *ppos)
-{
-	struct iwl_priv *priv = file->private_data;
-	u32 clear_flag;
-	char buf[8];
-	int buf_size;
-
-	memset(buf, 0, sizeof(buf));
-	buf_size = min(count, sizeof(buf) -  1);
-	if (copy_from_user(buf, user_buf, buf_size))
-		return -EFAULT;
-	if (sscanf(buf, "%x", &clear_flag) != 1)
-		return -EFAULT;
-	if (clear_flag == 1)
-		iwl_clear_rx_stats(priv);
-	return count;
-}
-
 #define BYTE1_MASK 0x000000ff;
 #define BYTE2_MASK 0x0000ffff;
 #define BYTE3_MASK 0x00ffffff;
@@ -249,13 +228,29 @@ static ssize_t iwl_dbgfs_sram_read(struct file *file,
 					size_t count, loff_t *ppos)
 {
 	u32 val;
-	char buf[1024];
+	char *buf;
 	ssize_t ret;
 	int i;
 	int pos = 0;
 	struct iwl_priv *priv = (struct iwl_priv *)file->private_data;
-	const size_t bufsz = sizeof(buf);
+	size_t bufsz;
 
+	/* default is to dump the entire data segment */
+	if (!priv->dbgfs->sram_offset && !priv->dbgfs->sram_len) {
+		priv->dbgfs->sram_offset = 0x800000;
+		if (priv->ucode_type == UCODE_INIT)
+			priv->dbgfs->sram_len = priv->ucode_init_data.len;
+		else
+			priv->dbgfs->sram_len = priv->ucode_data.len;
+	}
+	bufsz =  30 + priv->dbgfs->sram_len * sizeof(char) * 10;
+	buf = kmalloc(bufsz, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+	pos += scnprintf(buf + pos, bufsz - pos, "sram_len: 0x%x\n",
+			priv->dbgfs->sram_len);
+	pos += scnprintf(buf + pos, bufsz - pos, "sram_offset: 0x%x\n",
+			priv->dbgfs->sram_offset);
 	for (i = priv->dbgfs->sram_len; i > 0; i -= 4) {
 		val = iwl_read_targ_mem(priv, priv->dbgfs->sram_offset + \
 					priv->dbgfs->sram_len - i);
@@ -272,11 +267,14 @@ static ssize_t iwl_dbgfs_sram_read(struct file *file,
 				break;
 			}
 		}
+		if (!(i % 16))
+			pos += scnprintf(buf + pos, bufsz - pos, "\n");
 		pos += scnprintf(buf + pos, bufsz - pos, "0x%08x ", val);
 	}
 	pos += scnprintf(buf + pos, bufsz - pos, "\n");
 
 	ret = simple_read_from_buffer(user_buf, count, ppos, buf, pos);
+	kfree(buf);
 	return ret;
 }
 
@@ -438,7 +436,7 @@ static ssize_t iwl_dbgfs_log_event_write(struct file *file,
 	if (sscanf(buf, "%d", &event_log_flag) != 1)
 		return -EFAULT;
 	if (event_log_flag == 1)
-		priv->cfg->ops->lib->dump_nic_event_log(priv);
+		priv->cfg->ops->lib->dump_nic_event_log(priv, true);
 
 	return count;
 }
@@ -985,7 +983,7 @@ static ssize_t iwl_dbgfs_tx_queue_read(struct file *file,
 	int pos = 0;
 	int cnt;
 	int ret;
-	const size_t bufsz = sizeof(char) * 60 * priv->cfg->num_of_queues;
+	const size_t bufsz = sizeof(char) * 64 * priv->cfg->num_of_queues;
 
 	if (!priv->txq) {
 		IWL_ERR(priv, "txq not ready\n");
@@ -1823,7 +1821,7 @@ static ssize_t iwl_dbgfs_power_save_status_read(struct file *file,
 	return simple_read_from_buffer(user_buf, count, ppos, buf, pos);
 }
 
-static ssize_t iwl_dbgfs_clear_statistics_write(struct file *file,
+static ssize_t iwl_dbgfs_clear_ucode_statistics_write(struct file *file,
 					 const char __user *user_buf,
 					 size_t count, loff_t *ppos)
 {
@@ -1847,8 +1845,8 @@ static ssize_t iwl_dbgfs_clear_statistics_write(struct file *file,
 	return count;
 }
 
-DEBUGFS_READ_WRITE_FILE_OPS(rx_statistics);
-DEBUGFS_READ_WRITE_FILE_OPS(tx_statistics);
+DEBUGFS_READ_FILE_OPS(rx_statistics);
+DEBUGFS_READ_FILE_OPS(tx_statistics);
 DEBUGFS_READ_WRITE_FILE_OPS(traffic_log);
 DEBUGFS_READ_FILE_OPS(rx_queue);
 DEBUGFS_READ_FILE_OPS(tx_queue);
@@ -1859,7 +1857,8 @@ DEBUGFS_READ_FILE_OPS(sensitivity);
 DEBUGFS_READ_FILE_OPS(chain_noise);
 DEBUGFS_READ_FILE_OPS(tx_power);
 DEBUGFS_READ_FILE_OPS(power_save_status);
-DEBUGFS_WRITE_FILE_OPS(clear_statistics);
+DEBUGFS_WRITE_FILE_OPS(clear_ucode_statistics);
+DEBUGFS_WRITE_FILE_OPS(clear_traffic_statistics);
 
 /*
  * Create the debugfs files and directories
@@ -1888,33 +1887,34 @@ int iwl_dbgfs_register(struct iwl_priv *priv, const char *name)
 	DEBUGFS_ADD_DIR(data, dbgfs->dir_drv);
 	DEBUGFS_ADD_DIR(rf, dbgfs->dir_drv);
 	DEBUGFS_ADD_DIR(debug, dbgfs->dir_drv);
-	DEBUGFS_ADD_FILE(nvm, data);
-	DEBUGFS_ADD_FILE(sram, data);
-	DEBUGFS_ADD_FILE(log_event, data);
-	DEBUGFS_ADD_FILE(stations, data);
-	DEBUGFS_ADD_FILE(channels, data);
-	DEBUGFS_ADD_FILE(status, data);
-	DEBUGFS_ADD_FILE(interrupt, data);
-	DEBUGFS_ADD_FILE(qos, data);
-	DEBUGFS_ADD_FILE(led, data);
-	DEBUGFS_ADD_FILE(sleep_level_override, data);
-	DEBUGFS_ADD_FILE(current_sleep_command, data);
-	DEBUGFS_ADD_FILE(thermal_throttling, data);
-	DEBUGFS_ADD_FILE(disable_ht40, data);
-	DEBUGFS_ADD_FILE(rx_statistics, debug);
-	DEBUGFS_ADD_FILE(tx_statistics, debug);
-	DEBUGFS_ADD_FILE(traffic_log, debug);
-	DEBUGFS_ADD_FILE(rx_queue, debug);
-	DEBUGFS_ADD_FILE(tx_queue, debug);
-	DEBUGFS_ADD_FILE(tx_power, debug);
-	DEBUGFS_ADD_FILE(power_save_status, debug);
-	DEBUGFS_ADD_FILE(clear_statistics, debug);
+	DEBUGFS_ADD_FILE(nvm, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(sram, data, S_IWUSR | S_IRUSR);
+	DEBUGFS_ADD_FILE(log_event, data, S_IWUSR);
+	DEBUGFS_ADD_FILE(stations, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(channels, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(status, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(interrupt, data, S_IWUSR | S_IRUSR);
+	DEBUGFS_ADD_FILE(qos, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(led, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(sleep_level_override, data, S_IWUSR | S_IRUSR);
+	DEBUGFS_ADD_FILE(current_sleep_command, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(thermal_throttling, data, S_IRUSR);
+	DEBUGFS_ADD_FILE(disable_ht40, data, S_IWUSR | S_IRUSR);
+	DEBUGFS_ADD_FILE(rx_statistics, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(tx_statistics, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(traffic_log, debug, S_IWUSR | S_IRUSR);
+	DEBUGFS_ADD_FILE(rx_queue, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(tx_queue, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(tx_power, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(power_save_status, debug, S_IRUSR);
+	DEBUGFS_ADD_FILE(clear_ucode_statistics, debug, S_IWUSR);
+	DEBUGFS_ADD_FILE(clear_traffic_statistics, debug, S_IWUSR);
 	if ((priv->hw_rev & CSR_HW_REV_TYPE_MSK) != CSR_HW_REV_TYPE_3945) {
-		DEBUGFS_ADD_FILE(ucode_rx_stats, debug);
-		DEBUGFS_ADD_FILE(ucode_tx_stats, debug);
-		DEBUGFS_ADD_FILE(ucode_general_stats, debug);
-		DEBUGFS_ADD_FILE(sensitivity, debug);
-		DEBUGFS_ADD_FILE(chain_noise, debug);
+		DEBUGFS_ADD_FILE(ucode_rx_stats, debug, S_IRUSR);
+		DEBUGFS_ADD_FILE(ucode_tx_stats, debug, S_IRUSR);
+		DEBUGFS_ADD_FILE(ucode_general_stats, debug, S_IRUSR);
+		DEBUGFS_ADD_FILE(sensitivity, debug, S_IRUSR);
+		DEBUGFS_ADD_FILE(chain_noise, debug, S_IRUSR);
 	}
 	DEBUGFS_ADD_BOOL(disable_sensitivity, rf, &priv->disable_sens_cal);
 	DEBUGFS_ADD_BOOL(disable_chain_noise, rf,
@@ -1962,7 +1962,10 @@ void iwl_dbgfs_unregister(struct iwl_priv *priv)
 	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.file_tx_queue);
 	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.file_tx_power);
 	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.file_power_save_status);
-	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.file_clear_statistics);
+	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.
+			file_clear_ucode_statistics);
+	DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.
+			file_clear_traffic_statistics);
 	if ((priv->hw_rev & CSR_HW_REV_TYPE_MSK) != CSR_HW_REV_TYPE_3945) {
 		DEBUGFS_REMOVE(priv->dbgfs->dbgfs_debug_files.
 			file_ucode_rx_stats);
