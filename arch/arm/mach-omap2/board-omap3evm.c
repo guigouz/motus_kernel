@@ -20,6 +20,7 @@
 #include <linux/clk.h>
 #include <linux/gpio.h>
 #include <linux/input.h>
+#include <linux/input/matrix_keypad.h>
 #include <linux/leds.h>
 
 #include <linux/spi/spi.h>
@@ -37,7 +38,6 @@
 #include <plat/usb.h>
 #include <plat/common.h>
 #include <plat/mcspi.h>
-#include <plat/keypad.h>
 
 #include "sdram-micron-mt46h32m32lf-6.h"
 #include "mmc-twl4030.h"
@@ -199,7 +199,6 @@ static struct twl4030_codec_audio_data omap3evm_audio_data = {
 };
 
 static struct twl4030_codec_data omap3evm_codec_data = {
-	.audio_mclk = 26000000,
 	.audio = &omap3evm_audio_data,
 };
 

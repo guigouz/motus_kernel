@@ -17,6 +17,7 @@
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/input.h>
+#include <linux/input/matrix_keypad.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/i2c/twl4030.h>
@@ -38,7 +39,6 @@
 #include <plat/gpmc.h>
 
 #include <plat/control.h>
-#include <plat/keypad.h>
 #include <plat/gpmc-smc91x.h>
 
 #include "sdram-qimonda-hyb18m512160af-6.h"
@@ -415,7 +415,6 @@ static struct twl4030_codec_audio_data sdp3430_audio = {
 };
 
 static struct twl4030_codec_data sdp3430_codec = {
-	.audio_mclk = 26000000,
 	.audio = &sdp3430_audio,
 };
 
