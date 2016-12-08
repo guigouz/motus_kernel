@@ -247,6 +247,44 @@ static void perf_unpin_context(struct perf_event_context *ctx)
 	put_ctx(ctx);
 }
 
+static inline u64 perf_clock(void)
+{
+	return cpu_clock(smp_processor_id());
+}
+
+/*
+ * Update the record of the current time in a context.
+ */
+static void update_context_time(struct perf_event_context *ctx)
+{
+	u64 now = perf_clock();
+
+	ctx->time += now - ctx->timestamp;
+	ctx->timestamp = now;
+}
+
+/*
+ * Update the total_time_enabled and total_time_running fields for a event.
+ */
+static void update_event_times(struct perf_event *event)
+{
+	struct perf_event_context *ctx = event->ctx;
+	u64 run_end;
+
+	if (event->state < PERF_EVENT_STATE_INACTIVE ||
+	    event->group_leader->state < PERF_EVENT_STATE_INACTIVE)
+		return;
+
+	event->total_time_enabled = ctx->time - event->tstamp_enabled;
+
+	if (event->state == PERF_EVENT_STATE_INACTIVE)
+		run_end = event->tstamp_stopped;
+	else
+		run_end = ctx->time;
+
+	event->total_time_running = run_end - event->tstamp_running;
+}
+
 /*
  * Add a event from the lists for its context.
  * Must be called with ctx->mutex and ctx->lock held.
@@ -294,6 +332,9 @@ list_del_event(struct perf_event *event, struct perf_event_context *ctx)
 
 	if (event->group_leader != event)
 		event->group_leader->nr_siblings--;
+
+	update_event_times(event);
+	event->state = PERF_EVENT_STATE_OFF;
 
 	/*
 	 * If this was a group event with sibling events then
@@ -448,48 +489,9 @@ retry:
 	 * can remove the event safely, if the call above did not
 	 * succeed.
 	 */
-	if (!list_empty(&event->group_entry)) {
+	if (!list_empty(&event->group_entry))
 		list_del_event(event, ctx);
-	}
 	spin_unlock_irq(&ctx->lock);
-}
-
-static inline u64 perf_clock(void)
-{
-	return cpu_clock(smp_processor_id());
-}
-
-/*
- * Update the record of the current time in a context.
- */
-static void update_context_time(struct perf_event_context *ctx)
-{
-	u64 now = perf_clock();
-
-	ctx->time += now - ctx->timestamp;
-	ctx->timestamp = now;
-}
-
-/*
- * Update the total_time_enabled and total_time_running fields for a event.
- */
-static void update_event_times(struct perf_event *event)
-{
-	struct perf_event_context *ctx = event->ctx;
-	u64 run_end;
-
-	if (event->state < PERF_EVENT_STATE_INACTIVE ||
-	    event->group_leader->state < PERF_EVENT_STATE_INACTIVE)
-		return;
-
-	event->total_time_enabled = ctx->time - event->tstamp_enabled;
-
-	if (event->state == PERF_EVENT_STATE_INACTIVE)
-		run_end = event->tstamp_stopped;
-	else
-		run_end = ctx->time;
-
-	event->total_time_running = run_end - event->tstamp_running;
 }
 
 /*
@@ -1034,10 +1036,10 @@ void __perf_event_sched_out(struct perf_event_context *ctx,
 	update_context_time(ctx);
 
 	perf_disable();
-	if (ctx->nr_active)
+	if (ctx->nr_active) {
 		list_for_each_entry(event, &ctx->group_list, group_entry)
 			group_sched_out(event, cpuctx, ctx);
-
+	}
 	perf_enable();
  out:
 	spin_unlock(&ctx->lock);
@@ -1708,31 +1710,6 @@ static void free_event(struct perf_event *event)
 	call_rcu(&event->rcu_head, free_event_rcu);
 }
 
-/*
- * Called when the last reference to the file is gone.
- */
-static int perf_release(struct inode *inode, struct file *file)
-{
-	struct perf_event *event = file->private_data;
-	struct perf_event_context *ctx = event->ctx;
-
-	file->private_data = NULL;
-
-	WARN_ON_ONCE(ctx->parent_ctx);
-	mutex_lock(&ctx->mutex);
-	perf_event_remove_from_context(event);
-	mutex_unlock(&ctx->mutex);
-
-	mutex_lock(&event->owner->perf_event_mutex);
-	list_del_init(&event->owner_entry);
-	mutex_unlock(&event->owner->perf_event_mutex);
-	put_task_struct(event->owner);
-
-	free_event(event);
-
-	return 0;
-}
-
 int perf_event_release_kernel(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
@@ -1752,6 +1729,18 @@ int perf_event_release_kernel(struct perf_event *event)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(perf_event_release_kernel);
+
+/*
+ * Called when the last reference to the file is gone.
+ */
+static int perf_release(struct inode *inode, struct file *file)
+{
+	struct perf_event *event = file->private_data;
+
+	file->private_data = NULL;
+
+	return perf_event_release_kernel(event);
+}
 
 static int perf_event_read_size(struct perf_event *event)
 {
@@ -3902,45 +3891,50 @@ static void perf_swevent_ctx_event(struct perf_event_context *ctx,
 	}
 }
 
-/*
- * Must be called with preemption disabled
- */
-int perf_swevent_get_recursion_context(int **recursion)
+int perf_swevent_get_recursion_context(void)
 {
-	struct perf_cpu_context *cpuctx = &__get_cpu_var(perf_cpu_context);
+	struct perf_cpu_context *cpuctx = &get_cpu_var(perf_cpu_context);
+	int rctx;
 
 	if (in_nmi())
-		*recursion = &cpuctx->recursion[3];
+		rctx = 3;
 	else if (in_irq())
-		*recursion = &cpuctx->recursion[2];
+		rctx = 2;
 	else if (in_softirq())
-		*recursion = &cpuctx->recursion[1];
+		rctx = 1;
 	else
-		*recursion = &cpuctx->recursion[0];
+		rctx = 0;
 
-	if (**recursion)
+	if (cpuctx->recursion[rctx]) {
+		put_cpu_var(perf_cpu_context);
 		return -1;
+	}
 
-	(**recursion)++;
+	cpuctx->recursion[rctx]++;
+	barrier();
 
-	return 0;
+	return rctx;
 }
 EXPORT_SYMBOL_GPL(perf_swevent_get_recursion_context);
 
-void perf_swevent_put_recursion_context(int *recursion)
+void perf_swevent_put_recursion_context(int rctx)
 {
-	(*recursion)--;
+	struct perf_cpu_context *cpuctx = &__get_cpu_var(perf_cpu_context);
+	barrier();
+	cpuctx->recursion[rctx]++;
+	put_cpu_var(perf_cpu_context);
 }
 EXPORT_SYMBOL_GPL(perf_swevent_put_recursion_context);
 
-static void __do_perf_sw_event(enum perf_type_id type, u32 event_id,
-			       u64 nr, int nmi,
-			       struct perf_sample_data *data,
-			       struct pt_regs *regs)
+static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
+				    u64 nr, int nmi,
+				    struct perf_sample_data *data,
+				    struct pt_regs *regs)
 {
+	struct perf_cpu_context *cpuctx;
 	struct perf_event_context *ctx;
-	struct perf_cpu_context *cpuctx = &__get_cpu_var(perf_cpu_context);
 
+	cpuctx = &__get_cpu_var(perf_cpu_context);
 	rcu_read_lock();
 	perf_swevent_ctx_event(&cpuctx->ctx, type, event_id,
 				 nr, nmi, data, regs);
@@ -3954,34 +3948,22 @@ static void __do_perf_sw_event(enum perf_type_id type, u32 event_id,
 	rcu_read_unlock();
 }
 
-static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
-				    u64 nr, int nmi,
-				    struct perf_sample_data *data,
-				    struct pt_regs *regs)
-{
-	int *recursion;
-
-	preempt_disable();
-
-	if (perf_swevent_get_recursion_context(&recursion))
-		goto out;
-
-	__do_perf_sw_event(type, event_id, nr, nmi, data, regs);
-
-	perf_swevent_put_recursion_context(recursion);
-out:
-	preempt_enable();
-}
-
 void __perf_sw_event(u32 event_id, u64 nr, int nmi,
 			    struct pt_regs *regs, u64 addr)
 {
-	struct perf_sample_data data = {
-		.addr = addr,
-	};
+	struct perf_sample_data data;
+	int rctx;
 
-	do_perf_sw_event(PERF_TYPE_SOFTWARE, event_id, nr, nmi,
-				&data, regs);
+	rctx = perf_swevent_get_recursion_context();
+	if (rctx < 0)
+		return;
+
+	data.addr = addr;
+	data.raw  = NULL;
+
+	do_perf_sw_event(PERF_TYPE_SOFTWARE, event_id, nr, nmi, &data, regs);
+
+	perf_swevent_put_recursion_context(rctx);
 }
 
 static void perf_swevent_read(struct perf_event *event)
@@ -4206,7 +4188,7 @@ void perf_tp_event(int event_id, u64 addr, u64 count, void *record,
 		regs = task_pt_regs(current);
 
 	/* Trace events already protected against recursion */
-	__do_perf_sw_event(PERF_TYPE_TRACEPOINT, event_id, count, 1,
+	do_perf_sw_event(PERF_TYPE_TRACEPOINT, event_id, count, 1,
 				&data, regs);
 }
 EXPORT_SYMBOL_GPL(perf_tp_event);
@@ -4970,7 +4952,6 @@ __perf_event_exit_task(struct perf_event *child_event,
 {
 	struct perf_event *parent_event;
 
-	update_event_times(child_event);
 	perf_event_remove_from_context(child_event);
 
 	parent_event = child_event->parent;
@@ -5022,6 +5003,7 @@ void perf_event_exit_task(struct task_struct *child)
 	 * the events from it.
 	 */
 	unclone_ctx(child_ctx);
+	update_context_time(child_ctx);
 	spin_unlock_irqrestore(&child_ctx->lock, flags);
 
 	/*

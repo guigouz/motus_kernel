@@ -239,8 +239,14 @@ setup_node_bootmem(int nodeid, unsigned long start, unsigned long end)
 	bootmap = early_node_mem(nodeid, bootmap_start, end,
 				 bootmap_pages<<PAGE_SHIFT, PAGE_SIZE);
 	if (bootmap == NULL)  {
-		if (nodedata_phys < start || nodedata_phys >= end)
-			free_bootmem(nodedata_phys, pgdat_size);
+		if (nodedata_phys < start || nodedata_phys >= end) {
+			/*
+			 * only need to free it if it is from other node
+			 * bootmem
+			 */
+			if (nid != nodeid)
+				free_bootmem(nodedata_phys, pgdat_size);
+		}
 		node_data[nodeid] = NULL;
 		return;
 	}
@@ -758,6 +764,25 @@ static __init int numa_setup(char *opt)
 early_param("numa", numa_setup);
 
 #ifdef CONFIG_NUMA
+
+static __init int find_near_online_node(int node)
+{
+	int n, val;
+	int min_val = INT_MAX;
+	int best_node = -1;
+
+	for_each_online_node(n) {
+		val = node_distance(node, n);
+
+		if (val < min_val) {
+			min_val = val;
+			best_node = n;
+		}
+	}
+
+	return best_node;
+}
+
 /*
  * Setup early cpu_to_node.
  *
@@ -789,7 +814,7 @@ void __init init_cpu_to_node(void)
 		if (node == NUMA_NO_NODE)
 			continue;
 		if (!node_online(node))
-			continue;
+			node = find_near_online_node(node);
 		numa_set_node(cpu, node);
 	}
 }
