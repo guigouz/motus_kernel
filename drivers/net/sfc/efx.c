@@ -21,12 +21,53 @@
 #include <linux/ethtool.h>
 #include <linux/topology.h>
 #include "net_driver.h"
-#include "ethtool.h"
-#include "tx.h"
-#include "rx.h"
 #include "efx.h"
 #include "mdio_10g.h"
 #include "falcon.h"
+
+/**************************************************************************
+ *
+ * Type name strings
+ *
+ **************************************************************************
+ */
+
+/* Loopback mode names (see LOOPBACK_MODE()) */
+const unsigned int efx_loopback_mode_max = LOOPBACK_MAX;
+const char *efx_loopback_mode_names[] = {
+	[LOOPBACK_NONE]		= "NONE",
+	[LOOPBACK_GMAC]		= "GMAC",
+	[LOOPBACK_XGMII]	= "XGMII",
+	[LOOPBACK_XGXS]		= "XGXS",
+	[LOOPBACK_XAUI]  	= "XAUI",
+	[LOOPBACK_GPHY]		= "GPHY",
+	[LOOPBACK_PHYXS]	= "PHYXS",
+	[LOOPBACK_PCS]	 	= "PCS",
+	[LOOPBACK_PMAPMD] 	= "PMA/PMD",
+	[LOOPBACK_NETWORK]	= "NETWORK",
+};
+
+/* Interrupt mode names (see INT_MODE())) */
+const unsigned int efx_interrupt_mode_max = EFX_INT_MODE_MAX;
+const char *efx_interrupt_mode_names[] = {
+	[EFX_INT_MODE_MSIX]   = "MSI-X",
+	[EFX_INT_MODE_MSI]    = "MSI",
+	[EFX_INT_MODE_LEGACY] = "legacy",
+};
+
+const unsigned int efx_reset_type_max = RESET_TYPE_MAX;
+const char *efx_reset_type_names[] = {
+	[RESET_TYPE_INVISIBLE]     = "INVISIBLE",
+	[RESET_TYPE_ALL]           = "ALL",
+	[RESET_TYPE_WORLD]         = "WORLD",
+	[RESET_TYPE_DISABLE]       = "DISABLE",
+	[RESET_TYPE_TX_WATCHDOG]   = "TX_WATCHDOG",
+	[RESET_TYPE_INT_ERROR]     = "INT_ERROR",
+	[RESET_TYPE_RX_RECOVERY]   = "RX_RECOVERY",
+	[RESET_TYPE_RX_DESC_FETCH] = "RX_DESC_FETCH",
+	[RESET_TYPE_TX_DESC_FETCH] = "TX_DESC_FETCH",
+	[RESET_TYPE_TX_SKIP]       = "TX_SKIP",
+};
 
 #define EFX_MAX_MTU (9 * 1024)
 
@@ -543,6 +584,8 @@ void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue, int delay)
  */
 static void efx_link_status_changed(struct efx_nic *efx)
 {
+	struct efx_link_state *link_state = &efx->link_state;
+
 	/* SFC Bug 5356: A net_dev notifier is registered, so we must ensure
 	 * that no events are triggered between unregister_netdev() and the
 	 * driver unloading. A more general condition is that NETDEV_CHANGE
@@ -555,19 +598,19 @@ static void efx_link_status_changed(struct efx_nic *efx)
 		return;
 	}
 
-	if (efx->link_up != netif_carrier_ok(efx->net_dev)) {
+	if (link_state->up != netif_carrier_ok(efx->net_dev)) {
 		efx->n_link_state_changes++;
 
-		if (efx->link_up)
+		if (link_state->up)
 			netif_carrier_on(efx->net_dev);
 		else
 			netif_carrier_off(efx->net_dev);
 	}
 
 	/* Status message for kernel log */
-	if (efx->link_up) {
+	if (link_state->up) {
 		EFX_INFO(efx, "link up at %uMbps %s-duplex (MTU %d)%s\n",
-			 efx->link_speed, efx->link_fd ? "full" : "half",
+			 link_state->speed, link_state->fd ? "full" : "half",
 			 efx->net_dev->mtu,
 			 (efx->promiscuous ? " [PROMISC]" : ""));
 	} else {
@@ -758,7 +801,7 @@ static void efx_fini_port(struct efx_nic *efx)
 	efx->phy_op->fini(efx);
 	efx->port_initialized = false;
 
-	efx->link_up = false;
+	efx->link_state.up = false;
 	efx_link_status_changed(efx);
 }
 
@@ -1777,7 +1820,7 @@ static int efx_reset(struct efx_nic *efx)
 		goto out_unlock;
 	}
 
-	EFX_INFO(efx, "resetting (%d)\n", method);
+	EFX_INFO(efx, "resetting (%s)\n", RESET_TYPE(method));
 
 	efx_reset_down(efx, method, &ecmd);
 
@@ -1856,9 +1899,10 @@ void efx_schedule_reset(struct efx_nic *efx, enum reset_type type)
 	}
 
 	if (method != type)
-		EFX_LOG(efx, "scheduling reset (%d:%d)\n", type, method);
+		EFX_LOG(efx, "scheduling %s reset for %s\n",
+			RESET_TYPE(method), RESET_TYPE(type));
 	else
-		EFX_LOG(efx, "scheduling reset (%d)\n", method);
+		EFX_LOG(efx, "scheduling %s reset\n", RESET_TYPE(method));
 
 	efx->reset_pending = method;
 

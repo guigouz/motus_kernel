@@ -20,7 +20,6 @@
 #include <linux/rtnetlink.h>
 #include <asm/io.h>
 #include "net_driver.h"
-#include "ethtool.h"
 #include "efx.h"
 #include "falcon.h"
 #include "selftest.h"
@@ -176,8 +175,8 @@ static int efx_test_interrupts(struct efx_nic *efx,
 	return -ETIMEDOUT;
 
  success:
-	EFX_LOG(efx, "test interrupt (mode %d) seen on CPU%d\n",
-		efx->interrupt_mode, efx->last_irq_cpu);
+	EFX_LOG(efx, "%s test interrupt seen on CPU%d\n", INT_MODE(efx),
+		efx->last_irq_cpu);
 	tests->interrupt = 1;
 	return 0;
 }
@@ -425,7 +424,7 @@ static int efx_begin_loopback(struct efx_tx_queue *tx_queue)
 
 		if (efx_dev_registered(efx))
 			netif_tx_lock_bh(efx->net_dev);
-		rc = efx_xmit(efx, tx_queue, skb);
+		rc = efx_enqueue_skb(tx_queue, skb);
 		if (efx_dev_registered(efx))
 			netif_tx_unlock_bh(efx->net_dev);
 
@@ -614,7 +613,7 @@ static int efx_test_loopbacks(struct efx_nic *efx, struct efx_self_tests *tests,
 			/* We need both the phy and xaui links to be ok.
 			 * rather than relying on the falcon_xmac irq/poll
 			 * regime, just poll xaui directly */
-			link_up = efx->link_up;
+			link_up = efx->link_state.up;
 			if (link_up && EFX_IS10G(efx) &&
 			    !falcon_xaui_link_ok(efx))
 				link_up = false;

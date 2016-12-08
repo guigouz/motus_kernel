@@ -15,7 +15,6 @@
 #include <linux/if_ether.h>
 #include <linux/highmem.h>
 #include "net_driver.h"
-#include "tx.h"
 #include "efx.h"
 #include "falcon.h"
 #include "workarounds.h"
@@ -152,11 +151,13 @@ efx_max_tx_len(struct efx_nic *efx, dma_addr_t dma_addr)
  * If any DMA mapping fails, any mapped fragments will be unmapped,
  * the queue's insert pointer will be restored to its original value.
  *
+ * This function is split out from efx_hard_start_xmit to allow the
+ * loopback test to direct packets via specific TX queues.
+ *
  * Returns NETDEV_TX_OK or NETDEV_TX_BUSY
  * You must hold netif_tx_lock() to call this function.
  */
-static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
-					 struct sk_buff *skb)
+netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue, struct sk_buff *skb)
 {
 	struct efx_nic *efx = tx_queue->efx;
 	struct pci_dev *pci_dev = efx->pci_dev;
@@ -173,7 +174,7 @@ static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
 
 	EFX_BUG_ON_PARANOID(tx_queue->write_count != tx_queue->insert_count);
 
-	if (skb_shinfo((struct sk_buff *)skb)->gso_size)
+	if (skb_shinfo(skb)->gso_size)
 		return efx_enqueue_skb_tso(tx_queue, skb);
 
 	/* Get size of the initial fragment */
@@ -287,7 +288,7 @@ static netdev_tx_t efx_enqueue_skb(struct efx_tx_queue *tx_queue,
 		   skb_shinfo(skb)->nr_frags + 1);
 
 	/* Mark the packet as transmitted, and free the SKB ourselves */
-	dev_kfree_skb_any((struct sk_buff *)skb);
+	dev_kfree_skb_any(skb);
 	goto unwind;
 
  stop:
@@ -352,24 +353,6 @@ static void efx_dequeue_buffers(struct efx_tx_queue *tx_queue,
 	}
 }
 
-/* Initiate a packet transmission on the specified TX queue.
- * Note that returning anything other than NETDEV_TX_OK will cause the
- * OS to free the skb.
- *
- * This function is split out from efx_hard_start_xmit to allow the
- * loopback test to direct packets via specific TX queues.  It is
- * therefore a non-static inline, so as not to penalise performance
- * for non-loopback transmissions.
- *
- * Context: netif_tx_lock held
- */
-inline netdev_tx_t efx_xmit(struct efx_nic *efx,
-			   struct efx_tx_queue *tx_queue, struct sk_buff *skb)
-{
-	/* Map fragments for DMA and add to TX queue */
-	return efx_enqueue_skb(tx_queue, skb);
-}
-
 /* Initiate a packet transmission.  We use one channel per CPU
  * (sharing when we have more CPUs than channels).  On Falcon, the TX
  * completion events will be directed back to the CPU that transmitted
@@ -393,7 +376,7 @@ netdev_tx_t efx_hard_start_xmit(struct sk_buff *skb,
 	else
 		tx_queue = &efx->tx_queue[EFX_TX_QUEUE_NO_CSUM];
 
-	return efx_xmit(efx, tx_queue, skb);
+	return efx_enqueue_skb(tx_queue, skb);
 }
 
 void efx_xmit_done(struct efx_tx_queue *tx_queue, unsigned int index)
@@ -1102,7 +1085,7 @@ static int efx_enqueue_skb_tso(struct efx_tx_queue *tx_queue,
 
  mem_err:
 	EFX_ERR(efx, "Out of memory for TSO headers, or PCI mapping error\n");
-	dev_kfree_skb_any((struct sk_buff *)skb);
+	dev_kfree_skb_any(skb);
 	goto unwind;
 
  stop:
