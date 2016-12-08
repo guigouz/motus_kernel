@@ -27,12 +27,14 @@ obj-$(CONFIG_TOUCHSCREEN_HP600)		+= hp680_ts_input.o
 obj-$(CONFIG_TOUCHSCREEN_HP7XX)		+= jornada720_ts.o
 obj-$(CONFIG_TOUCHSCREEN_HTCPEN)	+= htcpen.o
 obj-$(CONFIG_TOUCHSCREEN_USB_COMPOSITE)	+= usbtouchscreen.o
+obj-$(CONFIG_TOUCHSCREEN_PCAP)		+= pcap_ts.o
 obj-$(CONFIG_TOUCHSCREEN_PENMOUNT)	+= penmount.o
 #obj-$(CONFIG_TOUCHSCREEN_QUANTUM_OBP)	+= qtouch_obp_ts.o
 obj-$(CONFIG_TOUCHSCREEN_QUANTUM_OBP)	+= qtm_obp_ts.o
 obj-$(CONFIG_TOUCHSCREEN_MINIPAD) 	+= minipad.o
 obj-$(CONFIG_TOUCHSCREEN_MSM)		+= msm_ts.o
 obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI)	+= synaptics_i2c_rmi.o
+obj-$(CONFIG_TOUCHSCREEN_S3C2410)	+= s3c2410_ts.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHIT213)	+= touchit213.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHRIGHT)	+= touchright.o
 obj-$(CONFIG_TOUCHSCREEN_TOUCHWIN)	+= touchwin.o
@@ -54,4 +56,3 @@ ifeq (y, $(findstring y, $(CONFIG_MACH_CALGARY) $(CONFIG_MACH_MOT)))
 obj-$(CONFIG_TOUCHSCREEN_KEY08) 	+= key08.o
 obj-$(CONFIG_TOUCHSCREEN_KEY08_MULTITOUCH)         += key08_mt.o
 endif
-obj-$(CONFIG_TOUCHSCREEN_PCAP)		+= pcap_ts.o
