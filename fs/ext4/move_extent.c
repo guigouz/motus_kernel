@@ -957,7 +957,7 @@ out2:
 static int
 mext_check_arguments(struct inode *orig_inode,
 		     struct inode *donor_inode, __u64 orig_start,
-		     __u64 donor_start, __u64 *len, __u64 moved_len)
+		     __u64 donor_start, __u64 *len)
 {
 	ext4_lblk_t orig_blocks, donor_blocks;
 	unsigned int blkbits = orig_inode->i_blkbits;
@@ -1013,17 +1013,10 @@ mext_check_arguments(struct inode *orig_inode,
 		return -EINVAL;
 	}
 
-	if (moved_len) {
-		ext4_debug("ext4 move extent: moved_len should be 0 "
-			"[ino:orig %lu, donor %lu]\n", orig_inode->i_ino,
-			donor_inode->i_ino);
-		return -EINVAL;
-	}
-
-	if ((orig_start >= EXT_MAX_BLOCKS) ||
-	    (donor_start >= EXT_MAX_BLOCKS) ||
-	    (*len > EXT_MAX_BLOCKS) ||
-	    (orig_start + *len >= EXT_MAX_BLOCKS))  {
+	if ((orig_start > EXT_MAX_BLOCK) ||
+	    (donor_start > EXT_MAX_BLOCK) ||
+	    (*len > EXT_MAX_BLOCK) ||
+	    (orig_start + *len > EXT_MAX_BLOCK))  {
 		ext4_debug("ext4 move extent: Can't handle over [%u] blocks "
 			"[ino:orig %lu, donor %lu]\n", EXT_MAX_BLOCKS,
 			orig_inode->i_ino, donor_inode->i_ino);
@@ -1229,7 +1222,7 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 	double_down_write_data_sem(orig_inode, donor_inode);
 	/* Check the filesystem environment whether move_extent can be done */
 	ret1 = mext_check_arguments(orig_inode, donor_inode, orig_start,
-					donor_start, &len, *moved_len);
+				    donor_start, &len);
 	if (ret1)
 		goto out;
 
@@ -1291,10 +1284,6 @@ ext4_move_extents(struct file *o_filp, struct file *d_filp,
 	add_blocks = min(le32_to_cpu(ext_cur->ee_block) +
 			 ext4_ext_get_actual_len(ext_cur), block_end + 1) -
 		     max(le32_to_cpu(ext_cur->ee_block), block_start);
-
-	/* Discard preallocations of two inodes */
-	ext4_discard_preallocations(orig_inode);
-	ext4_discard_preallocations(donor_inode);
 
 	while (!last_extent && le32_to_cpu(ext_cur->ee_block) <= block_end) {
 		seq_blocks += add_blocks;

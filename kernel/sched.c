@@ -2967,14 +2967,14 @@ context_switch(struct rq *rq, struct task_struct *prev,
 	 */
 	arch_enter_lazy_cpu_mode();
 
-	if (unlikely(!mm)) {
+	if (likely(!mm)) {
 		next->active_mm = oldmm;
 		atomic_inc(&oldmm->mm_count);
 		enter_lazy_tlb(oldmm, next);
 	} else
 		switch_mm(oldmm, mm, next);
 
-	if (unlikely(!prev->mm)) {
+	if (likely(!prev->mm)) {
 		prev->active_mm = NULL;
 		rq->prev_mm = oldmm;
 	}
