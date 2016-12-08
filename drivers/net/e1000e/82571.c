@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2008 Intel Corporation.
+  Copyright(c) 1999 - 2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -72,8 +72,6 @@ static void e1000_put_hw_semaphore_82571(struct e1000_hw *hw);
 /**
  *  e1000_init_phy_params_82571 - Init PHY func ptrs.
  *  @hw: pointer to the HW structure
- *
- *  This is a function pointer entry point called by the api module.
  **/
 static s32 e1000_init_phy_params_82571(struct e1000_hw *hw)
 {
@@ -136,8 +134,6 @@ static s32 e1000_init_phy_params_82571(struct e1000_hw *hw)
 /**
  *  e1000_init_nvm_params_82571 - Init NVM func ptrs.
  *  @hw: pointer to the HW structure
- *
- *  This is a function pointer entry point called by the api module.
  **/
 static s32 e1000_init_nvm_params_82571(struct e1000_hw *hw)
 {
@@ -201,8 +197,6 @@ static s32 e1000_init_nvm_params_82571(struct e1000_hw *hw)
 /**
  *  e1000_init_mac_params_82571 - Init MAC func ptrs.
  *  @hw: pointer to the HW structure
- *
- *  This is a function pointer entry point called by the api module.
  **/
 static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
 {
@@ -236,7 +230,8 @@ static s32 e1000_init_mac_params_82571(struct e1000_adapter *adapter)
 	/* Set rar entry count */
 	mac->rar_entry_count = E1000_RAR_ENTRIES;
 	/* Set if manageability features are enabled. */
-	mac->arc_subsystem_valid = (er32(FWSM) & E1000_FWSM_MODE_MASK) ? 1 : 0;
+	mac->arc_subsystem_valid = (er32(FWSM) & E1000_FWSM_MODE_MASK)
+	                ? true : false;
 
 	/* check for link */
 	switch (hw->phy.media_type) {
@@ -698,8 +693,7 @@ static s32 e1000_write_nvm_eewr_82571(struct e1000_hw *hw, u16 offset,
 				      u16 words, u16 *data)
 {
 	struct e1000_nvm_info *nvm = &hw->nvm;
-	u32 i;
-	u32 eewr = 0;
+	u32 i, eewr = 0;
 	s32 ret_val = 0;
 
 	/*
@@ -759,7 +753,7 @@ static s32 e1000_get_cfg_done_82571(struct e1000_hw *hw)
 /**
  *  e1000_set_d0_lplu_state_82571 - Set Low Power Linkup D0 state
  *  @hw: pointer to the HW structure
- *  @active: TRUE to enable LPLU, FALSE to disable
+ *  @active: true to enable LPLU, false to disable
  *
  *  Sets the LPLU D0 state according to the active flag.  When activating LPLU
  *  this function also disables smart speed and vice versa.  LPLU will not be
@@ -830,15 +824,11 @@ static s32 e1000_set_d0_lplu_state_82571(struct e1000_hw *hw, bool active)
  *  e1000_reset_hw_82571 - Reset hardware
  *  @hw: pointer to the HW structure
  *
- *  This resets the hardware into a known state.  This is a
- *  function pointer entry point called by the api module.
+ *  This resets the hardware into a known state.
  **/
 static s32 e1000_reset_hw_82571(struct e1000_hw *hw)
 {
-	u32 ctrl;
-	u32 extcnf_ctrl;
-	u32 ctrl_ext;
-	u32 icr;
+	u32 ctrl, extcnf_ctrl, ctrl_ext, icr;
 	s32 ret_val;
 	u16 i = 0;
 
@@ -947,17 +937,15 @@ static s32 e1000_init_hw_82571(struct e1000_hw *hw)
 	struct e1000_mac_info *mac = &hw->mac;
 	u32 reg_data;
 	s32 ret_val;
-	u16 i;
-	u16 rar_count = mac->rar_entry_count;
+	u16 i, rar_count = mac->rar_entry_count;
 
 	e1000_initialize_hw_bits_82571(hw);
 
 	/* Initialize identification LED */
 	ret_val = e1000e_id_led_init(hw);
-	if (ret_val) {
+	if (ret_val)
 		e_dbg("Error initializing identification LED\n");
-		return ret_val;
-	}
+		/* This is not fatal and we should not stop init due to this */
 
 	/* Disabling VLAN filtering */
 	e_dbg("Initializing the IEEE VLAN\n");
@@ -1121,6 +1109,13 @@ static void e1000_initialize_hw_bits_82571(struct e1000_hw *hw)
 		reg |= (1 << 22);
 		ew32(GCR, reg);
 
+		/*
+		 * Workaround for hardware errata.
+		 * apply workaround for hardware errata documented in errata
+		 * docs Fixes issue where some error prone or unreliable PCIe
+		 * completions are occurring, particularly with ASPM enabled.
+		 * Without fix, issue can cause tx timeouts.
+		 */
 		reg = er32(GCR2);
 		reg |= 1;
 		ew32(GCR2, reg);
@@ -1521,7 +1516,7 @@ static s32 e1000_valid_led_default_82571(struct e1000_hw *hw, u16 *data)
 bool e1000e_get_laa_state_82571(struct e1000_hw *hw)
 {
 	if (hw->mac.type != e1000_82571)
-		return 0;
+		return false;
 
 	return hw->dev_spec.e82571.laa_is_present;
 }
@@ -1612,44 +1607,42 @@ static s32 e1000_fix_nvm_checksum_82571(struct e1000_hw *hw)
  **/
 static void e1000_clear_hw_cntrs_82571(struct e1000_hw *hw)
 {
-	u32 temp;
-
 	e1000e_clear_hw_cntrs_base(hw);
 
-	temp = er32(PRC64);
-	temp = er32(PRC127);
-	temp = er32(PRC255);
-	temp = er32(PRC511);
-	temp = er32(PRC1023);
-	temp = er32(PRC1522);
-	temp = er32(PTC64);
-	temp = er32(PTC127);
-	temp = er32(PTC255);
-	temp = er32(PTC511);
-	temp = er32(PTC1023);
-	temp = er32(PTC1522);
+	er32(PRC64);
+	er32(PRC127);
+	er32(PRC255);
+	er32(PRC511);
+	er32(PRC1023);
+	er32(PRC1522);
+	er32(PTC64);
+	er32(PTC127);
+	er32(PTC255);
+	er32(PTC511);
+	er32(PTC1023);
+	er32(PTC1522);
 
-	temp = er32(ALGNERRC);
-	temp = er32(RXERRC);
-	temp = er32(TNCRS);
-	temp = er32(CEXTERR);
-	temp = er32(TSCTC);
-	temp = er32(TSCTFC);
+	er32(ALGNERRC);
+	er32(RXERRC);
+	er32(TNCRS);
+	er32(CEXTERR);
+	er32(TSCTC);
+	er32(TSCTFC);
 
-	temp = er32(MGTPRC);
-	temp = er32(MGTPDC);
-	temp = er32(MGTPTC);
+	er32(MGTPRC);
+	er32(MGTPDC);
+	er32(MGTPTC);
 
-	temp = er32(IAC);
-	temp = er32(ICRXOC);
+	er32(IAC);
+	er32(ICRXOC);
 
-	temp = er32(ICRXPTC);
-	temp = er32(ICRXATC);
-	temp = er32(ICTXPTC);
-	temp = er32(ICTXATC);
-	temp = er32(ICTXQEC);
-	temp = er32(ICTXQMTC);
-	temp = er32(ICRXDMTC);
+	er32(ICRXPTC);
+	er32(ICRXATC);
+	er32(ICTXPTC);
+	er32(ICTXATC);
+	er32(ICTXQEC);
+	er32(ICTXQMTC);
+	er32(ICRXDMTC);
 }
 
 static struct e1000_mac_operations e82571_mac_ops = {

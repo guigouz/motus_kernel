@@ -3408,7 +3408,7 @@ static void perf_event_comm_event(struct perf_comm_event *comm_event)
 	char comm[TASK_COMM_LEN];
 
 	memset(comm, 0, sizeof(comm));
-	strncpy(comm, comm_event->task->comm, sizeof(comm));
+	strlcpy(comm, comm_event->task->comm, sizeof(comm));
 	size = ALIGN(strlen(comm)+1, sizeof(u64));
 
 	comm_event->comm = comm;
@@ -3902,34 +3902,44 @@ static void perf_swevent_ctx_event(struct perf_event_context *ctx,
 	}
 }
 
-static int *perf_swevent_recursion_context(struct perf_cpu_context *cpuctx)
+/*
+ * Must be called with preemption disabled
+ */
+int perf_swevent_get_recursion_context(int **recursion)
 {
+	struct perf_cpu_context *cpuctx = &__get_cpu_var(perf_cpu_context);
+
 	if (in_nmi())
-		return &cpuctx->recursion[3];
+		*recursion = &cpuctx->recursion[3];
+	else if (in_irq())
+		*recursion = &cpuctx->recursion[2];
+	else if (in_softirq())
+		*recursion = &cpuctx->recursion[1];
+	else
+		*recursion = &cpuctx->recursion[0];
 
-	if (in_irq())
-		return &cpuctx->recursion[2];
+	if (**recursion)
+		return -1;
 
-	if (in_softirq())
-		return &cpuctx->recursion[1];
+	(**recursion)++;
 
-	return &cpuctx->recursion[0];
+	return 0;
 }
+EXPORT_SYMBOL_GPL(perf_swevent_get_recursion_context);
 
-static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
-				    u64 nr, int nmi,
-				    struct perf_sample_data *data,
-				    struct pt_regs *regs)
+void perf_swevent_put_recursion_context(int *recursion)
 {
-	struct perf_cpu_context *cpuctx = &get_cpu_var(perf_cpu_context);
-	int *recursion = perf_swevent_recursion_context(cpuctx);
+	(*recursion)--;
+}
+EXPORT_SYMBOL_GPL(perf_swevent_put_recursion_context);
+
+static void __do_perf_sw_event(enum perf_type_id type, u32 event_id,
+			       u64 nr, int nmi,
+			       struct perf_sample_data *data,
+			       struct pt_regs *regs)
+{
 	struct perf_event_context *ctx;
-
-	if (*recursion)
-		goto out;
-
-	(*recursion)++;
-	barrier();
+	struct perf_cpu_context *cpuctx = &__get_cpu_var(perf_cpu_context);
 
 	rcu_read_lock();
 	perf_swevent_ctx_event(&cpuctx->ctx, type, event_id,
@@ -3942,12 +3952,25 @@ static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
 	if (ctx)
 		perf_swevent_ctx_event(ctx, type, event_id, nr, nmi, data, regs);
 	rcu_read_unlock();
+}
 
-	barrier();
-	(*recursion)--;
+static void do_perf_sw_event(enum perf_type_id type, u32 event_id,
+				    u64 nr, int nmi,
+				    struct perf_sample_data *data,
+				    struct pt_regs *regs)
+{
+	int *recursion;
 
+	preempt_disable();
+
+	if (perf_swevent_get_recursion_context(&recursion))
+		goto out;
+
+	__do_perf_sw_event(type, event_id, nr, nmi, data, regs);
+
+	perf_swevent_put_recursion_context(recursion);
 out:
-	put_cpu_var(perf_cpu_context);
+	preempt_enable();
 }
 
 void __perf_sw_event(u32 event_id, u64 nr, int nmi,
@@ -4182,7 +4205,8 @@ void perf_tp_event(int event_id, u64 addr, u64 count, void *record,
 	if (!regs)
 		regs = task_pt_regs(current);
 
-	do_perf_sw_event(PERF_TYPE_TRACEPOINT, event_id, count, 1,
+	/* Trace events already protected against recursion */
+	__do_perf_sw_event(PERF_TYPE_TRACEPOINT, event_id, count, 1,
 				&data, regs);
 }
 EXPORT_SYMBOL_GPL(perf_tp_event);

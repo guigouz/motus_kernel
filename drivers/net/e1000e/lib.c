@@ -1,7 +1,7 @@
 /*******************************************************************************
 
   Intel PRO/1000 Linux driver
-  Copyright(c) 1999 - 2008 Intel Corporation.
+  Copyright(c) 1999 - 2009 Intel Corporation.
 
   This program is free software; you can redistribute it and/or modify it
   under the terms and conditions of the GNU General Public License,
@@ -295,45 +295,43 @@ void e1000e_update_mc_addr_list_generic(struct e1000_hw *hw,
  **/
 void e1000e_clear_hw_cntrs_base(struct e1000_hw *hw)
 {
-	u32 temp;
-
-	temp = er32(CRCERRS);
-	temp = er32(SYMERRS);
-	temp = er32(MPC);
-	temp = er32(SCC);
-	temp = er32(ECOL);
-	temp = er32(MCC);
-	temp = er32(LATECOL);
-	temp = er32(COLC);
-	temp = er32(DC);
-	temp = er32(SEC);
-	temp = er32(RLEC);
-	temp = er32(XONRXC);
-	temp = er32(XONTXC);
-	temp = er32(XOFFRXC);
-	temp = er32(XOFFTXC);
-	temp = er32(FCRUC);
-	temp = er32(GPRC);
-	temp = er32(BPRC);
-	temp = er32(MPRC);
-	temp = er32(GPTC);
-	temp = er32(GORCL);
-	temp = er32(GORCH);
-	temp = er32(GOTCL);
-	temp = er32(GOTCH);
-	temp = er32(RNBC);
-	temp = er32(RUC);
-	temp = er32(RFC);
-	temp = er32(ROC);
-	temp = er32(RJC);
-	temp = er32(TORL);
-	temp = er32(TORH);
-	temp = er32(TOTL);
-	temp = er32(TOTH);
-	temp = er32(TPR);
-	temp = er32(TPT);
-	temp = er32(MPTC);
-	temp = er32(BPTC);
+	er32(CRCERRS);
+	er32(SYMERRS);
+	er32(MPC);
+	er32(SCC);
+	er32(ECOL);
+	er32(MCC);
+	er32(LATECOL);
+	er32(COLC);
+	er32(DC);
+	er32(SEC);
+	er32(RLEC);
+	er32(XONRXC);
+	er32(XONTXC);
+	er32(XOFFRXC);
+	er32(XOFFTXC);
+	er32(FCRUC);
+	er32(GPRC);
+	er32(BPRC);
+	er32(MPRC);
+	er32(GPTC);
+	er32(GORCL);
+	er32(GORCH);
+	er32(GOTCL);
+	er32(GOTCH);
+	er32(RNBC);
+	er32(RUC);
+	er32(RFC);
+	er32(ROC);
+	er32(RJC);
+	er32(TORL);
+	er32(TORH);
+	er32(TOTL);
+	er32(TOTH);
+	er32(TPR);
+	er32(TPT);
+	er32(MPTC);
+	er32(BPTC);
 }
 
 /**
@@ -371,7 +369,7 @@ s32 e1000e_check_for_copper_link(struct e1000_hw *hw)
 	if (!link)
 		return ret_val; /* No link detected */
 
-	mac->get_link_status = 0;
+	mac->get_link_status = false;
 
 	/*
 	 * Check if there was DownShift, must be checked
@@ -1603,7 +1601,7 @@ void e1000e_reset_adaptive(struct e1000_hw *hw)
 	mac->ifs_step_size = IFS_STEP;
 	mac->ifs_ratio = IFS_RATIO;
 
-	mac->in_ifs_mode = 0;
+	mac->in_ifs_mode = false;
 	ew32(AIT, 0);
 }
 
@@ -1620,7 +1618,7 @@ void e1000e_update_adaptive(struct e1000_hw *hw)
 
 	if ((mac->collision_delta * mac->ifs_ratio) > mac->tx_packet_delta) {
 		if (mac->tx_packet_delta > MIN_NUM_XMITS) {
-			mac->in_ifs_mode = 1;
+			mac->in_ifs_mode = true;
 			if (mac->current_ifs_val < mac->ifs_max_val) {
 				if (!mac->current_ifs_val)
 					mac->current_ifs_val = mac->ifs_min_val;
@@ -1634,7 +1632,7 @@ void e1000e_update_adaptive(struct e1000_hw *hw)
 		if (mac->in_ifs_mode &&
 		    (mac->tx_packet_delta <= MIN_NUM_XMITS)) {
 			mac->current_ifs_val = 0;
-			mac->in_ifs_mode = 0;
+			mac->in_ifs_mode = false;
 			ew32(AIT, 0);
 		}
 	}
@@ -2277,7 +2275,7 @@ bool e1000e_enable_tx_pkt_filtering(struct e1000_hw *hw)
 
 	/* No manageability, no filtering */
 	if (!e1000e_check_mng_mode(hw)) {
-		hw->mac.tx_pkt_filtering = 0;
+		hw->mac.tx_pkt_filtering = false;
 		return 0;
 	}
 
@@ -2287,7 +2285,7 @@ bool e1000e_enable_tx_pkt_filtering(struct e1000_hw *hw)
 	 */
 	ret_val = e1000_mng_enable_host_if(hw);
 	if (ret_val != 0) {
-		hw->mac.tx_pkt_filtering = 0;
+		hw->mac.tx_pkt_filtering = false;
 		return ret_val;
 	}
 
@@ -2306,17 +2304,17 @@ bool e1000e_enable_tx_pkt_filtering(struct e1000_hw *hw)
 	 * take the safe route of assuming Tx filtering is enabled.
 	 */
 	if ((hdr_csum != csum) || (hdr->signature != E1000_IAMT_SIGNATURE)) {
-		hw->mac.tx_pkt_filtering = 1;
+		hw->mac.tx_pkt_filtering = true;
 		return 1;
 	}
 
 	/* Cookie area is valid, make the final check for filtering. */
 	if (!(hdr->status & E1000_MNG_DHCP_COOKIE_STATUS_PARSING)) {
-		hw->mac.tx_pkt_filtering = 0;
+		hw->mac.tx_pkt_filtering = false;
 		return 0;
 	}
 
-	hw->mac.tx_pkt_filtering = 1;
+	hw->mac.tx_pkt_filtering = true;
 	return 1;
 }
 
@@ -2473,7 +2471,7 @@ bool e1000e_enable_mng_pass_thru(struct e1000_hw *hw)
 {
 	u32 manc;
 	u32 fwsm, factps;
-	bool ret_val = 0;
+	bool ret_val = false;
 
 	manc = er32(MANC);
 
@@ -2488,13 +2486,13 @@ bool e1000e_enable_mng_pass_thru(struct e1000_hw *hw)
 		if (!(factps & E1000_FACTPS_MNGCG) &&
 		    ((fwsm & E1000_FWSM_MODE_MASK) ==
 		     (e1000_mng_mode_pt << E1000_FWSM_MODE_SHIFT))) {
-			ret_val = 1;
+			ret_val = true;
 			return ret_val;
 		}
 	} else {
 		if ((manc & E1000_MANC_SMBUS_EN) &&
 		    !(manc & E1000_MANC_ASF_EN)) {
-			ret_val = 1;
+			ret_val = true;
 			return ret_val;
 		}
 	}

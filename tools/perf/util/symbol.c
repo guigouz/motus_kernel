@@ -921,6 +921,7 @@ int filename__read_build_id(const char *filename, void *bf, size_t size)
 	GElf_Shdr shdr;
 	Elf_Data *data;
 	Elf_Scn *sec;
+	Elf_Kind ek;
 	void *ptr;
 	Elf *elf;
 
@@ -936,6 +937,10 @@ int filename__read_build_id(const char *filename, void *bf, size_t size)
 		pr_debug2("%s: cannot read %s ELF file.\n", __func__, filename);
 		goto out_close;
 	}
+
+	ek = elf_kind(elf);
+	if (ek != ELF_K_ELF)
+		goto out_elf_end;
 
 	if (gelf_getehdr(elf, &ehdr) == NULL) {
 		pr_err("%s: cannot get elf header.\n", __func__);
@@ -1184,7 +1189,7 @@ static int dsos__set_modules_path_dir(char *dirname)
 	DIR *dir = opendir(dirname);
 
 	if (!dir) {
-		pr_err("%s: cannot open %s dir\n", __func__, dirname);
+		pr_debug("%s: cannot open %s dir\n", __func__, dirname);
 		return -1;
 	}
 
@@ -1495,8 +1500,8 @@ int kernel_maps__init(bool use_modules)
 		return -1;
 
 	if (use_modules && kernel_maps__create_module_maps() < 0)
-		pr_warning("Failed to load list of modules in use, "
-			   "continuing...\n");
+		pr_debug("Failed to load list of modules in use, "
+			 "continuing...\n");
 	/*
 	 * Now that we have all the maps created, just set the ->end of them:
 	 */
