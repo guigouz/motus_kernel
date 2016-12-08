@@ -126,7 +126,7 @@ static int qt202x_reset_phy(struct efx_nic *efx)
 	if (rc < 0)
 		goto fail;
 
-	efx->board_info.init_leds(efx);
+	falcon_board(efx)->init_phy(efx);
 
 	return rc;
 
@@ -228,9 +228,6 @@ static void qt202x_phy_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecm
 
 static void qt202x_phy_fini(struct efx_nic *efx)
 {
-	/* Clobber the LED if it was blinking */
-	efx->board_info.blink(efx, false);
-
 	/* Free the context block */
 	kfree(efx->phy_data);
 	efx->phy_data = NULL;

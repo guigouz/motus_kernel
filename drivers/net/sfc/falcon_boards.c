@@ -29,40 +29,6 @@
 #define FALCON_BOARD_SFN4111T 0x51
 #define FALCON_BOARD_SFN4112F 0x52
 
-/* Blink support. If the PHY has no auto-blink mode so we hang it off a timer */
-#define BLINK_INTERVAL (HZ/2)
-
-static void blink_led_timer(unsigned long context)
-{
-	struct efx_nic *efx = (struct efx_nic *)context;
-	struct efx_board *board = &efx->board_info;
-
-	board->set_id_led(efx, board->blink_state);
-	board->blink_state = !board->blink_state;
-	if (board->blink_resubmit)
-		mod_timer(&board->blink_timer, jiffies + BLINK_INTERVAL);
-}
-
-static void board_blink(struct efx_nic *efx, bool blink)
-{
-	struct efx_board *board = &efx->board_info;
-
-	/* The rtnl mutex serialises all ethtool ioctls, so
-	 * nothing special needs doing here. */
-	if (blink) {
-		board->blink_resubmit = true;
-		board->blink_state = false;
-		setup_timer(&board->blink_timer, blink_led_timer,
-			    (unsigned long)efx);
-		mod_timer(&board->blink_timer, jiffies + BLINK_INTERVAL);
-	} else {
-		board->blink_resubmit = false;
-		if (board->blink_timer.function)
-			del_timer_sync(&board->blink_timer);
-		board->init_leds(efx);
-	}
-}
-
 /*****************************************************************************
  * Support for LM87 sensor chip used on several boards
  */
@@ -85,7 +51,8 @@ static void board_blink(struct efx_nic *efx, bool blink)
 static int efx_init_lm87(struct efx_nic *efx, struct i2c_board_info *info,
 			 const u8 *reg_values)
 {
-	struct i2c_client *client = i2c_new_device(&efx->i2c_adap, info);
+	struct falcon_board *board = falcon_board(efx);
+	struct i2c_client *client = i2c_new_device(&board->i2c_adap, info);
 	int rc;
 
 	if (!client)
@@ -99,7 +66,7 @@ static int efx_init_lm87(struct efx_nic *efx, struct i2c_board_info *info,
 			goto err;
 	}
 
-	efx->board_info.hwmon_client = client;
+	board->hwmon_client = client;
 	return 0;
 
 err:
@@ -109,12 +76,12 @@ err:
 
 static void efx_fini_lm87(struct efx_nic *efx)
 {
-	i2c_unregister_device(efx->board_info.hwmon_client);
+	i2c_unregister_device(falcon_board(efx)->hwmon_client);
 }
 
 static int efx_check_lm87(struct efx_nic *efx, unsigned mask)
 {
-	struct i2c_client *client = efx->board_info.hwmon_client;
+	struct i2c_client *client = falcon_board(efx)->hwmon_client;
 	s32 alarms1, alarms2;
 
 	/* If link is up then do not monitor temperature */
@@ -223,8 +190,8 @@ static inline int efx_check_lm87(struct efx_nic *efx, unsigned mask)
 
 static void sfe4001_poweroff(struct efx_nic *efx)
 {
-	struct i2c_client *ioexp_client = efx->board_info.ioexp_client;
-	struct i2c_client *hwmon_client = efx->board_info.hwmon_client;
+	struct i2c_client *ioexp_client = falcon_board(efx)->ioexp_client;
+	struct i2c_client *hwmon_client = falcon_board(efx)->hwmon_client;
 
 	/* Turn off all power rails and disable outputs */
 	i2c_smbus_write_byte_data(ioexp_client, P0_OUT, 0xff);
@@ -237,8 +204,8 @@ static void sfe4001_poweroff(struct efx_nic *efx)
 
 static int sfe4001_poweron(struct efx_nic *efx)
 {
-	struct i2c_client *hwmon_client = efx->board_info.hwmon_client;
-	struct i2c_client *ioexp_client = efx->board_info.ioexp_client;
+	struct i2c_client *ioexp_client = falcon_board(efx)->ioexp_client;
+	struct i2c_client *hwmon_client = falcon_board(efx)->hwmon_client;
 	unsigned int i, j;
 	int rc;
 	u8 out;
@@ -324,10 +291,11 @@ fail_on:
 
 static int sfn4111t_reset(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
 	efx_oword_t reg;
 
 	/* GPIO 3 and the GPIO register are shared with I2C, so block that */
-	mutex_lock(&efx->i2c_adap.bus_lock);
+	i2c_lock_adapter(&board->i2c_adap);
 
 	/* Pull RST_N (GPIO 2) low then let it up again, setting the
 	 * FLASH_CFG_1 strap (GPIO 3) appropriately.  Only change the
@@ -343,7 +311,7 @@ static int sfn4111t_reset(struct efx_nic *efx)
 	efx_writeo(efx, &reg, FR_AB_GPIO_CTL);
 	msleep(1);
 
-	mutex_unlock(&efx->i2c_adap.bus_lock);
+	i2c_unlock_adapter(&board->i2c_adap);
 
 	ssleep(1);
 	return 0;
@@ -380,7 +348,7 @@ static ssize_t set_phy_flash_cfg(struct device *dev,
 		efx->phy_mode = new_mode;
 		if (new_mode & PHY_MODE_SPECIAL)
 			efx_stats_disable(efx);
-		if (efx->board_info.type == FALCON_BOARD_SFE4001)
+		if (falcon_board(efx)->type == FALCON_BOARD_SFE4001)
 			err = sfe4001_poweron(efx);
 		else
 			err = sfn4111t_reset(efx);
@@ -397,12 +365,14 @@ static DEVICE_ATTR(phy_flash_cfg, 0644, show_phy_flash_cfg, set_phy_flash_cfg);
 
 static void sfe4001_fini(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
+
 	EFX_INFO(efx, "%s\n", __func__);
 
 	device_remove_file(&efx->pci_dev->dev, &dev_attr_phy_flash_cfg);
 	sfe4001_poweroff(efx);
-	i2c_unregister_device(efx->board_info.ioexp_client);
-	i2c_unregister_device(efx->board_info.hwmon_client);
+	i2c_unregister_device(board->ioexp_client);
+	i2c_unregister_device(board->hwmon_client);
 }
 
 static int sfe4001_check_hw(struct efx_nic *efx)
@@ -421,7 +391,7 @@ static int sfe4001_check_hw(struct efx_nic *efx)
 	 * the power undesirably.
 	 * We know we can read from the IO expander because we did
 	 * it during power-on. Assume failure now is bad news. */
-	status = i2c_smbus_read_byte_data(efx->board_info.ioexp_client, P1_IN);
+	status = i2c_smbus_read_byte_data(falcon_board(efx)->ioexp_client, P1_IN);
 	if (status >= 0 &&
 	    (status & ((1 << P1_AFE_PWD_LBN) | (1 << P1_DSP_PWD25_LBN))) != 0)
 		return 0;
@@ -443,36 +413,37 @@ static struct i2c_board_info sfe4001_hwmon_info = {
  */
 static int sfe4001_init(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
 	int rc;
 
 #if defined(CONFIG_SENSORS_LM90) || defined(CONFIG_SENSORS_LM90_MODULE)
-	efx->board_info.hwmon_client =
-		i2c_new_device(&efx->i2c_adap, &sfe4001_hwmon_info);
+	board->hwmon_client =
+		i2c_new_device(&board->i2c_adap, &sfe4001_hwmon_info);
 #else
-	efx->board_info.hwmon_client =
-		i2c_new_dummy(&efx->i2c_adap, sfe4001_hwmon_info.addr);
+	board->hwmon_client =
+		i2c_new_dummy(&board->i2c_adap, sfe4001_hwmon_info.addr);
 #endif
-	if (!efx->board_info.hwmon_client)
+	if (!board->hwmon_client)
 		return -EIO;
 
 	/* Raise board/PHY high limit from 85 to 90 degrees Celsius */
-	rc = i2c_smbus_write_byte_data(efx->board_info.hwmon_client,
+	rc = i2c_smbus_write_byte_data(board->hwmon_client,
 				       MAX664X_REG_WLHO, 90);
 	if (rc)
 		goto fail_hwmon;
 
-	efx->board_info.ioexp_client = i2c_new_dummy(&efx->i2c_adap, PCA9539);
-	if (!efx->board_info.ioexp_client) {
+	board->ioexp_client = i2c_new_dummy(&board->i2c_adap, PCA9539);
+	if (!board->ioexp_client) {
 		rc = -EIO;
 		goto fail_hwmon;
 	}
 
 	/* 10Xpress has fixed-function LED pins, so there is no board-specific
 	 * blink code. */
-	efx->board_info.blink = tenxpress_phy_blink;
+	board->set_id_led = tenxpress_set_id_led;
 
-	efx->board_info.monitor = sfe4001_check_hw;
-	efx->board_info.fini = sfe4001_fini;
+	board->monitor = sfe4001_check_hw;
+	board->fini = sfe4001_fini;
 
 	if (efx->phy_mode & PHY_MODE_SPECIAL) {
 		/* PHY won't generate a 156.25 MHz clock and MAC stats fetch
@@ -493,9 +464,9 @@ static int sfe4001_init(struct efx_nic *efx)
 fail_on:
 	sfe4001_poweroff(efx);
 fail_ioexp:
-	i2c_unregister_device(efx->board_info.ioexp_client);
+	i2c_unregister_device(board->ioexp_client);
 fail_hwmon:
-	i2c_unregister_device(efx->board_info.hwmon_client);
+	i2c_unregister_device(board->hwmon_client);
 	return rc;
 }
 
@@ -508,7 +479,7 @@ static int sfn4111t_check_hw(struct efx_nic *efx)
 		return 0;
 
 	/* Test LHIGH, RHIGH, FAULT, EOT and IOT alarms */
-	status = i2c_smbus_read_byte_data(efx->board_info.hwmon_client,
+	status = i2c_smbus_read_byte_data(falcon_board(efx)->hwmon_client,
 					  MAX664X_REG_RSL);
 	if (status < 0)
 		return -EIO;
@@ -522,7 +493,7 @@ static void sfn4111t_fini(struct efx_nic *efx)
 	EFX_INFO(efx, "%s\n", __func__);
 
 	device_remove_file(&efx->pci_dev->dev, &dev_attr_phy_flash_cfg);
-	i2c_unregister_device(efx->board_info.hwmon_client);
+	i2c_unregister_device(falcon_board(efx)->hwmon_client);
 }
 
 static struct i2c_board_info sfn4111t_a0_hwmon_info = {
@@ -533,43 +504,51 @@ static struct i2c_board_info sfn4111t_r5_hwmon_info = {
 	I2C_BOARD_INFO("max6646", 0x4d),
 };
 
+static void sfn4111t_init_phy(struct efx_nic *efx)
+{
+	if (!(efx->phy_mode & PHY_MODE_SPECIAL)) {
+		if (sft9001_wait_boot(efx) != -EINVAL)
+			return;
+
+		efx->phy_mode = PHY_MODE_SPECIAL;
+		efx_stats_disable(efx);
+	}
+
+	sfn4111t_reset(efx);
+	sft9001_wait_boot(efx);
+}
+
 static int sfn4111t_init(struct efx_nic *efx)
 {
-	int i = 0;
+	struct falcon_board *board = falcon_board(efx);
 	int rc;
 
-	efx->board_info.hwmon_client =
-		i2c_new_device(&efx->i2c_adap,
-			       (efx->board_info.minor < 5) ?
+	board->hwmon_client =
+		i2c_new_device(&board->i2c_adap,
+			       (board->minor < 5) ?
 			       &sfn4111t_a0_hwmon_info :
 			       &sfn4111t_r5_hwmon_info);
-	if (!efx->board_info.hwmon_client)
+	if (!board->hwmon_client)
 		return -EIO;
 
-	efx->board_info.blink = tenxpress_phy_blink;
-	efx->board_info.monitor = sfn4111t_check_hw;
-	efx->board_info.fini = sfn4111t_fini;
+	board->init_phy = sfn4111t_init_phy;
+	board->set_id_led = tenxpress_set_id_led;
+	board->monitor = sfn4111t_check_hw;
+	board->fini = sfn4111t_fini;
 
 	rc = device_create_file(&efx->pci_dev->dev, &dev_attr_phy_flash_cfg);
 	if (rc)
 		goto fail_hwmon;
 
-	do {
-		if (efx->phy_mode & PHY_MODE_SPECIAL) {
-			/* PHY may not generate a 156.25 MHz clock and MAC
-			 * stats fetch will fail. */
-			efx_stats_disable(efx);
-			sfn4111t_reset(efx);
-		}
-		rc = sft9001_wait_boot(efx);
-		if (rc == 0)
-			return 0;
-		efx->phy_mode = PHY_MODE_SPECIAL;
-	} while (rc == -EINVAL && ++i < 2);
+	if (efx->phy_mode & PHY_MODE_SPECIAL)
+		/* PHY may not generate a 156.25 MHz clock and MAC
+		 * stats fetch will fail. */
+		efx_stats_disable(efx);
 
-	device_remove_file(&efx->pci_dev->dev, &dev_attr_phy_flash_cfg);
+	return 0;
+
 fail_hwmon:
-	i2c_unregister_device(efx->board_info.hwmon_client);
+	i2c_unregister_device(board->hwmon_client);
 	return rc;
 }
 
@@ -608,7 +587,7 @@ static struct i2c_board_info sfe4002_hwmon_info = {
 #define SFE4002_RX_LED    (0)	/* Green */
 #define SFE4002_TX_LED    (1)	/* Amber */
 
-static void sfe4002_init_leds(struct efx_nic *efx)
+static void sfe4002_init_phy(struct efx_nic *efx)
 {
 	/* Set the TX and RX LEDs to reflect status and activity, and the
 	 * fault LED off */
@@ -619,18 +598,21 @@ static void sfe4002_init_leds(struct efx_nic *efx)
 	falcon_qt202x_set_led(efx, SFE4002_FAULT_LED, QUAKE_LED_OFF);
 }
 
-static void sfe4002_set_id_led(struct efx_nic *efx, bool state)
+static void sfe4002_set_id_led(struct efx_nic *efx, enum efx_led_mode mode)
 {
-	falcon_qt202x_set_led(efx, SFE4002_FAULT_LED, state ? QUAKE_LED_ON :
-			      QUAKE_LED_OFF);
+	falcon_qt202x_set_led(
+		efx, SFE4002_FAULT_LED,
+		(mode == EFX_LED_ON) ? QUAKE_LED_ON : QUAKE_LED_OFF);
 }
 
 static int sfe4002_check_hw(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
+
 	/* A0 board rev. 4002s report a temperature fault the whole time
 	 * (bad sensor) so we mask it out. */
 	unsigned alarm_mask =
-		(efx->board_info.major == 0 && efx->board_info.minor == 0) ?
+		(board->major == 0 && board->minor == 0) ?
 		~LM87_ALARM_TEMP_EXT1 : ~0;
 
 	return efx_check_lm87(efx, alarm_mask);
@@ -638,14 +620,14 @@ static int sfe4002_check_hw(struct efx_nic *efx)
 
 static int sfe4002_init(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
 	int rc = efx_init_lm87(efx, &sfe4002_hwmon_info, sfe4002_lm87_regs);
 	if (rc)
 		return rc;
-	efx->board_info.monitor = sfe4002_check_hw;
-	efx->board_info.init_leds = sfe4002_init_leds;
-	efx->board_info.set_id_led = sfe4002_set_id_led;
-	efx->board_info.blink = board_blink;
-	efx->board_info.fini = efx_fini_lm87;
+	board->monitor = sfe4002_check_hw;
+	board->init_phy = sfe4002_init_phy;
+	board->set_id_led = sfe4002_set_id_led;
+	board->fini = efx_fini_lm87;
 	return 0;
 }
 
@@ -675,7 +657,7 @@ static struct i2c_board_info sfn4112f_hwmon_info = {
 #define SFN4112F_ACT_LED	0
 #define SFN4112F_LINK_LED	1
 
-static void sfn4112f_init_leds(struct efx_nic *efx)
+static void sfn4112f_init_phy(struct efx_nic *efx)
 {
 	falcon_qt202x_set_led(efx, SFN4112F_ACT_LED,
 			      QUAKE_LED_RXLINK | QUAKE_LED_LINK_ACT);
@@ -683,10 +665,23 @@ static void sfn4112f_init_leds(struct efx_nic *efx)
 			      QUAKE_LED_RXLINK | QUAKE_LED_LINK_STAT);
 }
 
-static void sfn4112f_set_id_led(struct efx_nic *efx, bool state)
+static void sfn4112f_set_id_led(struct efx_nic *efx, enum efx_led_mode mode)
 {
-	falcon_qt202x_set_led(efx, SFN4112F_LINK_LED,
-			      state ? QUAKE_LED_ON : QUAKE_LED_OFF);
+	int reg;
+
+	switch (mode) {
+	case EFX_LED_OFF:
+		reg = QUAKE_LED_OFF;
+		break;
+	case EFX_LED_ON:
+		reg = QUAKE_LED_ON;
+		break;
+	default:
+		reg = QUAKE_LED_RXLINK | QUAKE_LED_LINK_STAT;
+		break;
+	}
+
+	falcon_qt202x_set_led(efx, SFN4112F_LINK_LED, reg);
 }
 
 static int sfn4112f_check_hw(struct efx_nic *efx)
@@ -697,14 +692,15 @@ static int sfn4112f_check_hw(struct efx_nic *efx)
 
 static int sfn4112f_init(struct efx_nic *efx)
 {
+	struct falcon_board *board = falcon_board(efx);
+
 	int rc = efx_init_lm87(efx, &sfn4112f_hwmon_info, sfn4112f_lm87_regs);
 	if (rc)
 		return rc;
-	efx->board_info.monitor = sfn4112f_check_hw;
-	efx->board_info.init_leds = sfn4112f_init_leds;
-	efx->board_info.set_id_led = sfn4112f_set_id_led;
-	efx->board_info.blink = board_blink;
-	efx->board_info.fini = efx_fini_lm87;
+	board->monitor = sfn4112f_check_hw;
+	board->init_phy = sfn4112f_init_phy;
+	board->set_id_led = sfn4112f_set_id_led;
+	board->fini = efx_fini_lm87;
 	return 0;
 }
 
@@ -727,26 +723,36 @@ static struct falcon_board_data board_data[] = {
 	  sfn4112f_init },
 };
 
+static struct falcon_board falcon_dummy_board = {
+	.init		= efx_port_dummy_op_int,
+	.init_phy	= efx_port_dummy_op_void,
+	.set_id_led	= efx_port_dummy_op_set_id_led,
+	.monitor	= efx_port_dummy_op_int,
+	.fini		= efx_port_dummy_op_void,
+};
+
 void falcon_probe_board(struct efx_nic *efx, u16 revision_info)
 {
+	struct falcon_board *board = falcon_board(efx);
 	struct falcon_board_data *data = NULL;
 	int i;
 
-	efx->board_info.type = FALCON_BOARD_TYPE(revision_info);
-	efx->board_info.major = FALCON_BOARD_MAJOR(revision_info);
-	efx->board_info.minor = FALCON_BOARD_MINOR(revision_info);
+	*board = falcon_dummy_board;
+	board->type = FALCON_BOARD_TYPE(revision_info);
+	board->major = FALCON_BOARD_MAJOR(revision_info);
+	board->minor = FALCON_BOARD_MINOR(revision_info);
 
 	for (i = 0; i < ARRAY_SIZE(board_data); i++)
-		if (board_data[i].type == efx->board_info.type)
+		if (board_data[i].type == board->type)
 			data = &board_data[i];
 
 	if (data) {
 		EFX_INFO(efx, "board is %s rev %c%d\n",
 			 (efx->pci_dev->subsystem_vendor == EFX_VENDID_SFC)
 			 ? data->ref_model : data->gen_type,
-			 'A' + efx->board_info.major, efx->board_info.minor);
-		efx->board_info.init = data->init;
+			 'A' + board->major, board->minor);
+		board->init = data->init;
 	} else {
-		EFX_ERR(efx, "unknown board type %d\n", efx->board_info.type);
+		EFX_ERR(efx, "unknown board type %d\n", board->type);
 	}
 }

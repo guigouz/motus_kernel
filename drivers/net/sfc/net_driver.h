@@ -388,40 +388,10 @@ struct efx_channel {
 
 };
 
-/**
- * struct efx_board - board information
- * @type: Board model type
- * @major: Major rev. ('A', 'B' ...)
- * @minor: Minor rev. (0, 1, ...)
- * @init: Initialisation function
- * @init_leds: Sets up board LEDs. May be called repeatedly.
- * @set_id_led: Turns the identification LED on or off
- * @blink: Starts/stops blinking
- * @monitor: Board-specific health check function
- * @fini: Cleanup function
- * @blink_state: Current blink state
- * @blink_resubmit: Blink timer resubmission flag
- * @blink_timer: Blink timer
- * @hwmon_client: I2C client for hardware monitor
- * @ioexp_client: I2C client for power/port control
- */
-struct efx_board {
-	int type;
-	int major;
-	int minor;
-	int (*init) (struct efx_nic *nic);
-	/* As the LEDs are typically attached to the PHY, LEDs
-	 * have a separate init callback that happens later than
-	 * board init. */
-	void (*init_leds)(struct efx_nic *efx);
-	void (*set_id_led) (struct efx_nic *efx, bool state);
-	int (*monitor) (struct efx_nic *nic);
-	void (*blink) (struct efx_nic *efx, bool start);
-	void (*fini) (struct efx_nic *nic);
-	bool blink_state;
-	bool blink_resubmit;
-	struct timer_list blink_timer;
-	struct i2c_client *hwmon_client, *ioexp_client;
+enum efx_led_mode {
+	EFX_LED_OFF	= 0,
+	EFX_LED_ON	= 1,
+	EFX_LED_DEFAULT	= 2
 };
 
 #define STRING_TABLE_LOOKUP(val, member)	\
@@ -669,8 +639,6 @@ union efx_multicast_hash {
  * @interrupt_mode: Interrupt mode
  * @irq_rx_adaptive: Adaptive IRQ moderation enabled for RX event queues
  * @irq_rx_moderation: IRQ moderation time for RX event queues
- * @i2c_adap: I2C adapter
- * @board_info: Board-level information
  * @state: Device state flag. Serialised by the rtnl_lock.
  * @reset_pending: Pending reset method (normally RESET_TYPE_NONE)
  * @tx_queue: TX DMA queues
@@ -755,9 +723,6 @@ struct efx_nic {
 	enum efx_int_mode interrupt_mode;
 	bool irq_rx_adaptive;
 	unsigned int irq_rx_moderation;
-
-	struct i2c_adapter i2c_adap;
-	struct efx_board board_info;
 
 	enum nic_state state;
 	enum reset_type reset_pending;
@@ -848,7 +813,6 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
 
 /**
  * struct efx_nic_type - Efx device type definition
- * @mem_bar: Memory BAR number
  * @mem_map_size: Memory BAR mapped size
  * @txd_ptr_tbl_base: TX descriptor ring base address
  * @rxd_ptr_tbl_base: RX descriptor ring base address
@@ -863,7 +827,6 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
  *	descriptors
  */
 struct efx_nic_type {
-	unsigned int mem_bar;
 	unsigned int mem_map_size;
 	unsigned int txd_ptr_tbl_base;
 	unsigned int rxd_ptr_tbl_base;

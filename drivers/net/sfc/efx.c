@@ -1265,7 +1265,7 @@ static void efx_monitor(struct work_struct *data)
 		goto out_requeue;
 	if (!efx->port_enabled)
 		goto out_unlock;
-	rc = efx->board_info.monitor(efx);
+	rc = falcon_board(efx)->monitor(efx);
 	if (rc) {
 		EFX_ERR(efx, "Board sensor %s; shutting down PHY\n",
 			(rc == -ERANGE) ? "reported fault" : "failed");
@@ -1882,7 +1882,7 @@ static struct pci_device_id efx_pci_table[] __devinitdata = {
 
 /**************************************************************************
  *
- * Dummy PHY/MAC/Board operations
+ * Dummy PHY/MAC operations
  *
  * Can be used for some unimplemented operations
  * Needed so all function pointers are valid and do not have to be tested
@@ -1894,7 +1894,9 @@ int efx_port_dummy_op_int(struct efx_nic *efx)
 	return 0;
 }
 void efx_port_dummy_op_void(struct efx_nic *efx) {}
-void efx_port_dummy_op_blink(struct efx_nic *efx, bool blink) {}
+void efx_port_dummy_op_set_id_led(struct efx_nic *efx, enum efx_led_mode mode)
+{
+}
 
 static struct efx_mac_operations efx_dummy_mac_operations = {
 	.reconfigure	= efx_port_dummy_op_void,
@@ -1908,15 +1910,6 @@ static struct efx_phy_operations efx_dummy_phy_operations = {
 	.poll		 = efx_port_dummy_op_void,
 	.fini		 = efx_port_dummy_op_void,
 	.clear_interrupt = efx_port_dummy_op_void,
-};
-
-static struct efx_board efx_dummy_board_info = {
-	.init		= efx_port_dummy_op_int,
-	.init_leds	= efx_port_dummy_op_void,
-	.set_id_led	= efx_port_dummy_op_blink,
-	.monitor	= efx_port_dummy_op_int,
-	.blink		= efx_port_dummy_op_blink,
-	.fini		= efx_port_dummy_op_void,
 };
 
 /**************************************************************************
@@ -1947,7 +1940,6 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	efx->state = STATE_INIT;
 	efx->reset_pending = RESET_TYPE_NONE;
 	strlcpy(efx->name, pci_name(pci_dev), sizeof(efx->name));
-	efx->board_info = efx_dummy_board_info;
 
 	efx->net_dev = net_dev;
 	efx->rx_checksum_enabled = true;
@@ -2029,10 +2021,6 @@ static void efx_pci_remove_main(struct efx_nic *efx)
 	falcon_fini_interrupt(efx);
 	efx_fini_channels(efx);
 	efx_fini_port(efx);
-
-	/* Shutdown the board, then the NIC and board state */
-	efx->board_info.fini(efx);
-
 	efx_fini_napi(efx);
 	efx_remove_all(efx);
 }
@@ -2092,39 +2080,30 @@ static int efx_pci_probe_main(struct efx_nic *efx)
 	if (rc)
 		goto fail2;
 
-	/* Initialise the board */
-	rc = efx->board_info.init(efx);
-	if (rc) {
-		EFX_ERR(efx, "failed to initialise board\n");
-		goto fail3;
-	}
-
 	rc = falcon_init_nic(efx);
 	if (rc) {
 		EFX_ERR(efx, "failed to initialise NIC\n");
-		goto fail4;
+		goto fail3;
 	}
 
 	rc = efx_init_port(efx);
 	if (rc) {
 		EFX_ERR(efx, "failed to initialise port\n");
-		goto fail5;
+		goto fail4;
 	}
 
 	efx_init_channels(efx);
 
 	rc = falcon_init_interrupt(efx);
 	if (rc)
-		goto fail6;
+		goto fail5;
 
 	return 0;
 
- fail6:
+ fail5:
 	efx_fini_channels(efx);
 	efx_fini_port(efx);
- fail5:
  fail4:
-	efx->board_info.fini(efx);
  fail3:
 	efx_fini_napi(efx);
  fail2:

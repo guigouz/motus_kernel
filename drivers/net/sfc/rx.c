@@ -449,15 +449,19 @@ static void efx_rx_packet_lro(struct efx_channel *channel,
 
 	/* Pass the skb/page into the LRO engine */
 	if (rx_buf->page) {
-		struct sk_buff *skb = napi_get_frags(napi);
+		struct page *page = rx_buf->page;
+		struct sk_buff *skb;
 
+		EFX_BUG_ON_PARANOID(rx_buf->skb);
+		rx_buf->page = NULL;
+
+		skb = napi_get_frags(napi);
 		if (!skb) {
-			put_page(rx_buf->page);
-			gro_result = GRO_DROP;
-			goto out;
+			put_page(page);
+			return;
 		}
 
-		skb_shinfo(skb)->frags[0].page = rx_buf->page;
+		skb_shinfo(skb)->frags[0].page = page;
 		skb_shinfo(skb)->frags[0].page_offset =
 			efx_rx_buf_offset(rx_buf);
 		skb_shinfo(skb)->frags[0].size = rx_buf->len;
@@ -469,17 +473,17 @@ static void efx_rx_packet_lro(struct efx_channel *channel,
 		skb->ip_summed =
 			checksummed ? CHECKSUM_UNNECESSARY : CHECKSUM_NONE;
 
+		skb_record_rx_queue(skb, channel->channel);
+
 		gro_result = napi_gro_frags(napi);
-
-out:
-		EFX_BUG_ON_PARANOID(rx_buf->skb);
-		rx_buf->page = NULL;
 	} else {
-		EFX_BUG_ON_PARANOID(!rx_buf->skb);
-		EFX_BUG_ON_PARANOID(!checksummed);
+		struct sk_buff *skb = rx_buf->skb;
 
-		gro_result = napi_gro_receive(napi, rx_buf->skb);
+		EFX_BUG_ON_PARANOID(!skb);
+		EFX_BUG_ON_PARANOID(!checksummed);
 		rx_buf->skb = NULL;
+
+		gro_result = napi_gro_receive(napi, skb);
 	}
 
 	if (gro_result == GRO_NORMAL) {
@@ -564,7 +568,7 @@ void __efx_rx_packet(struct efx_channel *channel,
 	if (unlikely(efx->loopback_selftest)) {
 		efx_loopback_rx_packet(efx, rx_buf->data, rx_buf->len);
 		efx_free_rx_buffer(efx, rx_buf);
-		goto done;
+		return;
 	}
 
 	if (rx_buf->skb) {
@@ -576,34 +580,28 @@ void __efx_rx_packet(struct efx_channel *channel,
 		 * at the ethernet header */
 		rx_buf->skb->protocol = eth_type_trans(rx_buf->skb,
 						       efx->net_dev);
+
+		skb_record_rx_queue(rx_buf->skb, channel->channel);
 	}
 
 	if (likely(checksummed || rx_buf->page)) {
 		efx_rx_packet_lro(channel, rx_buf, checksummed);
-		goto done;
+		return;
 	}
 
 	/* We now own the SKB */
 	skb = rx_buf->skb;
 	rx_buf->skb = NULL;
-
-	EFX_BUG_ON_PARANOID(rx_buf->page);
-	EFX_BUG_ON_PARANOID(rx_buf->skb);
 	EFX_BUG_ON_PARANOID(!skb);
 
 	/* Set the SKB flags */
 	skb->ip_summed = CHECKSUM_NONE;
-
-	skb_record_rx_queue(skb, channel->channel);
 
 	/* Pass the packet up */
 	netif_receive_skb(skb);
 
 	/* Update allocation strategy method */
 	channel->rx_alloc_level += RX_ALLOC_FACTOR_SKB;
-
-done:
-	;
 }
 
 void efx_rx_strategy(struct efx_channel *channel)

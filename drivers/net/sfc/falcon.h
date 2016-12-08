@@ -11,6 +11,7 @@
 #ifndef EFX_FALCON_H
 #define EFX_FALCON_H
 
+#include <linux/i2c-algo-bit.h>
 #include "net_driver.h"
 #include "efx.h"
 
@@ -27,6 +28,51 @@ enum falcon_revision {
 static inline int falcon_rev(struct efx_nic *efx)
 {
 	return efx->pci_dev->revision;
+}
+
+/**
+ * struct falcon_board - board information
+ * @type: Board model type
+ * @major: Major rev. ('A', 'B' ...)
+ * @minor: Minor rev. (0, 1, ...)
+ * @init: Allocate resources and initialise peripheral hardware
+ * @init_phy: Do board-specific PHY initialisation
+ * @set_id_led: Set state of identifying LED or revert to automatic function
+ * @monitor: Board-specific health check function
+ * @fini: Shut down hardware and free resources
+ * @i2c_adap: I2C adapter for on-board peripherals
+ * @i2c_data: Data for bit-banging algorithm
+ * @hwmon_client: I2C client for hardware monitor
+ * @ioexp_client: I2C client for power/port control
+ */
+struct falcon_board {
+	int type;
+	int major;
+	int minor;
+	int (*init) (struct efx_nic *nic);
+	void (*init_phy) (struct efx_nic *efx);
+	void (*set_id_led) (struct efx_nic *efx, enum efx_led_mode mode);
+	int (*monitor) (struct efx_nic *nic);
+	void (*fini) (struct efx_nic *nic);
+	struct i2c_adapter i2c_adap;
+	struct i2c_algo_bit_data i2c_data;
+	struct i2c_client *hwmon_client, *ioexp_client;
+};
+
+/**
+ * struct falcon_nic_data - Falcon NIC state
+ * @pci_dev2: The secondary PCI device if present
+ * @board: Board state and functions
+ */
+struct falcon_nic_data {
+	struct pci_dev *pci_dev2;
+	struct falcon_board board;
+};
+
+static inline struct falcon_board *falcon_board(struct efx_nic *efx)
+{
+	struct falcon_nic_data *data = efx->nic_data;
+	return &data->board;
 }
 
 extern struct efx_nic_type falcon_a_nic_type;
