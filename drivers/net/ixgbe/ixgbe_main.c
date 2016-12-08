@@ -731,12 +731,14 @@ static inline u32 ixgbe_get_rsc_count(union ixgbe_adv_rx_desc *rx_desc)
 /**
  * ixgbe_transform_rsc_queue - change rsc queue into a full packet
  * @skb: pointer to the last skb in the rsc queue
+ * @count: pointer to number of packets coalesced in this context
  *
  * This function changes a queue full of hw rsc buffers into a completed
  * packet.  It uses the ->prev pointers to find the first packet and then
  * turns it into the frag list owner.
  **/
-static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb)
+static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb,
+                                                        u64 *count)
 {
 	unsigned int frag_list_size = 0;
 
@@ -745,6 +747,7 @@ static inline struct sk_buff *ixgbe_transform_rsc_queue(struct sk_buff *skb)
 		frag_list_size += skb->len;
 		skb->prev = NULL;
 		skb = prev;
+		*count += 1;
 	}
 
 	skb_shinfo(skb)->frag_list = skb->next;
@@ -848,14 +851,20 @@ static bool ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 			u32 nextp = (staterr & IXGBE_RXDADV_NEXTP_MASK) >>
 				     IXGBE_RXDADV_NEXTP_SHIFT;
 			next_buffer = &rx_ring->rx_buffer_info[nextp];
-			rx_ring->rsc_count += (rsc_count - 1);
 		} else {
 			next_buffer = &rx_ring->rx_buffer_info[i];
 		}
 
 		if (staterr & IXGBE_RXD_STAT_EOP) {
 			if (skb->prev)
-				skb = ixgbe_transform_rsc_queue(skb);
+				skb = ixgbe_transform_rsc_queue(skb, &(rx_ring->rsc_count));
+			if (adapter->flags2 & IXGBE_FLAG2_RSC_ENABLED) {
+				if (rx_ring->flags & IXGBE_RING_RX_PS_ENABLED)
+					rx_ring->rsc_count += skb_shinfo(skb)->nr_frags;
+				else
+					rx_ring->rsc_count++;
+				rx_ring->rsc_flush++;
+			}
 			rx_ring->stats.packets++;
 			rx_ring->stats.bytes += skb->len;
 		} else {
@@ -2060,18 +2069,18 @@ static u32 ixgbe_setup_mrqc(struct ixgbe_adapter *adapter)
  * ixgbe_configure_rscctl - enable RSC for the indicated ring
  * @adapter:    address of board private structure
  * @index:      index of ring to set
- * @rx_buf_len: rx buffer length
  **/
-static void ixgbe_configure_rscctl(struct ixgbe_adapter *adapter, int index,
-                                   int rx_buf_len)
+static void ixgbe_configure_rscctl(struct ixgbe_adapter *adapter, int index)
 {
 	struct ixgbe_ring *rx_ring;
 	struct ixgbe_hw *hw = &adapter->hw;
 	int j;
 	u32 rscctrl;
+	int rx_buf_len;
 
 	rx_ring = &adapter->rx_ring[index];
 	j = rx_ring->reg_idx;
+	rx_buf_len = rx_ring->rx_buf_len;
 	rscctrl = IXGBE_READ_REG(hw, IXGBE_RSCCTL(j));
 	rscctrl |= IXGBE_RSCCTL_RSCEN;
 	/*
@@ -2283,7 +2292,7 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
 	if (adapter->flags2 & IXGBE_FLAG2_RSC_ENABLED) {
 		/* Enable 82599 HW-RSC */
 		for (i = 0; i < adapter->num_rx_queues; i++)
-			ixgbe_configure_rscctl(adapter, i, rx_buf_len);
+			ixgbe_configure_rscctl(adapter, i);
 
 		/* Disable RSC for ACK packets */
 		IXGBE_WRITE_REG(hw, IXGBE_RSCDBU,
@@ -2334,23 +2343,25 @@ static void ixgbe_vlan_rx_register(struct net_device *netdev,
 	 * not in DCB mode.
 	 */
 	ctrl = IXGBE_READ_REG(&adapter->hw, IXGBE_VLNCTRL);
+
+	/* Disable CFI check */
+	ctrl &= ~IXGBE_VLNCTRL_CFIEN;
+
+	/* enable VLAN tag stripping */
 	if (adapter->hw.mac.type == ixgbe_mac_82598EB) {
-		ctrl |= IXGBE_VLNCTRL_VME | IXGBE_VLNCTRL_VFE;
-		ctrl &= ~IXGBE_VLNCTRL_CFIEN;
-		IXGBE_WRITE_REG(&adapter->hw, IXGBE_VLNCTRL, ctrl);
+		ctrl |= IXGBE_VLNCTRL_VME;
 	} else if (adapter->hw.mac.type == ixgbe_mac_82599EB) {
-		ctrl |= IXGBE_VLNCTRL_VFE;
-		/* enable VLAN tag insert/strip */
-		ctrl = IXGBE_READ_REG(&adapter->hw, IXGBE_VLNCTRL);
-		ctrl &= ~IXGBE_VLNCTRL_CFIEN;
-		IXGBE_WRITE_REG(&adapter->hw, IXGBE_VLNCTRL, ctrl);
 		for (i = 0; i < adapter->num_rx_queues; i++) {
+			u32 ctrl;
 			j = adapter->rx_ring[i].reg_idx;
 			ctrl = IXGBE_READ_REG(&adapter->hw, IXGBE_RXDCTL(j));
 			ctrl |= IXGBE_RXDCTL_VME;
 			IXGBE_WRITE_REG(&adapter->hw, IXGBE_RXDCTL(j), ctrl);
 		}
 	}
+
+	IXGBE_WRITE_REG(&adapter->hw, IXGBE_VLNCTRL, ctrl);
+
 	ixgbe_vlan_rx_add_vid(netdev, 0);
 
 	if (!test_bit(__IXGBE_DOWN, &adapter->state))
@@ -4481,14 +4492,18 @@ void ixgbe_update_stats(struct ixgbe_adapter *adapter)
 	u64 total_mpc = 0;
 	u32 i, missed_rx = 0, mpc, bprc, lxon, lxoff, xon_off_tot;
 
-	if (hw->mac.type == ixgbe_mac_82599EB) {
+	if (adapter->flags2 & IXGBE_FLAG2_RSC_ENABLED) {
 		u64 rsc_count = 0;
+		u64 rsc_flush = 0;
 		for (i = 0; i < 16; i++)
 			adapter->hw_rx_no_dma_resources +=
 			                     IXGBE_READ_REG(hw, IXGBE_QPRDC(i));
-		for (i = 0; i < adapter->num_rx_queues; i++)
+		for (i = 0; i < adapter->num_rx_queues; i++) {
 			rsc_count += adapter->rx_ring[i].rsc_count;
-		adapter->rsc_count = rsc_count;
+			rsc_flush += adapter->rx_ring[i].rsc_flush;
+		}
+		adapter->rsc_total_count = rsc_count;
+		adapter->rsc_total_flush = rsc_flush;
 	}
 
 	adapter->stats.crcerrs += IXGBE_READ_REG(hw, IXGBE_CRCERRS);

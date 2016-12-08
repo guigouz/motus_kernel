@@ -167,7 +167,8 @@ void netdev_stats_update(struct be_adapter *adapter)
 		port_stats->rx_udp_checksum_errs;
 
 	/*  no space in linux buffers: best possible approximation */
-	dev_stats->rx_dropped = erx_stats->rx_drops_no_fragments[0];
+	dev_stats->rx_dropped =
+		erx_stats->rx_drops_no_fragments[adapter->rx_obj.q.id];
 
 	/* detailed rx errors */
 	dev_stats->rx_length_errors = port_stats->rx_in_range_errors +
@@ -561,13 +562,15 @@ static void be_set_multicast_list(struct net_device *netdev)
 		be_cmd_promiscuous_config(adapter, adapter->port_num, 0);
 	}
 
-	if (netdev->flags & IFF_ALLMULTI) {
-		be_cmd_multicast_set(adapter, adapter->if_handle, NULL, 0);
+	/* Enable multicast promisc if num configured exceeds what we support */
+	if (netdev->flags & IFF_ALLMULTI || netdev->mc_count > BE_MAX_MC) {
+		be_cmd_multicast_set(adapter, adapter->if_handle, NULL, 0,
+				&adapter->mc_cmd_mem);
 		goto done;
 	}
 
 	be_cmd_multicast_set(adapter, adapter->if_handle, netdev->mc_list,
-		netdev->mc_count);
+		netdev->mc_count, &adapter->mc_cmd_mem);
 done:
 	return;
 }
@@ -1473,6 +1476,14 @@ static void be_worker(struct work_struct *work)
 	schedule_delayed_work(&adapter->work, msecs_to_jiffies(1000));
 }
 
+static void be_msix_disable(struct be_adapter *adapter)
+{
+	if (adapter->msix_enabled) {
+		pci_disable_msix(adapter->pdev);
+		adapter->msix_enabled = false;
+	}
+}
+
 static void be_msix_enable(struct be_adapter *adapter)
 {
 	int i, status;
@@ -1679,6 +1690,8 @@ static int be_clear(struct be_adapter *adapter)
 
 	be_cmd_if_destroy(adapter, adapter->if_handle);
 
+	/* tell fw we're done with firing cmds */
+	be_cmd_fw_clean(adapter);
 	return 0;
 }
 
@@ -2015,34 +2028,61 @@ static void be_ctrl_cleanup(struct be_adapter *adapter)
 	if (mem->va)
 		pci_free_consistent(adapter->pdev, mem->size,
 			mem->va, mem->dma);
+
+	mem = &adapter->mc_cmd_mem;
+	if (mem->va)
+		pci_free_consistent(adapter->pdev, mem->size,
+			mem->va, mem->dma);
 }
 
 static int be_ctrl_init(struct be_adapter *adapter)
 {
 	struct be_dma_mem *mbox_mem_alloc = &adapter->mbox_mem_alloced;
 	struct be_dma_mem *mbox_mem_align = &adapter->mbox_mem;
+	struct be_dma_mem *mc_cmd_mem = &adapter->mc_cmd_mem;
 	int status;
 
 	status = be_map_pci_bars(adapter);
 	if (status)
-		return status;
+		goto done;
 
 	mbox_mem_alloc->size = sizeof(struct be_mcc_mailbox) + 16;
 	mbox_mem_alloc->va = pci_alloc_consistent(adapter->pdev,
 				mbox_mem_alloc->size, &mbox_mem_alloc->dma);
 	if (!mbox_mem_alloc->va) {
-		be_unmap_pci_bars(adapter);
-		return -1;
+		status = -ENOMEM;
+		goto unmap_pci_bars;
 	}
+
 	mbox_mem_align->size = sizeof(struct be_mcc_mailbox);
 	mbox_mem_align->va = PTR_ALIGN(mbox_mem_alloc->va, 16);
 	mbox_mem_align->dma = PTR_ALIGN(mbox_mem_alloc->dma, 16);
 	memset(mbox_mem_align->va, 0, sizeof(struct be_mcc_mailbox));
+
+	mc_cmd_mem->size = sizeof(struct be_cmd_req_mcast_mac_config);
+	mc_cmd_mem->va = pci_alloc_consistent(adapter->pdev, mc_cmd_mem->size,
+			&mc_cmd_mem->dma);
+	if (mc_cmd_mem->va == NULL) {
+		status = -ENOMEM;
+		goto free_mbox;
+	}
+	memset(mc_cmd_mem->va, 0, mc_cmd_mem->size);
+
 	spin_lock_init(&adapter->mbox_lock);
 	spin_lock_init(&adapter->mcc_lock);
 	spin_lock_init(&adapter->mcc_cq_lock);
 
 	return 0;
+
+free_mbox:
+	pci_free_consistent(adapter->pdev, mbox_mem_alloc->size,
+		mbox_mem_alloc->va, mbox_mem_alloc->dma);
+
+unmap_pci_bars:
+	be_unmap_pci_bars(adapter);
+
+done:
+	return status;
 }
 
 static void be_stats_cleanup(struct be_adapter *adapter)
@@ -2071,6 +2111,7 @@ static int be_stats_init(struct be_adapter *adapter)
 static void __devexit be_remove(struct pci_dev *pdev)
 {
 	struct be_adapter *adapter = pci_get_drvdata(pdev);
+
 	if (!adapter)
 		return;
 
@@ -2082,10 +2123,7 @@ static void __devexit be_remove(struct pci_dev *pdev)
 
 	be_ctrl_cleanup(adapter);
 
-	if (adapter->msix_enabled) {
-		pci_disable_msix(adapter->pdev);
-		adapter->msix_enabled = false;
-	}
+	be_msix_disable(adapter);
 
 	pci_set_drvdata(pdev, NULL);
 	pci_release_regions(pdev);
@@ -2094,17 +2132,10 @@ static void __devexit be_remove(struct pci_dev *pdev)
 	free_netdev(adapter->netdev);
 }
 
-static int be_hw_up(struct be_adapter *adapter)
+static int be_get_config(struct be_adapter *adapter)
 {
 	int status;
-
-	status = be_cmd_POST(adapter);
-	if (status)
-		return status;
-
-	status = be_cmd_reset_function(adapter);
-	if (status)
-		return status;
+	u8 mac[ETH_ALEN];
 
 	status = be_cmd_get_fw_ver(adapter, adapter->fw_ver);
 	if (status)
@@ -2112,7 +2143,17 @@ static int be_hw_up(struct be_adapter *adapter)
 
 	status = be_cmd_query_fw_cfg(adapter,
 				&adapter->port_num, &adapter->cap);
-	return status;
+	if (status)
+		return status;
+
+	memset(mac, 0, ETH_ALEN);
+	status = be_cmd_mac_addr_query(adapter, mac,
+			MAC_ADDRESS_TYPE_NETWORK, true /*permanent */, 0);
+	if (status)
+		return status;
+	memcpy(adapter->netdev->dev_addr, mac, ETH_ALEN);
+
+	return 0;
 }
 
 static int __devinit be_probe(struct pci_dev *pdev,
@@ -2121,7 +2162,6 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	int status = 0;
 	struct be_adapter *adapter;
 	struct net_device *netdev;
-	u8 mac[ETH_ALEN];
 
 	status = pci_enable_device(pdev);
 	if (status)
@@ -2155,6 +2195,8 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	adapter->pdev = pdev;
 	pci_set_drvdata(pdev, adapter);
 	adapter->netdev = netdev;
+	be_netdev_init(netdev);
+	SET_NETDEV_DEV(netdev, &pdev->dev);
 
 	be_msix_enable(adapter);
 
@@ -2173,27 +2215,34 @@ static int __devinit be_probe(struct pci_dev *pdev,
 	if (status)
 		goto free_netdev;
 
+	/* sync up with fw's ready state */
+	status = be_cmd_POST(adapter);
+	if (status)
+		goto ctrl_clean;
+
+	/* tell fw we're ready to fire cmds */
+	status = be_cmd_fw_init(adapter);
+	if (status)
+		goto ctrl_clean;
+
+	status = be_cmd_reset_function(adapter);
+	if (status)
+		goto ctrl_clean;
+
 	status = be_stats_init(adapter);
 	if (status)
 		goto ctrl_clean;
 
-	status = be_hw_up(adapter);
+	status = be_get_config(adapter);
 	if (status)
 		goto stats_clean;
-
-	status = be_cmd_mac_addr_query(adapter, mac, MAC_ADDRESS_TYPE_NETWORK,
-			true /* permanent */, 0);
-	if (status)
-		goto stats_clean;
-	memcpy(netdev->dev_addr, mac, ETH_ALEN);
 
 	INIT_DELAYED_WORK(&adapter->work, be_worker);
-	be_netdev_init(netdev);
-	SET_NETDEV_DEV(netdev, &adapter->pdev->dev);
 
 	status = be_setup(adapter);
 	if (status)
 		goto stats_clean;
+
 	status = register_netdev(netdev);
 	if (status != 0)
 		goto unsetup;
@@ -2208,7 +2257,9 @@ stats_clean:
 ctrl_clean:
 	be_ctrl_cleanup(adapter);
 free_netdev:
+	be_msix_disable(adapter);
 	free_netdev(adapter->netdev);
+	pci_set_drvdata(pdev, NULL);
 rel_reg:
 	pci_release_regions(pdev);
 disable_dev:
@@ -2252,6 +2303,11 @@ static int be_resume(struct pci_dev *pdev)
 
 	pci_set_power_state(pdev, 0);
 	pci_restore_state(pdev);
+
+	/* tell fw we're ready to fire cmds */
+	status = be_cmd_fw_init(adapter);
+	if (status)
+		return status;
 
 	be_setup(adapter);
 	if (netif_running(netdev)) {

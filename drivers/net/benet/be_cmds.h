@@ -592,6 +592,8 @@ struct be_cmd_req_promiscuous_config {
 	u16 rsvd0;
 } __packed;
 
+/******************** Multicast MAC Config *******************/
+#define BE_MAX_MC		64 /* set mcast promisc if > 64 */
 struct macaddr {
 	u8 byte[ETH_ALEN];
 };
@@ -601,7 +603,7 @@ struct be_cmd_req_mcast_mac_config {
 	u16 num_mac;
 	u8 promiscuous;
 	u8 interface_id;
-	struct macaddr mac[32];
+	struct macaddr mac[BE_MAX_MC];
 } __packed;
 
 static inline struct be_hw_stats *
@@ -830,7 +832,8 @@ extern int be_cmd_vlan_config(struct be_adapter *adapter, u32 if_id,
 extern int be_cmd_promiscuous_config(struct be_adapter *adapter,
 			u8 port_num, bool en);
 extern int be_cmd_multicast_set(struct be_adapter *adapter, u32 if_id,
-			struct dev_mc_list *mc_list, u32 mc_count);
+			struct dev_mc_list *mc_list, u32 mc_count,
+			struct be_dma_mem *mem);
 extern int be_cmd_set_flow_control(struct be_adapter *adapter,
 			u32 tx_fc, u32 rx_fc);
 extern int be_cmd_get_flow_control(struct be_adapter *adapter,
@@ -849,3 +852,5 @@ extern int be_cmd_write_flashrom(struct be_adapter *adapter,
 			struct be_dma_mem *cmd, u32 flash_oper,
 			u32 flash_opcode, u32 buf_size);
 extern int be_cmd_get_flash_crc(struct be_adapter *adapter, u8 *flashed_crc);
+extern int be_cmd_fw_init(struct be_adapter *adapter);
+extern int be_cmd_fw_clean(struct be_adapter *adapter);
