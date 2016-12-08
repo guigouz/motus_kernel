@@ -111,7 +111,6 @@ static struct ctl_table netns_core_table[] = {
 		.extra1		= &zero,
 		.extra2		= &ushort_max,
 		.proc_handler	= proc_dointvec_minmax,
-		.strategy	= &sysctl_intvec
 	},
 	{ }
 };

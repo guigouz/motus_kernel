@@ -165,7 +165,6 @@ static struct ctl_table ipv4_table[] = {
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= &tcp_syn_retries_min,
 		.extra2		= &tcp_syn_retries_max,
-		.strategy	= &sysctl_intvec
 	},
 	{
 		.procname	= "ip_nonlocal_bind",
