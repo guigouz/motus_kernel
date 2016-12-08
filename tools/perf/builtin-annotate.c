@@ -24,6 +24,7 @@
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
+#include "util/process_events.h"
 
 static char		const *input_name = "perf.data";
 
@@ -33,11 +34,9 @@ static int		input;
 static int		full_paths;
 
 static int		print_line;
-static bool		use_modules;
 
 static unsigned long	page_size;
 static unsigned long	mmap_window = 32;
-const char		*vmlinux_name;
 
 struct sym_hist {
 	u64		sum;
@@ -53,6 +52,11 @@ struct sym_ext {
 struct sym_priv {
 	struct sym_hist	*hist;
 	struct sym_ext	*ext;
+};
+
+static struct symbol_conf symbol_conf = {
+	.priv_size	  = sizeof(struct sym_priv),
+	.try_vmlinux_path = true,
 };
 
 static const char *sym_hist_filter;
@@ -158,7 +162,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 
 	if (event->header.misc & PERF_RECORD_MISC_KERNEL) {
 		level = 'k';
-		sym = kernel_maps__find_symbol(ip, &map, symbol_filter);
+		sym = kernel_maps__find_function(ip, &map, symbol_filter);
 		dump_printf(" ...... dso: %s\n",
 			    map ? map->dso->long_name : "<not found>");
 	} else if (event->header.misc & PERF_RECORD_MISC_USER) {
@@ -167,7 +171,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		if (map != NULL) {
 got_map:
 			ip = map->map_ip(map, ip);
-			sym = map__find_symbol(map, ip, symbol_filter);
+			sym = map__find_function(map, ip, symbol_filter);
 		} else {
 			/*
 			 * If this is outside of all known maps,
@@ -202,32 +206,6 @@ got_map:
 }
 
 static int
-process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	struct map *map = map__new(&event->mmap, NULL, 0);
-	struct thread *thread = threads__findnew(event->mmap.pid);
-
-	dump_printf("%p [%p]: PERF_RECORD_MMAP %d: [%p(%p) @ %p]: %s\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->mmap.pid,
-		(void *)(long)event->mmap.start,
-		(void *)(long)event->mmap.len,
-		(void *)(long)event->mmap.pgoff,
-		event->mmap.filename);
-
-	if (thread == NULL || map == NULL) {
-		dump_printf("problem processing PERF_RECORD_MMAP, skipping event.\n");
-		return 0;
-	}
-
-	thread__insert_map(thread, map);
-	total_mmap++;
-
-	return 0;
-}
-
-static int
 process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	struct thread *thread = threads__findnew(event->comm.pid);
@@ -248,33 +226,6 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 }
 
 static int
-process_fork_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	struct thread *thread = threads__findnew(event->fork.pid);
-	struct thread *parent = threads__findnew(event->fork.ppid);
-
-	dump_printf("%p [%p]: PERF_RECORD_FORK: %d:%d\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->fork.pid, event->fork.ppid);
-
-	/*
-	 * A thread clone will have the same PID for both
-	 * parent and child.
-	 */
-	if (thread == parent)
-		return 0;
-
-	if (!thread || !parent || thread__fork(thread, parent)) {
-		dump_printf("problem processing PERF_RECORD_FORK, skipping event.\n");
-		return -1;
-	}
-	total_fork++;
-
-	return 0;
-}
-
-static int
 process_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	switch (event->header.type) {
@@ -288,7 +239,7 @@ process_event(event_t *event, unsigned long offset, unsigned long head)
 		return process_comm_event(event, offset, head);
 
 	case PERF_RECORD_FORK:
-		return process_fork_event(event, offset, head);
+		return process_task_event(event, offset, head);
 	/*
 	 * We dont process them right now but they are fine:
 	 */
@@ -638,11 +589,6 @@ static int __cmd_annotate(void)
 		exit(0);
 	}
 
-	if (kernel_maps__init(vmlinux_name, true, use_modules) < 0) {
-		pr_err("failed to create kernel maps for symbol resolution\b");
-		return -1;
-	}
-
 remap:
 	buf = (char *)mmap(NULL, page_size * mmap_window, PROT_READ,
 			   MAP_SHARED, input, offset);
@@ -743,8 +689,9 @@ static const struct option options[] = {
 		    "be more verbose (show symbol address, etc)"),
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
-	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
-	OPT_BOOLEAN('m', "modules", &use_modules,
+	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
+		   "file", "vmlinux pathname"),
+	OPT_BOOLEAN('m', "modules", &symbol_conf.use_modules,
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
 	OPT_BOOLEAN('l', "print-line", &print_line,
 		    "print matching source lines (may be slow)"),
@@ -770,7 +717,8 @@ static void setup_sorting(void)
 
 int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 {
-	symbol__init(sizeof(struct sym_priv));
+	if (symbol__init(&symbol_conf) < 0)
+		return -1;
 
 	page_size = getpagesize();
 

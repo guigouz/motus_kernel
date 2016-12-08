@@ -412,7 +412,7 @@ static int read_events(void)
 	register_idle_thread();
 	register_perf_file_handler(&file_handler);
 
-	return mmap_dispatch_perf_file(&header, input_name, NULL, false, 0, 0,
+	return mmap_dispatch_perf_file(&header, input_name, 0, 0,
 				       &cwdlen, &cwd);
 }
 
@@ -445,8 +445,7 @@ static void __print_result(struct rb_root *root, int n_lines, int is_caller)
 		if (is_caller) {
 			addr = data->call_site;
 			if (!raw_ip)
-				sym = kernel_maps__find_symbol(addr,
-							       NULL, NULL);
+				sym = kernel_maps__find_function(addr, NULL, NULL);
 		} else
 			addr = data->ptr;
 

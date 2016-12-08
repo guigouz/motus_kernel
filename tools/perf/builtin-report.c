@@ -30,6 +30,7 @@
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
+#include "util/process_events.h"
 
 static char		const *input_name = "perf.data";
 
@@ -38,7 +39,6 @@ static char		*dso_list_str, *comm_list_str, *sym_list_str,
 static struct strlist	*dso_list, *comm_list, *sym_list;
 
 static int		force;
-static bool		use_modules;
 
 static int		full_paths;
 static int		show_nr_samples;
@@ -52,14 +52,12 @@ static char		*pretty_printing_style = default_pretty_printing_style;
 static int		exclude_other = 1;
 
 static char		callchain_default_opt[] = "fractal,0.5";
-const char		*vmlinux_name;
-
-static char		*cwd;
-static int		cwdlen;
 
 static struct perf_header *header;
 
 static u64		sample_type;
+
+struct symbol_conf	symbol_conf;
 
 
 static size_t
@@ -450,14 +448,14 @@ got_map:
 		 * trick of looking in the whole kernel symbol list.
 		 */
 		if ((long long)ip < 0)
-			return kernel_maps__find_symbol(ip, mapp, NULL);
+			return kernel_maps__find_function(ip, mapp, NULL);
 	}
 	dump_printf(" ...... dso: %s\n",
 		    map ? map->dso->long_name : "<not found>");
 	dump_printf(" ...... map: %Lx -> %Lx\n", *ipp, ip);
 	*ipp  = ip;
 
-	return map ? map__find_symbol(map, ip, NULL) : NULL;
+	return map ? map__find_function(map, ip, NULL) : NULL;
 }
 
 static int call__match(struct symbol *sym)
@@ -497,7 +495,7 @@ static struct symbol **resolve_callchain(struct thread *thread,
 		case PERF_CONTEXT_HV:
 			break;
 		case PERF_CONTEXT_KERNEL:
-			sym = kernel_maps__find_symbol(ip, NULL, NULL);
+			sym = kernel_maps__find_function(ip, NULL, NULL);
 			break;
 		default:
 			sym = resolve_symbol(thread, NULL, &ip);
@@ -717,7 +715,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 
 	if (cpumode == PERF_RECORD_MISC_KERNEL) {
 		level = 'k';
-		sym = kernel_maps__find_symbol(ip, &map, NULL);
+		sym = kernel_maps__find_function(ip, &map, NULL);
 		dump_printf(" ...... dso: %s\n",
 			    map ? map->dso->long_name : "<not found>");
 	} else if (cpumode == PERF_RECORD_MISC_USER) {
@@ -751,33 +749,6 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 }
 
 static int
-process_mmap_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	struct map *map = map__new(&event->mmap, cwd, cwdlen);
-	struct thread *thread = threads__findnew(event->mmap.pid);
-
-	dump_printf("%p [%p]: PERF_RECORD_MMAP %d/%d: [%p(%p) @ %p]: %s\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->mmap.pid,
-		event->mmap.tid,
-		(void *)(long)event->mmap.start,
-		(void *)(long)event->mmap.len,
-		(void *)(long)event->mmap.pgoff,
-		event->mmap.filename);
-
-	if (thread == NULL || map == NULL) {
-		dump_printf("problem processing PERF_RECORD_MMAP, skipping event.\n");
-		return 0;
-	}
-
-	thread__insert_map(thread, map);
-	total_mmap++;
-
-	return 0;
-}
-
-static int
 process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 {
 	struct thread *thread = threads__findnew(event->comm.pid);
@@ -793,38 +764,6 @@ process_comm_event(event_t *event, unsigned long offset, unsigned long head)
 		return -1;
 	}
 	total_comm++;
-
-	return 0;
-}
-
-static int
-process_task_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	struct thread *thread = threads__findnew(event->fork.pid);
-	struct thread *parent = threads__findnew(event->fork.ppid);
-
-	dump_printf("%p [%p]: PERF_RECORD_%s: (%d:%d):(%d:%d)\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->header.type == PERF_RECORD_FORK ? "FORK" : "EXIT",
-		event->fork.pid, event->fork.tid,
-		event->fork.ppid, event->fork.ptid);
-
-	/*
-	 * A thread clone will have the same PID for both
-	 * parent and child.
-	 */
-	if (thread == parent)
-		return 0;
-
-	if (event->header.type == PERF_RECORD_EXIT)
-		return 0;
-
-	if (!thread || !parent || thread__fork(thread, parent)) {
-		dump_printf("problem processing PERF_RECORD_FORK, skipping event.\n");
-		return -1;
-	}
-	total_fork++;
 
 	return 0;
 }
@@ -926,8 +865,7 @@ static int __cmd_report(void)
 
 	register_perf_file_handler(&file_handler);
 
-	ret = mmap_dispatch_perf_file(&header, input_name, vmlinux_name,
-				      !vmlinux_name, force,
+	ret = mmap_dispatch_perf_file(&header, input_name, force,
 				      full_paths, &cwdlen, &cwd);
 	if (ret)
 		return ret;
@@ -1024,9 +962,10 @@ static const struct option options[] = {
 		    "be more verbose (show symbol address, etc)"),
 	OPT_BOOLEAN('D', "dump-raw-trace", &dump_trace,
 		    "dump raw trace in ASCII"),
-	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
+	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
+		   "file", "vmlinux pathname"),
 	OPT_BOOLEAN('f', "force", &force, "don't complain, do it"),
-	OPT_BOOLEAN('m', "modules", &use_modules,
+	OPT_BOOLEAN('m', "modules", &symbol_conf.use_modules,
 		    "load module symbols - WARNING: use only with -k and LIVE kernel"),
 	OPT_BOOLEAN('n', "show-nr-samples", &show_nr_samples,
 		    "Show a column with the number of samples"),
@@ -1096,7 +1035,8 @@ static void setup_list(struct strlist **list, const char *list_str,
 
 int cmd_report(int argc, const char **argv, const char *prefix __used)
 {
-	symbol__init(0);
+	if (symbol__init(&symbol_conf) < 0)
+		return -1;
 
 	argc = parse_options(argc, argv, options, report_usage, 0);
 

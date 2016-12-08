@@ -63,7 +63,7 @@ int perf_header_attr__add_id(struct perf_header_attr *self, u64 id)
  */
 struct perf_header *perf_header__new(void)
 {
-	struct perf_header *self = calloc(sizeof(*self), 1);
+	struct perf_header *self = zalloc(sizeof(*self));
 
 	if (self != NULL) {
 		self->size = 1;
@@ -252,12 +252,6 @@ static int perf_header__adds_write(struct perf_header *self, int fd)
 		struct perf_file_section *buildid_sec;
 
 		buildid_sec = &feat_sec[idx++];
-
-		/*
-		 * Read the kernel buildid nad the list of loaded modules with
-		 * its build_ids:
-		 */
-		kernel_maps__init(NULL, false, true);
 
 		/* Write build-ids */
 		buildid_sec->offset = lseek(fd, 0, SEEK_CUR);

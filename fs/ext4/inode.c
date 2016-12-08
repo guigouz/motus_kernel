@@ -2615,7 +2615,6 @@ static int bput_one(handle_t *handle, struct buffer_head *bh)
 }
 
 static int __ext4_journalled_writepage(struct page *page,
-				       struct writeback_control *wbc,
 				       unsigned int len)
 {
 	struct address_space *mapping = page->mapping;
@@ -2773,7 +2772,7 @@ static int ext4_writepage(struct page *page,
 		 * doesn't seem much point in redirtying the page here.
 		 */
 		ClearPageChecked(page);
-		return __ext4_journalled_writepage(page, wbc, len);
+		return __ext4_journalled_writepage(page, len);
 	}
 
 	if (test_opt(inode->i_sb, NOBH) && ext4_should_writeback_data(inode))

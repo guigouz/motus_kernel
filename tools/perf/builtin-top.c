@@ -79,7 +79,7 @@ static int			dump_symtab                     =      0;
 static bool			hide_kernel_symbols		=  false;
 static bool			hide_user_symbols		=  false;
 static struct winsize		winsize;
-const char 			*vmlinux_name;
+struct symbol_conf		symbol_conf;
 
 /*
  * Source
@@ -128,7 +128,7 @@ struct sym_entry {
 
 static inline struct symbol *sym_entry__symbol(struct sym_entry *self)
 {
-       return ((void *)self) + symbol__priv_size;
+       return ((void *)self) + symbol_conf.priv_size;
 }
 
 static void get_term_dimensions(struct winsize *ws)
@@ -181,7 +181,7 @@ static void parse_source(struct sym_entry *syme)
 		return;
 
 	if (syme->src == NULL) {
-		syme->src = calloc(1, sizeof(*source));
+		syme->src = zalloc(sizeof(*source));
 		if (syme->src == NULL)
 			return;
 		pthread_mutex_init(&syme->src->lock, NULL);
@@ -451,9 +451,8 @@ static void print_sym_table(void)
 	struct sym_entry *syme, *n;
 	struct rb_root tmp = RB_ROOT;
 	struct rb_node *nd;
-	int sym_width = 0, dso_width = 0;
+	int sym_width = 0, dso_width = 0, max_dso_width;
 	const int win_width = winsize.ws_col - 1;
-	struct dso *unique_dso = NULL, *first_dso = NULL;
 
 	samples = userspace_samples = 0;
 
@@ -539,11 +538,6 @@ static void print_sym_table(void)
 		    (int)syme->snap_count < count_filter)
 			continue;
 
-		if (first_dso == NULL)
-			unique_dso = first_dso = syme->map->dso;
-		else if (syme->map->dso != first_dso)
-			unique_dso = NULL;
-
 		if (syme->map->dso->long_name_len > dso_width)
 			dso_width = syme->map->dso->long_name_len;
 
@@ -553,14 +547,10 @@ static void print_sym_table(void)
 
 	printed = 0;
 
-	if (unique_dso)
-		printf("DSO: %s\n", unique_dso->long_name);
-	else {
-		int max_dso_width = winsize.ws_col - sym_width - 29;
-		if (dso_width > max_dso_width)
-			dso_width = max_dso_width;
-		putchar('\n');
-	}
+	max_dso_width = winsize.ws_col - sym_width - 29;
+	if (dso_width > max_dso_width)
+		dso_width = max_dso_width;
+	putchar('\n');
 	if (nr_counters == 1)
 		printf("             samples  pcnt");
 	else
@@ -568,17 +558,13 @@ static void print_sym_table(void)
 
 	if (verbose)
 		printf("         RIP       ");
-	printf(" %-*.*s", sym_width, sym_width, "function");
-	if (!unique_dso)
-		printf(" DSO");
-	putchar('\n');
+	printf(" %-*.*s DSO\n", sym_width, sym_width, "function");
 	printf("   %s    _______ _____",
 	       nr_counters == 1 ? "      " : "______");
 	if (verbose)
 		printf(" ________________");
 	printf(" %-*.*s", sym_width, sym_width, graph_line);
-	if (!unique_dso)
-		printf(" %-*.*s", dso_width, dso_width, graph_line);
+	printf(" %-*.*s", dso_width, dso_width, graph_line);
 	puts("\n");
 
 	for (nd = rb_first(&tmp); nd; nd = rb_next(nd)) {
@@ -603,12 +589,10 @@ static void print_sym_table(void)
 		if (verbose)
 			printf(" %016llx", sym->start);
 		printf(" %-*.*s", sym_width, sym_width, sym->name);
-		if (!unique_dso)
-			printf(" %-*.*s", dso_width, dso_width,
-			       dso_width >= syme->map->dso->long_name_len ?
-						syme->map->dso->long_name :
-						syme->map->dso->short_name);
-		printf("\n");
+		printf(" %-*.*s\n", dso_width, dso_width,
+		       dso_width >= syme->map->dso->long_name_len ?
+					syme->map->dso->long_name :
+					syme->map->dso->short_name);
 	}
 }
 
@@ -711,7 +695,7 @@ static void print_mapped_keys(void)
 
 	fprintf(stdout, "\t[f]     profile display filter (count).    \t(%d)\n", count_filter);
 
-	if (vmlinux_name) {
+	if (symbol_conf.vmlinux_name) {
 		fprintf(stdout, "\t[F]     annotate display filter (percent). \t(%d%%)\n", sym_pcnt_filter);
 		fprintf(stdout, "\t[s]     annotate symbol.                   \t(%s)\n", name?: "NULL");
 		fprintf(stdout, "\t[S]     stop annotation.\n");
@@ -748,7 +732,7 @@ static int key_mapped(int c)
 		case 'F':
 		case 's':
 		case 'S':
-			return vmlinux_name ? 1 : 0;
+			return symbol_conf.vmlinux_name ? 1 : 0;
 		default:
 			break;
 	}
@@ -964,7 +948,7 @@ static void event__process_sample(const event_t *self, int counter)
 		map = thread__find_map(thread, ip);
 		if (map != NULL) {
 			ip = map->map_ip(map, ip);
-			sym = map__find_symbol(map, ip, symbol_filter);
+			sym = map__find_function(map, ip, symbol_filter);
 			if (sym == NULL)
 				return;
 			userspace_samples++;
@@ -984,7 +968,7 @@ static void event__process_sample(const event_t *self, int counter)
 		if (hide_kernel_symbols)
 			return;
 
-		sym = kernel_maps__find_symbol(ip, &map, symbol_filter);
+		sym = kernel_maps__find_function(ip, &map, symbol_filter);
 		if (sym == NULL)
 			return;
 		break;
@@ -1277,7 +1261,8 @@ static const struct option options[] = {
 			    "system-wide collection from all CPUs"),
 	OPT_INTEGER('C', "CPU", &profile_cpu,
 		    "CPU to profile on"),
-	OPT_STRING('k', "vmlinux", &vmlinux_name, "file", "vmlinux pathname"),
+	OPT_STRING('k', "vmlinux", &symbol_conf.vmlinux_name,
+		   "file", "vmlinux pathname"),
 	OPT_BOOLEAN('K', "hide_kernel_symbols", &hide_kernel_symbols,
 		    "hide kernel symbols"),
 	OPT_INTEGER('m', "mmap-pages", &mmap_pages,
@@ -1311,7 +1296,7 @@ static const struct option options[] = {
 
 int cmd_top(int argc, const char **argv, const char *prefix __used)
 {
-	int counter, err;
+	int counter;
 
 	page_size = sysconf(_SC_PAGE_SIZE);
 
@@ -1329,15 +1314,16 @@ int cmd_top(int argc, const char **argv, const char *prefix __used)
 	if (!nr_counters)
 		nr_counters = 1;
 
-	symbol__init(sizeof(struct sym_entry) +
-		     (nr_counters + 1) * sizeof(unsigned long));
+	symbol_conf.priv_size = (sizeof(struct sym_entry) +
+				 (nr_counters + 1) * sizeof(unsigned long));
+	if (symbol_conf.vmlinux_name == NULL)
+		symbol_conf.try_vmlinux_path = true;
+	if (symbol__init(&symbol_conf) < 0)
+		return -1;
 
 	if (delay_secs < 1)
 		delay_secs = 1;
 
-	err = kernel_maps__init(vmlinux_name, !vmlinux_name, true);
-	if (err < 0)
-		return err;
 	parse_source(sym_filter_entry);
 
 	/*
