@@ -63,6 +63,12 @@
 static void sctp_assoc_bh_rcv(struct work_struct *work);
 static void sctp_assoc_free_asconf_acks(struct sctp_association *asoc);
 
+/* Keep track of the new idr low so that we don't re-use association id
+ * numbers too fast.  It is protected by they idr spin lock is in the
+ * range of 1 - INT_MAX.
+ */
+static u32 idr_low = 1;
+
 
 /* 1st Level Abstractions. */
 
@@ -167,7 +173,7 @@ static struct sctp_association *sctp_association_init(struct sctp_association *a
 	asoc->timeouts[SCTP_EVENT_TIMEOUT_HEARTBEAT] = 0;
 	asoc->timeouts[SCTP_EVENT_TIMEOUT_SACK] = asoc->sackdelay;
 	asoc->timeouts[SCTP_EVENT_TIMEOUT_AUTOCLOSE] =
-		sp->autoclose * HZ;
+		(unsigned long)sp->autoclose * HZ;
 
 	/* Initilizes the timers */
 	for (i = SCTP_EVENT_TIMEOUT_NONE; i < SCTP_NUM_TIMEOUT_TYPES; ++i)
@@ -738,6 +744,7 @@ struct sctp_transport *sctp_assoc_add_peer(struct sctp_association *asoc,
 
 	peer->partial_bytes_acked = 0;
 	peer->flight_size = 0;
+	peer->burst_limited = 0;
 
 	/* Set the transport's RTO.initial value */
 	peer->rto = asoc->rto_initial;
@@ -1557,7 +1564,12 @@ retry:
 
 	spin_lock_bh(&sctp_assocs_id_lock);
 	error = idr_get_new_above(&sctp_assocs_id, (void *)asoc,
-				    1, &assoc_id);
+				    idr_low, &assoc_id);
+	if (!error) {
+		idr_low = assoc_id + 1;
+		if (idr_low == INT_MAX)
+			idr_low = 1;
+	}
 	spin_unlock_bh(&sctp_assocs_id_lock);
 	if (error == -EAGAIN)
 		goto retry;

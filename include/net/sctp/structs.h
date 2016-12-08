@@ -942,6 +942,8 @@ struct sctp_transport {
 	/* Data that has been sent, but not acknowledged. */
 	__u32 flight_size;
 
+	__u32 burst_limited;	/* Holds old cwnd when max.burst is applied */
+
 	/* TSN marking the fast recovery exit point */
 	__u32 fast_recovery_exit;
 
@@ -949,12 +951,6 @@ struct sctp_transport {
 	struct dst_entry *dst;
 	/* Source address. */
 	union sctp_addr saddr;
-
-	/* When was the last time(in jiffies) that a data packet was sent on
-	 * this transport?  This is used to adjust the cwnd when the transport
-	 * becomes inactive.
-	 */
-	unsigned long last_time_used;
 
 	/* Heartbeat interval: The endpoint sends out a Heartbeat chunk to
 	 * the destination address every heartbeat interval.
@@ -1079,6 +1075,8 @@ void sctp_transport_put(struct sctp_transport *);
 void sctp_transport_update_rto(struct sctp_transport *, __u32);
 void sctp_transport_raise_cwnd(struct sctp_transport *, __u32, __u32);
 void sctp_transport_lower_cwnd(struct sctp_transport *, sctp_lower_cwnd_t);
+void sctp_transport_burst_limited(struct sctp_transport *);
+void sctp_transport_burst_reset(struct sctp_transport *);
 unsigned long sctp_transport_timeout(struct sctp_transport *);
 void sctp_transport_reset(struct sctp_transport *);
 void sctp_transport_update_pmtu(struct sctp_transport *, u32);
