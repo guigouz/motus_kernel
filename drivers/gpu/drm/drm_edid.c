@@ -125,18 +125,20 @@ static const u8 edid_header[] = {
  */
 static bool edid_is_valid(struct edid *edid)
 {
-	int i;
+	int i, score = 0;
 	u8 csum = 0;
 	u8 *raw_edid = (u8 *)edid;
 
-	if (memcmp(edid->header, edid_header, sizeof(edid_header)))
+	for (i = 0; i < sizeof(edid_header); i++)
+		if (raw_edid[i] == edid_header[i])
+			score++;
+
+	if (score == 8) ;
+	else if (score >= 6) {
+		DRM_DEBUG("Fixing EDID header, your hardware may be failing\n");
+		memcpy(raw_edid, edid_header, sizeof(edid_header));
+	} else
 		goto bad;
-	if (edid->version != 1) {
-		DRM_ERROR("EDID has major version %d, instead of 1\n", edid->version);
-		goto bad;
-	}
-	if (edid->revision > 4)
-		DRM_DEBUG("EDID minor > 4, assuming backward compatibility\n");
 
 	for (i = 0; i < EDID_LENGTH; i++)
 		csum += raw_edid[i];
@@ -144,6 +146,14 @@ static bool edid_is_valid(struct edid *edid)
 		DRM_ERROR("EDID checksum is invalid, remainder is %d\n", csum);
 		goto bad;
 	}
+
+	if (edid->version != 1) {
+		DRM_ERROR("EDID has major version %d, instead of 1\n", edid->version);
+		goto bad;
+	}
+
+	if (edid->revision > 4)
+		DRM_DEBUG("EDID minor > 4, assuming backward compatibility\n");
 
 	return 1;
 
@@ -1018,19 +1028,19 @@ static int drm_ddc_read_edid(struct drm_connector *connector,
 			     struct i2c_adapter *adapter,
 			     char *buf, int len)
 {
-	int ret;
+	int i;
 
-	ret = drm_do_probe_ddc_edid(adapter, buf, len);
-	if (ret != 0) {
-		goto end;
+	for (i = 0; i < 4; i++) {
+		if (drm_do_probe_ddc_edid(adapter, buf, len))
+			return -1;
+		if (edid_is_valid((struct edid *)buf))
+			return 0;
 	}
-	if (!edid_is_valid((struct edid *)buf)) {
-		dev_warn(&connector->dev->pdev->dev, "%s: EDID invalid.\n",
-			 drm_get_connector_name(connector));
-		ret = -1;
-	}
-end:
-	return ret;
+
+	/* repeated checksum failures; warn, but carry on */
+	dev_warn(&connector->dev->pdev->dev, "%s: EDID invalid.\n",
+		 drm_get_connector_name(connector));
+	return -1;
 }
 
 /**
@@ -1251,6 +1261,8 @@ int drm_add_modes_noedid(struct drm_connector *connector,
 					ptr->vdisplay > vdisplay)
 				continue;
 		}
+		if (drm_mode_vrefresh(ptr) > 61)
+			continue;
 		mode = drm_mode_duplicate(dev, ptr);
 		if (mode) {
 			drm_mode_probed_add(connector, mode);

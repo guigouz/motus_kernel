@@ -386,7 +386,7 @@ static void xics_set_affinity(unsigned int virq, const struct cpumask *cpumask)
 }
 
 static struct irq_chip xics_pic_direct = {
-	.typename = " XICS     ",
+	.name = " XICS     ",
 	.startup = xics_startup,
 	.mask = xics_mask_irq,
 	.unmask = xics_unmask_irq,
@@ -395,7 +395,7 @@ static struct irq_chip xics_pic_direct = {
 };
 
 static struct irq_chip xics_pic_lpar = {
-	.typename = " XICS     ",
+	.name = " XICS     ",
 	.startup = xics_startup,
 	.mask = xics_mask_irq,
 	.unmask = xics_unmask_irq,
