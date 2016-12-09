@@ -118,7 +118,7 @@ static caddr_t remap_window(struct map_info *map, unsigned long to)
 		DEBUG(2, "Remapping window from 0x%8.8x to 0x%8.8x",
 		      dev->offset, mrq.CardOffset);
 		mrq.Page = 0;
-		ret = pcmcia_map_mem_page(win, &mrq);
+		ret = pcmcia_map_mem_page(dev->p_dev, win, &mrq);
 		if (ret != 0)
 			return NULL;
 		dev->offset = mrq.CardOffset;
@@ -530,7 +530,7 @@ static int pcmciamtd_config(struct pcmcia_device *link)
 		int ret;
 		DEBUG(2, "requesting window with size = %dKiB memspeed = %d",
 		      req.Size >> 10, req.AccessSpeed);
-		ret = pcmcia_request_window(&link, &req, &link->win);
+		ret = pcmcia_request_window(link, &req, &link->win);
 		DEBUG(2, "ret = %d dev->win_size = %d", ret, dev->win_size);
 		if(ret) {
 			req.Size >>= 1;

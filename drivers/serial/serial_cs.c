@@ -334,7 +334,6 @@ static int serial_probe(struct pcmcia_device *link)
 	link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
 	link->io.NumPorts1 = 8;
 	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
 	link->conf.Attributes = CONF_ENABLE_IRQ;
 	if (do_sound) {
 		link->conf.Attributes |= CONF_ENABLE_SPKR;
@@ -387,7 +386,7 @@ static int setup_serial(struct pcmcia_device *handle, struct serial_info * info,
 	port.irq = irq;
 	port.flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_SHARE_IRQ;
 	port.uartclk = 1843200;
-	port.dev = &handle_to_dev(handle);
+	port.dev = &handle->dev;
 	if (buggy_uart)
 		port.flags |= UPF_BUGGY_UART;
 

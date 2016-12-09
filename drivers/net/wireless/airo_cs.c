@@ -134,7 +134,6 @@ static int airo_probe(struct pcmcia_device *p_dev)
 
 	/* Interrupt setup */
 	p_dev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-	p_dev->irq.IRQInfo1 = IRQ_LEVEL_ID;
 	p_dev->irq.Handler = NULL;
 
 	/*
@@ -257,11 +256,11 @@ static int airo_cs_config_check(struct pcmcia_device *p_dev,
 		req->Base = mem->win[0].host_addr;
 		req->Size = mem->win[0].len;
 		req->AccessSpeed = 0;
-		if (pcmcia_request_window(&p_dev, req, &p_dev->win) != 0)
+		if (pcmcia_request_window(p_dev, req, &p_dev->win) != 0)
 			return -ENODEV;
 		map.Page = 0;
 		map.CardOffset = mem->win[0].card_addr;
-		if (pcmcia_map_mem_page(p_dev->win, &map) != 0)
+		if (pcmcia_map_mem_page(p_dev, p_dev->win, &map) != 0)
 			return -ENODEV;
 	}
 	/* If we got this far, we're cool! */
@@ -322,7 +321,7 @@ static int airo_config(struct pcmcia_device *link)
 		goto failed;
 	((local_info_t *)link->priv)->eth_dev =
 		init_airo_card(link->irq.AssignedIRQ,
-			       link->io.BasePort1, 1, &handle_to_dev(link));
+			       link->io.BasePort1, 1, &link->dev);
 	if (!((local_info_t *)link->priv)->eth_dev)
 		goto failed;
 

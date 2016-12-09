@@ -148,10 +148,6 @@ extern struct rw_semaphore pcmcia_socket_list_rwsem;
 extern struct list_head pcmcia_socket_list;
 extern struct class pcmcia_socket_class;
 
-int pcmcia_get_window(struct pcmcia_socket *s,
-		      window_handle_t *handle,
-		      int idx,
-		      win_req_t *req);
 int pccard_register_pcmcia(struct pcmcia_socket *s, struct pcmcia_callback *c);
 struct pcmcia_socket *pcmcia_get_socket_by_nr(unsigned int nr);
 

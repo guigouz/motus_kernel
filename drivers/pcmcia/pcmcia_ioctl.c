@@ -218,6 +218,61 @@ static int pcmcia_adjust_resource_info(adjust_t *adj)
 	return (ret);
 }
 
+
+/** pcmcia_get_window
+ */
+static int pcmcia_get_window(struct pcmcia_socket *s, window_handle_t *wh_out,
+			window_handle_t wh, win_req_t *req)
+{
+	pccard_mem_map *win;
+	window_handle_t w;
+
+	wh--;
+	if (!s || !(s->state & SOCKET_PRESENT))
+		return -ENODEV;
+	if (wh >= MAX_WIN)
+		return -EINVAL;
+	for (w = wh; w < MAX_WIN; w++)
+		if (s->state & SOCKET_WIN_REQ(w))
+			break;
+	if (w == MAX_WIN)
+		return -EINVAL;
+	win = &s->win[w];
+	req->Base = win->res->start;
+	req->Size = win->res->end - win->res->start + 1;
+	req->AccessSpeed = win->speed;
+	req->Attributes = 0;
+	if (win->flags & MAP_ATTRIB)
+		req->Attributes |= WIN_MEMORY_TYPE_AM;
+	if (win->flags & MAP_ACTIVE)
+		req->Attributes |= WIN_ENABLE;
+	if (win->flags & MAP_16BIT)
+		req->Attributes |= WIN_DATA_WIDTH_16;
+	if (win->flags & MAP_USE_WAIT)
+		req->Attributes |= WIN_USE_WAIT;
+
+	*wh_out = w + 1;
+	return 0;
+} /* pcmcia_get_window */
+
+
+/** pcmcia_get_mem_page
+ *
+ * Change the card address of an already open memory window.
+ */
+static int pcmcia_get_mem_page(struct pcmcia_socket *skt, window_handle_t wh,
+			memreq_t *req)
+{
+	wh--;
+	if (wh >= MAX_WIN)
+		return -EINVAL;
+
+	req->Page = 0;
+	req->CardOffset = skt->win[wh].card_start;
+	return 0;
+} /* pcmcia_get_mem_page */
+
+
 /** pccard_get_status
  *
  * Get the current socket state bits.  We don't support the latched
@@ -916,15 +971,15 @@ static int ds_ioctl(struct inode * inode, struct file * file,
 	goto free_out;
 	break;
     case DS_GET_FIRST_WINDOW:
-	ret = pcmcia_get_window(s, &buf->win_info.handle, 0,
+	ret = pcmcia_get_window(s, &buf->win_info.handle, 1,
 			&buf->win_info.window);
 	break;
     case DS_GET_NEXT_WINDOW:
 	ret = pcmcia_get_window(s, &buf->win_info.handle,
-			buf->win_info.handle->index + 1, &buf->win_info.window);
+			buf->win_info.handle + 1, &buf->win_info.window);
 	break;
     case DS_GET_MEM_PAGE:
-	ret = pcmcia_get_mem_page(buf->win_info.handle,
+	ret = pcmcia_get_mem_page(s, buf->win_info.handle,
 			   &buf->win_info.map);
 	break;
     case DS_REPLACE_CIS:

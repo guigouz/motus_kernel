@@ -1898,8 +1898,7 @@ static int wl3501_probe(struct pcmcia_device *p_dev)
 	p_dev->io.IOAddrLines	= 5;
 
 	/* Interrupt setup */
-	p_dev->irq.Attributes	= IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
-	p_dev->irq.IRQInfo1	= IRQ_LEVEL_ID;
+	p_dev->irq.Attributes	= IRQ_TYPE_DYNAMIC_SHARING;
 	p_dev->irq.Handler = wl3501_interrupt;
 
 	/* General socket configuration */
@@ -1922,7 +1921,7 @@ static int wl3501_probe(struct pcmcia_device *p_dev)
 	dev->wireless_handlers	= &wl3501_handler_def;
 	SET_ETHTOOL_OPS(dev, &ops);
 	netif_stop_queue(dev);
-	p_dev->priv = p_dev->irq.Instance = dev;
+	p_dev->priv = dev;
 
 	return wl3501_config(p_dev);
 out_link:
@@ -1975,7 +1974,7 @@ static int wl3501_config(struct pcmcia_device *link)
 
 	dev->irq = link->irq.AssignedIRQ;
 	dev->base_addr = link->io.BasePort1;
-	SET_NETDEV_DEV(dev, &handle_to_dev(link));
+	SET_NETDEV_DEV(dev, &link->dev);
 	if (register_netdev(dev)) {
 		printk(KERN_NOTICE "wl3501_cs: register_netdev() failed\n");
 		goto failed;

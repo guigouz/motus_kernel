@@ -266,7 +266,6 @@ static int pcnet_probe(struct pcmcia_device *link)
     link->priv = dev;
 
     link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-    link->irq.IRQInfo1 = IRQ_LEVEL_ID;
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
 
@@ -317,7 +316,7 @@ static hw_info_t *get_hwinfo(struct pcmcia_device *link)
     req.Attributes = WIN_DATA_WIDTH_8|WIN_MEMORY_TYPE_AM|WIN_ENABLE;
     req.Base = 0; req.Size = 0;
     req.AccessSpeed = 0;
-    i = pcmcia_request_window(&link, &req, &link->win);
+    i = pcmcia_request_window(link, &req, &link->win);
     if (i != 0)
 	return NULL;
 
@@ -325,7 +324,7 @@ static hw_info_t *get_hwinfo(struct pcmcia_device *link)
     mem.Page = 0;
     for (i = 0; i < NR_INFO; i++) {
 	mem.CardOffset = hw_info[i].offset & ~(req.Size-1);
-	pcmcia_map_mem_page(link->win, &mem);
+	pcmcia_map_mem_page(link, link->win, &mem);
 	base = &virt[hw_info[i].offset & (req.Size-1)];
 	if ((readb(base+0) == hw_info[i].a0) &&
 	    (readb(base+2) == hw_info[i].a1) &&
@@ -646,7 +645,7 @@ static int pcnet_config(struct pcmcia_device *link)
 	mii_phy_probe(dev);
 
     link->dev_node = &info->node;
-    SET_NETDEV_DEV(dev, &handle_to_dev(link));
+    SET_NETDEV_DEV(dev, &link->dev);
 
     if (register_netdev(dev) != 0) {
 	printk(KERN_NOTICE "pcnet_cs: register_netdev() failed\n");
@@ -1491,7 +1490,7 @@ static int setup_shmem_window(struct pcmcia_device *link, int start_pg,
     req.Attributes |= WIN_USE_WAIT;
     req.Base = 0; req.Size = window_size;
     req.AccessSpeed = mem_speed;
-    ret = pcmcia_request_window(&link, &req, &link->win);
+    ret = pcmcia_request_window(link, &req, &link->win);
     if (ret)
 	    goto failed;
 
@@ -1499,7 +1498,7 @@ static int setup_shmem_window(struct pcmcia_device *link, int start_pg,
     offset = mem.CardOffset % window_size;
     mem.CardOffset -= offset;
     mem.Page = 0;
-    ret = pcmcia_map_mem_page(link->win, &mem);
+    ret = pcmcia_map_mem_page(link, link->win, &mem);
     if (ret)
 	    goto failed;
 
@@ -1514,7 +1513,7 @@ static int setup_shmem_window(struct pcmcia_device *link, int start_pg,
     if (i != (TX_PAGES<<8)) {
 	iounmap(info->base);
 	pcmcia_release_window(link, link->win);
-	info->base = NULL; link->win = NULL;
+	info->base = NULL; link->win = 0;
 	goto failed;
     }
 

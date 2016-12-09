@@ -591,7 +591,7 @@ static int if_cs_prog_helper(struct if_cs_card *card)
 
 	/* TODO: make firmware file configurable */
 	ret = request_firmware(&fw, "libertas_cs_helper.fw",
-		&handle_to_dev(card->p_dev));
+		&card->p_dev->dev);
 	if (ret) {
 		lbs_pr_err("can't load helper firmware\n");
 		ret = -ENODEV;
@@ -664,7 +664,7 @@ static int if_cs_prog_real(struct if_cs_card *card)
 
 	/* TODO: make firmware file configurable */
 	ret = request_firmware(&fw, "libertas_cs.fw",
-		&handle_to_dev(card->p_dev));
+		&card->p_dev->dev);
 	if (ret) {
 		lbs_pr_err("can't load firmware\n");
 		ret = -ENODEV;
@@ -838,7 +838,6 @@ static int if_cs_probe(struct pcmcia_device *p_dev)
 
 	p_dev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
 	p_dev->irq.Handler = NULL;
-	p_dev->irq.IRQInfo1 = IRQ_INFO2_VALID | IRQ_LEVEL_ID;
 
 	p_dev->conf.Attributes = 0;
 	p_dev->conf.IntType = INT_MEMORY_AND_IO;

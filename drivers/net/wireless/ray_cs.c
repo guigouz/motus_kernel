@@ -323,8 +323,7 @@ static int ray_probe(struct pcmcia_device *p_dev)
 	p_dev->io.IOAddrLines = 5;
 
 	/* Interrupt setup. For PCMCIA, driver takes what's given */
-	p_dev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
-	p_dev->irq.IRQInfo1 = IRQ_LEVEL_ID;
+	p_dev->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
 	p_dev->irq.Handler = &ray_interrupt;
 
 	/* General socket configuration */
@@ -333,7 +332,6 @@ static int ray_probe(struct pcmcia_device *p_dev)
 	p_dev->conf.ConfigIndex = 1;
 
 	p_dev->priv = dev;
-	p_dev->irq.Instance = dev;
 
 	local->finder = p_dev;
 	local->card_status = CARD_INSERTED;
@@ -438,12 +436,12 @@ static int ray_config(struct pcmcia_device *link)
 	req.Base = 0;
 	req.Size = 0x8000;
 	req.AccessSpeed = ray_mem_speed;
-	ret = pcmcia_request_window(&link, &req, &link->win);
+	ret = pcmcia_request_window(link, &req, &link->win);
 	if (ret)
 		goto failed;
 	mem.CardOffset = 0x0000;
 	mem.Page = 0;
-	ret = pcmcia_map_mem_page(link->win, &mem);
+	ret = pcmcia_map_mem_page(link, link->win, &mem);
 	if (ret)
 		goto failed;
 	local->sram = ioremap(req.Base, req.Size);
@@ -454,12 +452,12 @@ static int ray_config(struct pcmcia_device *link)
 	req.Base = 0;
 	req.Size = 0x4000;
 	req.AccessSpeed = ray_mem_speed;
-	ret = pcmcia_request_window(&link, &req, &local->rmem_handle);
+	ret = pcmcia_request_window(link, &req, &local->rmem_handle);
 	if (ret)
 		goto failed;
 	mem.CardOffset = 0x8000;
 	mem.Page = 0;
-	ret = pcmcia_map_mem_page(local->rmem_handle, &mem);
+	ret = pcmcia_map_mem_page(link, local->rmem_handle, &mem);
 	if (ret)
 		goto failed;
 	local->rmem = ioremap(req.Base, req.Size);
@@ -470,12 +468,12 @@ static int ray_config(struct pcmcia_device *link)
 	req.Base = 0;
 	req.Size = 0x1000;
 	req.AccessSpeed = ray_mem_speed;
-	ret = pcmcia_request_window(&link, &req, &local->amem_handle);
+	ret = pcmcia_request_window(link, &req, &local->amem_handle);
 	if (ret)
 		goto failed;
 	mem.CardOffset = 0x0000;
 	mem.Page = 0;
-	ret = pcmcia_map_mem_page(local->amem_handle, &mem);
+	ret = pcmcia_map_mem_page(link, local->amem_handle, &mem);
 	if (ret)
 		goto failed;
 	local->amem = ioremap(req.Base, req.Size);
@@ -488,7 +486,7 @@ static int ray_config(struct pcmcia_device *link)
 		return -ENODEV;
 	}
 
-	SET_NETDEV_DEV(dev, &handle_to_dev(link));
+	SET_NETDEV_DEV(dev, &link->dev);
 	i = register_netdev(dev);
 	if (i != 0) {
 		printk("ray_config register_netdev() failed\n");

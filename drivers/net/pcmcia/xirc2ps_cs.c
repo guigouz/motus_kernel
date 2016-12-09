@@ -556,7 +556,6 @@ xirc2ps_probe(struct pcmcia_device *link)
     link->conf.IntType = INT_MEMORY_AND_IO;
     link->conf.ConfigIndex = 1;
     link->irq.Handler = xirc2ps_interrupt;
-    link->irq.Instance = dev;
 
     /* Fill in card specific entries */
     dev->netdev_ops = &netdev_ops;
@@ -835,8 +834,6 @@ xirc2ps_config(struct pcmcia_device * link)
 
     link->io.IOAddrLines =10;
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
-    link->irq.Attributes = IRQ_HANDLE_PRESENT;
-    link->irq.IRQInfo1 = IRQ_LEVEL_ID;
     if (local->modem) {
 	int pass;
 
@@ -926,13 +923,13 @@ xirc2ps_config(struct pcmcia_device * link)
 	req.Attributes = WIN_DATA_WIDTH_8|WIN_MEMORY_TYPE_AM|WIN_ENABLE;
 	req.Base = req.Size = 0;
 	req.AccessSpeed = 0;
-	if ((err = pcmcia_request_window(&link, &req, &link->win)))
+	if ((err = pcmcia_request_window(link, &req, &link->win)))
 	    goto config_error;
 
 	local->dingo_ccr = ioremap(req.Base,0x1000) + 0x0800;
 	mem.CardOffset = 0x0;
 	mem.Page = 0;
-	if ((err = pcmcia_map_mem_page(link->win, &mem)))
+	if ((err = pcmcia_map_mem_page(link, link->win, &mem)))
 	    goto config_error;
 
 	/* Setup the CCRs; there are no infos in the CIS about the Ethernet
@@ -992,7 +989,7 @@ xirc2ps_config(struct pcmcia_device * link)
 	do_reset(dev, 1); /* a kludge to make the cem56 work */
 
     link->dev_node = &local->node;
-    SET_NETDEV_DEV(dev, &handle_to_dev(link));
+    SET_NETDEV_DEV(dev, &link->dev);
 
     if ((err=register_netdev(dev))) {
 	printk(KNOT_XIRC "register_netdev() failed\n");

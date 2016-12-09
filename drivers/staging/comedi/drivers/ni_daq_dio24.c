@@ -254,7 +254,6 @@ static int dio24_cs_attach(struct pcmcia_device *link)
 
 	/* Interrupt setup */
 	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
-	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
 	link->irq.Handler = NULL;
 
 	/*
@@ -363,11 +362,11 @@ static int dio24_pcmcia_config_loop(struct pcmcia_device *p_dev,
 		if (req->Size < 0x1000)
 			req->Size = 0x1000;
 		req->AccessSpeed = 0;
-		if (pcmcia_request_window(&p_dev, req, &p_dev->win))
+		if (pcmcia_request_window(p_dev, req, &p_dev->win))
 			return -ENODEV;
 		map.Page = 0;
 		map.CardOffset = mem->win[0].card_addr;
-		if (pcmcia_map_mem_page(p_dev->win, &map))
+		if (pcmcia_map_mem_page(p_dev, p_dev->win, &map))
 			return -ENODEV;
 	}
 	/* If we got this far, we're cool! */

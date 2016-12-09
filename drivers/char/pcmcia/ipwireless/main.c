@@ -93,8 +93,6 @@ static int ipwireless_probe(struct pcmcia_device *p_dev,
 	p_dev->io.NumPorts1 = cfg->io.win[0].len;
 	p_dev->io.IOAddrLines = 16;
 
-	p_dev->irq.IRQInfo1 = cfg->irq.IRQInfo1;
-
 	/* 0x40 causes it to generate level mode interrupts. */
 	/* 0x04 enables IREQ pin. */
 	p_dev->conf.ConfigIndex = cfg->index | 0x44;
@@ -116,7 +114,7 @@ static int ipwireless_probe(struct pcmcia_device *p_dev,
 		ipw->request_common_memory.Size = 0x1000;
 	ipw->request_common_memory.AccessSpeed = 0;
 
-	ret = pcmcia_request_window(&p_dev, &ipw->request_common_memory,
+	ret = pcmcia_request_window(p_dev, &ipw->request_common_memory,
 				&ipw->handle_common_memory);
 
 	if (ret != 0)
@@ -125,7 +123,7 @@ static int ipwireless_probe(struct pcmcia_device *p_dev,
 	memreq_common_memory.CardOffset = cfg->mem.win[0].card_addr;
 	memreq_common_memory.Page = 0;
 
-	ret = pcmcia_map_mem_page(ipw->handle_common_memory,
+	ret = pcmcia_map_mem_page(p_dev, ipw->handle_common_memory,
 				&memreq_common_memory);
 
 	if (ret != 0)
@@ -145,7 +143,7 @@ static int ipwireless_probe(struct pcmcia_device *p_dev,
 	ipw->request_attr_memory.Size = 0;	/* this used to be 0x1000 */
 	ipw->request_attr_memory.AccessSpeed = 0;
 
-	ret = pcmcia_request_window(&p_dev, &ipw->request_attr_memory,
+	ret = pcmcia_request_window(p_dev, &ipw->request_attr_memory,
 				&ipw->handle_attr_memory);
 
 	if (ret != 0)
@@ -154,7 +152,7 @@ static int ipwireless_probe(struct pcmcia_device *p_dev,
 	memreq_attr_memory.CardOffset = 0;
 	memreq_attr_memory.Page = 0;
 
-	ret = pcmcia_map_mem_page(ipw->handle_attr_memory,
+	ret = pcmcia_map_mem_page(p_dev, ipw->handle_attr_memory,
 				&memreq_attr_memory);
 
 	if (ret != 0)
@@ -197,9 +195,8 @@ static int config_ipwireless(struct ipw_dev *ipw)
 	link->conf.Attributes = CONF_ENABLE_IRQ;
 	link->conf.IntType = INT_MEMORY_AND_IO;
 
-	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
+	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
 	link->irq.Handler = ipwireless_interrupt;
-	link->irq.Instance = ipw->hardware;
 
 	INIT_WORK(&ipw->work_reboot, signalled_reboot_work);
 
@@ -315,7 +312,6 @@ static int ipwireless_attach(struct pcmcia_device *link)
 
 	ipw->link = link;
 	link->priv = ipw;
-	link->irq.Instance = ipw;
 
 	/* Link this device into our device list. */
 	link->dev_node = &ipw->nodes[0];

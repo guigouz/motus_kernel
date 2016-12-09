@@ -185,67 +185,20 @@ int pcmcia_access_configuration_register(struct pcmcia_device *p_dev,
 EXPORT_SYMBOL(pcmcia_access_configuration_register);
 
 
-/** pcmcia_get_window
- */
-int pcmcia_get_window(struct pcmcia_socket *s, window_handle_t *handle,
-		      int idx, win_req_t *req)
+int pcmcia_map_mem_page(struct pcmcia_device *p_dev, window_handle_t wh,
+			memreq_t *req)
 {
-	window_t *win;
-	int w;
+	struct pcmcia_socket *s = p_dev->socket;
 
-	if (!s || !(s->state & SOCKET_PRESENT))
-		return -ENODEV;
-	for (w = idx; w < MAX_WIN; w++)
-		if (s->state & SOCKET_WIN_REQ(w))
-			break;
-	if (w == MAX_WIN)
+	wh--;
+	if (wh >= MAX_WIN)
 		return -EINVAL;
-	win = &s->win[w];
-	req->Base = win->ctl.res->start;
-	req->Size = win->ctl.res->end - win->ctl.res->start + 1;
-	req->AccessSpeed = win->ctl.speed;
-	req->Attributes = 0;
-	if (win->ctl.flags & MAP_ATTRIB)
-		req->Attributes |= WIN_MEMORY_TYPE_AM;
-	if (win->ctl.flags & MAP_ACTIVE)
-		req->Attributes |= WIN_ENABLE;
-	if (win->ctl.flags & MAP_16BIT)
-		req->Attributes |= WIN_DATA_WIDTH_16;
-	if (win->ctl.flags & MAP_USE_WAIT)
-		req->Attributes |= WIN_USE_WAIT;
-	*handle = win;
-	return 0;
-} /* pcmcia_get_window */
-EXPORT_SYMBOL(pcmcia_get_window);
-
-
-/** pcmcia_get_mem_page
- *
- * Change the card address of an already open memory window.
- */
-int pcmcia_get_mem_page(window_handle_t win, memreq_t *req)
-{
-	if ((win == NULL) || (win->magic != WINDOW_MAGIC))
-		return -EINVAL;
-	req->Page = 0;
-	req->CardOffset = win->ctl.card_start;
-	return 0;
-} /* pcmcia_get_mem_page */
-EXPORT_SYMBOL(pcmcia_get_mem_page);
-
-
-int pcmcia_map_mem_page(window_handle_t win, memreq_t *req)
-{
-	struct pcmcia_socket *s;
-	if ((win == NULL) || (win->magic != WINDOW_MAGIC))
-		return -EINVAL;
-	s = win->sock;
 	if (req->Page != 0) {
 		dev_dbg(&s->dev, "failure: requested page is zero\n");
 		return -EINVAL;
 	}
-	win->ctl.card_start = req->CardOffset;
-	if (s->ops->set_mem_map(s, &win->ctl) != 0) {
+	s->win[wh].card_start = req->CardOffset;
+	if (s->ops->set_mem_map(s, &s->win[wh]) != 0) {
 		dev_dbg(&s->dev, "failed to set_mem_map\n");
 		return -EIO;
 	}
@@ -430,8 +383,8 @@ static int pcmcia_release_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 		s->irq.AssignedIRQ = 0;
 	}
 
-	if (req->Attributes & IRQ_HANDLE_PRESENT) {
-		free_irq(req->AssignedIRQ, req->Instance);
+	if (req->Handler) {
+		free_irq(req->AssignedIRQ, p_dev->priv);
 	}
 
 #ifdef CONFIG_PCMCIA_PROBE
@@ -444,31 +397,32 @@ static int pcmcia_release_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 
 int pcmcia_release_window(struct pcmcia_device *p_dev, window_handle_t wh)
 {
-	struct pcmcia_socket *s;
-	window_handle_t win = wh;
+	struct pcmcia_socket *s = p_dev->socket;
+	pccard_mem_map *win;
 
-	if ((win == NULL) || (win->magic != WINDOW_MAGIC))
+	wh--;
+	if (wh >= MAX_WIN)
 		return -EINVAL;
-	s = win->sock;
-	if (!(win->handle->_win & CLIENT_WIN_REQ(win->index))) {
+
+	win = &s->win[wh];
+
+	if (!(p_dev->_win & CLIENT_WIN_REQ(wh))) {
 		dev_dbg(&s->dev, "not releasing unknown window\n");
 		return -EINVAL;
 	}
 
 	/* Shut down memory window */
-	win->ctl.flags &= ~MAP_ACTIVE;
-	s->ops->set_mem_map(s, &win->ctl);
-	s->state &= ~SOCKET_WIN_REQ(win->index);
+	win->flags &= ~MAP_ACTIVE;
+	s->ops->set_mem_map(s, win);
+	s->state &= ~SOCKET_WIN_REQ(wh);
 
 	/* Release system memory */
-	if (win->ctl.res) {
-		release_resource(win->ctl.res);
-		kfree(win->ctl.res);
-		win->ctl.res = NULL;
+	if (win->res) {
+		release_resource(win->res);
+		kfree(win->res);
+		win->res = NULL;
 	}
-	win->handle->_win &= ~CLIENT_WIN_REQ(win->index);
-
-	win->magic = 0;
+	p_dev->_win &= ~CLIENT_WIN_REQ(wh);
 
 	return 0;
 } /* pcmcia_release_window */
@@ -710,7 +664,7 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 	/* if the underlying IRQ infrastructure allows for it, only allocate
 	 * the IRQ, but do not enable it
 	 */
-	if (!(req->Attributes & IRQ_HANDLE_PRESENT))
+	if (!(req->Handler))
 		type |= IRQ_NOAUTOEN;
 #endif /* IRQ_NOAUTOEN */
 
@@ -720,7 +674,7 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 	} else {
 		int try;
 		u32 mask = s->irq_mask;
-		void *data = &p_dev->dev.driver; /* something unique to this device */
+		void *data = p_dev; /* something unique to this device */
 
 		for (try = 0; try < 64; try++) {
 			irq = try % 32;
@@ -740,12 +694,12 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 			 * registering a dummy handle works, i.e. if the IRQ isn't
 			 * marked as used by the kernel resource management core */
 			ret = request_irq(irq,
-					  (req->Attributes & IRQ_HANDLE_PRESENT) ? req->Handler : test_action,
+					  (req->Handler) ? req->Handler : test_action,
 					  type,
 					  p_dev->devname,
-					  (req->Attributes & IRQ_HANDLE_PRESENT) ? req->Instance : data);
+					  (req->Handler) ? p_dev->priv : data);
 			if (!ret) {
-				if (!(req->Attributes & IRQ_HANDLE_PRESENT))
+				if (!req->Handler)
 					free_irq(irq, data);
 				break;
 			}
@@ -762,9 +716,9 @@ int pcmcia_request_irq(struct pcmcia_device *p_dev, irq_req_t *req)
 		irq = s->pci_irq;
 	}
 
-	if (ret && (req->Attributes & IRQ_HANDLE_PRESENT)) {
+	if (ret && req->Handler) {
 		ret = request_irq(irq, req->Handler, type,
-				  p_dev->devname, req->Instance);
+				  p_dev->devname, p_dev->priv);
 		if (ret) {
 			dev_printk(KERN_INFO, &s->dev,
 				"request_irq() failed\n");
@@ -801,10 +755,10 @@ EXPORT_SYMBOL(pcmcia_request_irq);
  * Request_window() establishes a mapping between card memory space
  * and system memory space.
  */
-int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_handle_t *wh)
+int pcmcia_request_window(struct pcmcia_device *p_dev, win_req_t *req, window_handle_t *wh)
 {
-	struct pcmcia_socket *s = (*p_dev)->socket;
-	window_t *win;
+	struct pcmcia_socket *s = p_dev->socket;
+	pccard_mem_map *win;
 	u_long align;
 	int w;
 
@@ -844,35 +798,31 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 	}
 
 	win = &s->win[w];
-	win->magic = WINDOW_MAGIC;
-	win->index = w;
-	win->handle = *p_dev;
-	win->sock = s;
 
 	if (!(s->features & SS_CAP_STATIC_MAP)) {
-		win->ctl.res = pcmcia_find_mem_region(req->Base, req->Size, align,
+		win->res = pcmcia_find_mem_region(req->Base, req->Size, align,
 						      (req->Attributes & WIN_MAP_BELOW_1MB), s);
-		if (!win->ctl.res) {
+		if (!win->res) {
 			dev_dbg(&s->dev, "allocating mem region failed\n");
 			return -EINVAL;
 		}
 	}
-	(*p_dev)->_win |= CLIENT_WIN_REQ(w);
+	p_dev->_win |= CLIENT_WIN_REQ(w);
 
 	/* Configure the socket controller */
-	win->ctl.map = w+1;
-	win->ctl.flags = 0;
-	win->ctl.speed = req->AccessSpeed;
+	win->map = w+1;
+	win->flags = 0;
+	win->speed = req->AccessSpeed;
 	if (req->Attributes & WIN_MEMORY_TYPE)
-		win->ctl.flags |= MAP_ATTRIB;
+		win->flags |= MAP_ATTRIB;
 	if (req->Attributes & WIN_ENABLE)
-		win->ctl.flags |= MAP_ACTIVE;
+		win->flags |= MAP_ACTIVE;
 	if (req->Attributes & WIN_DATA_WIDTH_16)
-		win->ctl.flags |= MAP_16BIT;
+		win->flags |= MAP_16BIT;
 	if (req->Attributes & WIN_USE_WAIT)
-		win->ctl.flags |= MAP_USE_WAIT;
-	win->ctl.card_start = 0;
-	if (s->ops->set_mem_map(s, &win->ctl) != 0) {
+		win->flags |= MAP_USE_WAIT;
+	win->card_start = 0;
+	if (s->ops->set_mem_map(s, win) != 0) {
 		dev_dbg(&s->dev, "failed to set memory mapping\n");
 		return -EIO;
 	}
@@ -880,11 +830,11 @@ int pcmcia_request_window(struct pcmcia_device **p_dev, win_req_t *req, window_h
 
 	/* Return window handle */
 	if (s->features & SS_CAP_STATIC_MAP) {
-		req->Base = win->ctl.static_start;
+		req->Base = win->static_start;
 	} else {
-		req->Base = win->ctl.res->start;
+		req->Base = win->res->start;
 	}
-	*wh = win;
+	*wh = w + 1;
 
 	return 0;
 } /* pcmcia_request_window */

@@ -624,7 +624,7 @@ static int prism2_config(struct pcmcia_device *link)
 
 	/* Need to allocate net_device before requesting IRQ handler */
 	dev = prism2_init_local_data(&prism2_pccard_funcs, 0,
-				     &handle_to_dev(link));
+				     &link->dev);
 	if (dev == NULL)
 		goto failed;
 	link->priv = dev;
@@ -642,11 +642,8 @@ static int prism2_config(struct pcmcia_device *link)
 	 * irq structure is initialized.
 	 */
 	if (link->conf.Attributes & CONF_ENABLE_IRQ) {
-		link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING |
-				       IRQ_HANDLE_PRESENT;
-		link->irq.IRQInfo1 = IRQ_LEVEL_ID;
+		link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
 		link->irq.Handler = prism2_interrupt;
-		link->irq.Instance = dev;
 		ret = pcmcia_request_irq(link, &link->irq);
 		if (ret)
 			goto failed;

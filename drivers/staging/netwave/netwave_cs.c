@@ -384,8 +384,7 @@ static int netwave_probe(struct pcmcia_device *link)
     link->io.IOAddrLines = 5;
     
     /* Interrupt setup */
-    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
-    link->irq.IRQInfo1 = IRQ_LEVEL_ID;
+    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING;
     link->irq.Handler = &netwave_interrupt;
     
     /* General socket configuration */
@@ -403,8 +402,6 @@ static int netwave_probe(struct pcmcia_device *link)
     dev->wireless_handlers = &netwave_handler_def;
 
     dev->watchdog_timeo = TX_TIMEOUT;
-
-    link->irq.Instance = dev;
 
     return netwave_pcmcia_config( link);
 } /* netwave_attach */
@@ -759,11 +756,11 @@ static int netwave_pcmcia_config(struct pcmcia_device *link) {
     req.Attributes = WIN_DATA_WIDTH_8|WIN_MEMORY_TYPE_CM|WIN_ENABLE;
     req.Base = 0; req.Size = 0x8000;
     req.AccessSpeed = mem_speed;
-    ret = pcmcia_request_window(&link, &req, &link->win);
+    ret = pcmcia_request_window(link, &req, &link->win);
     if (ret)
 	    goto failed;
     mem.CardOffset = 0x20000; mem.Page = 0; 
-    ret = pcmcia_map_mem_page(link->win, &mem);
+    ret = pcmcia_map_mem_page(link, link->win, &mem);
     if (ret)
 	    goto failed;
 
@@ -773,7 +770,7 @@ static int netwave_pcmcia_config(struct pcmcia_device *link) {
 
     dev->irq = link->irq.AssignedIRQ;
     dev->base_addr = link->io.BasePort1;
-    SET_NETDEV_DEV(dev, &handle_to_dev(link));
+    SET_NETDEV_DEV(dev, &link->dev);
 
     if (register_netdev(dev) != 0) {
 	printk(KERN_DEBUG "netwave_cs: register_netdev() failed\n");
