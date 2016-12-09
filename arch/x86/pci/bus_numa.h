@@ -2,7 +2,7 @@
 
 /*
  * sub bus (transparent) will use entres from 3 to store extra from
- * root, so need to make sure we have enought slot there, Should we
+ * root, so need to make sure we have enough slot there, Should we
  * increase PCI_BUS_NUM_RESOURCES?
  */
 #define RES_NUM 16
@@ -20,6 +20,7 @@ struct pci_root_info {
 #define PCI_ROOT_NR 4
 extern int pci_root_num;
 extern struct pci_root_info pci_root_info[PCI_ROOT_NR];
+extern int found_all_numa_early;
 
 extern void update_res(struct pci_root_info *info, size_t start,
 			      size_t end, unsigned long flags, int merge);
