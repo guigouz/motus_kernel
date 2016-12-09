@@ -60,6 +60,113 @@ TRACE_EVENT(signal_generate,
 		  __entry->comm, __entry->pid)
 );
 
+/**
+ * signal_deliver - called when a signal is delivered
+ * @sig: signal number
+ * @info: pointer to struct siginfo
+ * @ka: pointer to struct k_sigaction
+ *
+ * A 'sig' signal is delivered to current process with 'info' siginfo,
+ * and it will be handled by 'ka'. ka->sa.sa_handler can be SIG_IGN or
+ * SIG_DFL.
+ * Note that some signals reported by signal_generate tracepoint can be
+ * lost, ignored or modified (by debugger) before hitting this tracepoint.
+ * This means, this can show which signals are actually delivered, but
+ * matching generated signals and delivered signals may not be correct.
+ */
+TRACE_EVENT(signal_deliver,
+
+	TP_PROTO(int sig, struct siginfo *info, struct k_sigaction *ka),
+
+	TP_ARGS(sig, info, ka),
+
+	TP_STRUCT__entry(
+		__field(	int,		sig		)
+		__field(	int,		errno		)
+		__field(	int,		code		)
+		__field(	unsigned long,	sa_handler	)
+		__field(	unsigned long,	sa_flags	)
+	),
+
+	TP_fast_assign(
+		__entry->sig	= sig;
+		TP_STORE_SIGINFO(__entry, info);
+		__entry->sa_handler	= (unsigned long)ka->sa.sa_handler;
+		__entry->sa_flags	= ka->sa.sa_flags;
+	),
+
+	TP_printk("sig=%d errno=%d code=%d sa_handler=%lx sa_flags=%lx",
+		  __entry->sig, __entry->errno, __entry->code,
+		  __entry->sa_handler, __entry->sa_flags)
+);
+
+/**
+ * signal_overflow_fail - called when signal queue is overflow
+ * @sig: signal number
+ * @group: signal to process group or not (bool)
+ * @info: pointer to struct siginfo
+ *
+ * Kernel fails to generate 'sig' signal with 'info' siginfo, because
+ * siginfo queue is overflow, and the signal is dropped.
+ * 'group' is not 0 if the signal will be sent to a process group.
+ * 'sig' is always one of RT signals.
+ */
+TRACE_EVENT(signal_overflow_fail,
+
+	TP_PROTO(int sig, int group, struct siginfo *info),
+
+	TP_ARGS(sig, group, info),
+
+	TP_STRUCT__entry(
+		__field(	int,	sig	)
+		__field(	int,	group	)
+		__field(	int,	errno	)
+		__field(	int,	code	)
+	),
+
+	TP_fast_assign(
+		__entry->sig	= sig;
+		__entry->group	= group;
+		TP_STORE_SIGINFO(__entry, info);
+	),
+
+	TP_printk("sig=%d group=%d errno=%d code=%d",
+		  __entry->sig, __entry->group, __entry->errno, __entry->code)
+);
+
+/**
+ * signal_lose_info - called when siginfo is lost
+ * @sig: signal number
+ * @group: signal to process group or not (bool)
+ * @info: pointer to struct siginfo
+ *
+ * Kernel generates 'sig' signal but loses 'info' siginfo, because siginfo
+ * queue is overflow.
+ * 'group' is not 0 if the signal will be sent to a process group.
+ * 'sig' is always one of non-RT signals.
+ */
+TRACE_EVENT(signal_lose_info,
+
+	TP_PROTO(int sig, int group, struct siginfo *info),
+
+	TP_ARGS(sig, group, info),
+
+	TP_STRUCT__entry(
+		__field(	int,	sig	)
+		__field(	int,	group	)
+		__field(	int,	errno	)
+		__field(	int,	code	)
+	),
+
+	TP_fast_assign(
+		__entry->sig	= sig;
+		__entry->group	= group;
+		TP_STORE_SIGINFO(__entry, info);
+	),
+
+	TP_printk("sig=%d group=%d errno=%d code=%d",
+		  __entry->sig, __entry->group, __entry->errno, __entry->code)
+);
 #endif /* _TRACE_SIGNAL_H */
 
 /* This part must be outside protection */
