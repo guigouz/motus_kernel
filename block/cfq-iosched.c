@@ -172,6 +172,7 @@ struct cfq_data {
 	enum wl_prio_t serving_prio;
 	enum wl_type_t serving_type;
 	unsigned long workload_expires;
+	bool noidle_tree_requires_idle;
 
 	/*
 	 * Each priority tree is sorted by next_request position.  These
@@ -191,8 +192,14 @@ struct cfq_data {
 	 */
 	int rq_queued;
 	int hw_tag;
-	int hw_tag_samples;
-	int rq_in_driver_peak;
+	/*
+	 * hw_tag can be
+	 * -1 => indeterminate, (cfq will behave as if NCQ is present, to allow better detection)
+	 *  1 => NCQ is present (hw_tag_est_depth is the estimated max depth)
+	 *  0 => no NCQ
+	 */
+	int hw_tag_est_depth;
+	unsigned int hw_tag_samples;
 
 	/*
 	 * idle window management
@@ -254,6 +261,7 @@ enum cfqq_state_flags {
 	CFQ_CFQQ_FLAG_slice_new,	/* no requests dispatched in slice */
 	CFQ_CFQQ_FLAG_sync,		/* synchronous queue */
 	CFQ_CFQQ_FLAG_coop,		/* cfqq is shared */
+	CFQ_CFQQ_FLAG_deep,		/* sync cfqq experienced large depth */
 };
 
 #define CFQ_CFQQ_FNS(name)						\
@@ -280,6 +288,7 @@ CFQ_CFQQ_FNS(prio_changed);
 CFQ_CFQQ_FNS(slice_new);
 CFQ_CFQQ_FNS(sync);
 CFQ_CFQQ_FNS(coop);
+CFQ_CFQQ_FNS(deep);
 #undef CFQ_CFQQ_FNS
 
 #define cfq_log_cfqq(cfqd, cfqq, fmt, args...)	\
@@ -1245,9 +1254,9 @@ static void cfq_arm_slice_timer(struct cfq_data *cfqd)
 		return;
 
 	/*
-	 * still requests with the driver, don't idle
+	 * still active requests from this queue, don't idle
 	 */
-	if (rq_in_driver(cfqd))
+	if (cfqq->dispatched)
 		return;
 
 	/*
@@ -1470,6 +1479,7 @@ static void choose_service_tree(struct cfq_data *cfqd)
 
 	slice = max_t(unsigned, slice, CFQ_MIN_TT);
 	cfqd->workload_expires = jiffies + slice;
+	cfqd->noidle_tree_requires_idle = false;
 }
 
 /*
@@ -2361,8 +2371,12 @@ cfq_update_idle_window(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 
 	enable_idle = old_idle = cfq_cfqq_idle_window(cfqq);
 
+	if (cfqq->queued[0] + cfqq->queued[1] >= 4)
+		cfq_mark_cfqq_deep(cfqq);
+
 	if (!atomic_read(&cic->ioc->nr_tasks) || !cfqd->cfq_slice_idle ||
-	    (sample_valid(cfqq->seek_samples) && CFQQ_SEEKY(cfqq)))
+	    (!cfq_cfqq_deep(cfqq) && sample_valid(cfqq->seek_samples)
+	     && CFQQ_SEEKY(cfqq)))
 		enable_idle = 0;
 	else if (sample_valid(cic->ttime_samples)) {
 		if (cic->ttime_mean > cfqd->cfq_slice_idle)
@@ -2403,8 +2417,9 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
 	if (cfq_class_idle(cfqq))
 		return true;
 
-	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD
-	    && new_cfqq->service_tree == cfqq->service_tree)
+	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD &&
+	    cfqq_type(new_cfqq) == SYNC_NOIDLE_WORKLOAD &&
+	    new_cfqq->service_tree->count == 1)
 		return true;
 
 	/*
@@ -2535,8 +2550,11 @@ static void cfq_update_hw_tag(struct cfq_data *cfqd)
 {
 	struct cfq_queue *cfqq = cfqd->active_queue;
 
-	if (rq_in_driver(cfqd) > cfqd->rq_in_driver_peak)
-		cfqd->rq_in_driver_peak = rq_in_driver(cfqd);
+	if (rq_in_driver(cfqd) > cfqd->hw_tag_est_depth)
+		cfqd->hw_tag_est_depth = rq_in_driver(cfqd);
+
+	if (cfqd->hw_tag == 1)
+		return;
 
 	if (cfqd->rq_queued <= CFQ_HW_QUEUE_MIN &&
 	    rq_in_driver(cfqd) <= CFQ_HW_QUEUE_MIN)
@@ -2555,13 +2573,10 @@ static void cfq_update_hw_tag(struct cfq_data *cfqd)
 	if (cfqd->hw_tag_samples++ < 50)
 		return;
 
-	if (cfqd->rq_in_driver_peak >= CFQ_HW_QUEUE_MIN)
+	if (cfqd->hw_tag_est_depth >= CFQ_HW_QUEUE_MIN)
 		cfqd->hw_tag = 1;
 	else
 		cfqd->hw_tag = 0;
-
-	cfqd->hw_tag_samples = 0;
-	cfqd->rq_in_driver_peak = 0;
 }
 
 static void cfq_completed_request(struct request_queue *q, struct request *rq)
@@ -2601,17 +2616,27 @@ static void cfq_completed_request(struct request_queue *q, struct request *rq)
 			cfq_clear_cfqq_slice_new(cfqq);
 		}
 		/*
-		 * If there are no requests waiting in this queue, and
-		 * there are other queues ready to issue requests, AND
-		 * those other queues are issuing requests within our
-		 * mean seek distance, give them a chance to run instead
-		 * of idling.
+		 * Idling is not enabled on:
+		 * - expired queues
+		 * - idle-priority queues
+		 * - async queues
+		 * - queues with still some requests queued
+		 * - when there is a close cooperator
 		 */
 		if (cfq_slice_used(cfqq) || cfq_class_idle(cfqq))
 			cfq_slice_expired(cfqd, 1);
-		else if (cfqq_empty && !cfq_close_cooperator(cfqd, cfqq) &&
-			 sync && !rq_noidle(rq))
-			cfq_arm_slice_timer(cfqd);
+		else if (sync && cfqq_empty &&
+			 !cfq_close_cooperator(cfqd, cfqq)) {
+			cfqd->noidle_tree_requires_idle |= !rq_noidle(rq);
+			/*
+			 * Idling is enabled for SYNC_WORKLOAD.
+			 * SYNC_NOIDLE_WORKLOAD idles at the end of the tree
+			 * only if we processed at least one !rq_noidle request
+			 */
+			if (cfqd->serving_type == SYNC_WORKLOAD
+			    || cfqd->noidle_tree_requires_idle)
+				cfq_arm_slice_timer(cfqd);
+		}
 	}
 
 	if (!rq_in_driver(cfqd))
@@ -2859,6 +2884,11 @@ static void cfq_idle_slice_timer(unsigned long data)
 		 */
 		if (!RB_EMPTY_ROOT(&cfqq->sort_list))
 			goto out_kick;
+
+		/*
+		 * Queue depth flag is reset only when the idle didn't succeed
+		 */
+		cfq_clear_cfqq_deep(cfqq);
 	}
 expire:
 	cfq_slice_expired(cfqd, timed_out);
@@ -2968,7 +2998,7 @@ static void *cfq_init_queue(struct request_queue *q)
 	cfqd->cfq_slice_async_rq = cfq_slice_async_rq;
 	cfqd->cfq_slice_idle = cfq_slice_idle;
 	cfqd->cfq_latency = 1;
-	cfqd->hw_tag = 1;
+	cfqd->hw_tag = -1;
 	cfqd->last_end_sync_rq = jiffies;
 	return cfqd;
 }
