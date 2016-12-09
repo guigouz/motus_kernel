@@ -16,7 +16,8 @@
  */
 
 #define EFX_WORKAROUND_ALWAYS(efx) 1
-#define EFX_WORKAROUND_FALCON_A(efx) (falcon_rev(efx) <= FALCON_REV_A1)
+#define EFX_WORKAROUND_FALCON_A(efx) (efx_nic_rev(efx) <= EFX_REV_FALCON_A1)
+#define EFX_WORKAROUND_FALCON_AB(efx) (efx_nic_rev(efx) <= EFX_REV_FALCON_B0)
 #define EFX_WORKAROUND_10G(efx) EFX_IS10G(efx)
 #define EFX_WORKAROUND_SFT9001(efx) ((efx)->phy_type == PHY_TYPE_SFT9001A || \
 				     (efx)->phy_type == PHY_TYPE_SFT9001B)
@@ -27,17 +28,13 @@
 #define EFX_WORKAROUND_7575 EFX_WORKAROUND_ALWAYS
 /* Bit-bashed I2C reads cause performance drop */
 #define EFX_WORKAROUND_7884 EFX_WORKAROUND_10G
-/* TX pkt parser problem with <= 16 byte TXes */
-#define EFX_WORKAROUND_9141 EFX_WORKAROUND_ALWAYS
 /* TX_EV_PKT_ERR can be caused by a dangling TX descriptor
  * or a PCIe error (bug 11028) */
 #define EFX_WORKAROUND_10727 EFX_WORKAROUND_ALWAYS
 /* Transmit flow control may get disabled */
-#define EFX_WORKAROUND_11482 EFX_WORKAROUND_ALWAYS
-/* Flush events can take a very long time to appear */
-#define EFX_WORKAROUND_11557 EFX_WORKAROUND_ALWAYS
+#define EFX_WORKAROUND_11482 EFX_WORKAROUND_FALCON_AB
 /* Truncated IPv4 packets can confuse the TX packet parser */
-#define EFX_WORKAROUND_15592 EFX_WORKAROUND_ALWAYS
+#define EFX_WORKAROUND_15592 EFX_WORKAROUND_FALCON_AB
 
 /* Spurious parity errors in TSORT buffers */
 #define EFX_WORKAROUND_5129 EFX_WORKAROUND_FALCON_A

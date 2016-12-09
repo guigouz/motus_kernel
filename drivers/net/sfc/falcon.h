@@ -19,15 +19,15 @@
  * Falcon hardware control
  */
 
-enum falcon_revision {
-	FALCON_REV_A0 = 0,
-	FALCON_REV_A1 = 1,
-	FALCON_REV_B0 = 2,
+enum {
+	EFX_REV_FALCON_A0 = 0,
+	EFX_REV_FALCON_A1 = 1,
+	EFX_REV_FALCON_B0 = 2,
 };
 
-static inline int falcon_rev(struct efx_nic *efx)
+static inline int efx_nic_rev(struct efx_nic *efx)
 {
-	return efx->pci_dev->revision;
+	return efx->type->revision;
 }
 
 /**
@@ -95,8 +95,8 @@ static inline struct falcon_board *falcon_board(struct efx_nic *efx)
 	return &data->board;
 }
 
-extern struct efx_nic_type falcon_a_nic_type;
-extern struct efx_nic_type falcon_b_nic_type;
+extern struct efx_nic_type falcon_a1_nic_type;
+extern struct efx_nic_type falcon_b0_nic_type;
 
 /**************************************************************************
  *
@@ -145,7 +145,6 @@ extern int falcon_init_interrupt(struct efx_nic *efx);
 extern void falcon_enable_interrupts(struct efx_nic *efx);
 extern void falcon_generate_test_event(struct efx_channel *channel,
 				       unsigned int magic);
-extern void falcon_sim_phy_event(struct efx_nic *efx);
 extern void falcon_generate_interrupt(struct efx_nic *efx);
 extern void falcon_set_int_moderation(struct efx_channel *channel);
 extern void falcon_disable_interrupts(struct efx_nic *efx);

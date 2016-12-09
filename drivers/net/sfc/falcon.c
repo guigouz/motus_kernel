@@ -45,11 +45,9 @@
  */
 #define TX_DC_ENTRIES 16
 #define TX_DC_ENTRIES_ORDER 1
-#define TX_DC_BASE 0x130000
 
 #define RX_DC_ENTRIES 64
 #define RX_DC_ENTRIES_ORDER 3
-#define RX_DC_BASE 0x100000
 
 static const unsigned int
 /* "Large" EEPROM device: Atmel AT25640 or similar
@@ -111,7 +109,7 @@ MODULE_PARM_DESC(rx_xon_thresh_bytes, "RX fifo XON threshold");
 #define FALCON_RX_FLUSH_COUNT 4
 
 #define FALCON_IS_DUAL_FUNC(efx)		\
-	(falcon_rev(efx) < FALCON_REV_B0)
+	(efx_nic_rev(efx) < EFX_REV_FALCON_B0)
 
 /**************************************************************************
  *
@@ -447,7 +445,7 @@ void falcon_init_tx(struct efx_tx_queue *tx_queue)
 			      FRF_AZ_TX_DESCQ_TYPE, 0,
 			      FRF_BZ_TX_NON_IP_DROP_DIS, 1);
 
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
 		int csum = tx_queue->queue == EFX_TX_QUEUE_OFFLOAD_CSUM;
 		EFX_SET_OWORD_FIELD(tx_desc_ptr, FRF_BZ_TX_IP_CHKSM_DIS, !csum);
 		EFX_SET_OWORD_FIELD(tx_desc_ptr, FRF_BZ_TX_TCP_CHKSM_DIS,
@@ -457,7 +455,7 @@ void falcon_init_tx(struct efx_tx_queue *tx_queue)
 	efx_writeo_table(efx, &tx_desc_ptr, efx->type->txd_ptr_tbl_base,
 			 tx_queue->queue);
 
-	if (falcon_rev(efx) < FALCON_REV_B0) {
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0) {
 		efx_oword_t reg;
 
 		/* Only 128 bits in this register */
@@ -574,7 +572,7 @@ void falcon_init_rx(struct efx_rx_queue *rx_queue)
 {
 	efx_oword_t rx_desc_ptr;
 	struct efx_nic *efx = rx_queue->efx;
-	bool is_b0 = falcon_rev(efx) >= FALCON_REV_B0;
+	bool is_b0 = efx_nic_rev(efx) >= EFX_REV_FALCON_B0;
 	bool iscsi_digest_en = is_b0;
 
 	EFX_LOG(efx, "RX queue %d ring in special buffers %d-%d\n",
@@ -736,7 +734,7 @@ static void falcon_handle_rx_not_ok(struct efx_rx_queue *rx_queue,
 	bool rx_ev_tcp_udp_chksum_err, rx_ev_eth_crc_err;
 	bool rx_ev_frm_trunc, rx_ev_drib_nib, rx_ev_tobe_disc;
 	bool rx_ev_other_err, rx_ev_pause_frm;
-	bool rx_ev_ip_frag_err, rx_ev_hdr_type, rx_ev_mcast_pkt;
+	bool rx_ev_hdr_type, rx_ev_mcast_pkt;
 	unsigned rx_ev_pkt_type;
 
 	rx_ev_hdr_type = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_HDR_TYPE);
@@ -745,14 +743,13 @@ static void falcon_handle_rx_not_ok(struct efx_rx_queue *rx_queue,
 	rx_ev_pkt_type = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_PKT_TYPE);
 	rx_ev_buf_owner_id_err = EFX_QWORD_FIELD(*event,
 						 FSF_AZ_RX_EV_BUF_OWNER_ID_ERR);
-	rx_ev_ip_frag_err = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_IP_FRAG_ERR);
 	rx_ev_ip_hdr_chksum_err = EFX_QWORD_FIELD(*event,
 						  FSF_AZ_RX_EV_IP_HDR_CHKSUM_ERR);
 	rx_ev_tcp_udp_chksum_err = EFX_QWORD_FIELD(*event,
 						   FSF_AZ_RX_EV_TCP_UDP_CHKSUM_ERR);
 	rx_ev_eth_crc_err = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_ETH_CRC_ERR);
 	rx_ev_frm_trunc = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_FRM_TRUNC);
-	rx_ev_drib_nib = ((falcon_rev(efx) >= FALCON_REV_B0) ?
+	rx_ev_drib_nib = ((efx_nic_rev(efx) >= EFX_REV_FALCON_B0) ?
 			  0 : EFX_QWORD_FIELD(*event, FSF_AA_RX_EV_DRIB_NIB));
 	rx_ev_pause_frm = EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_PAUSE_FRM_ERR);
 
@@ -773,8 +770,6 @@ static void falcon_handle_rx_not_ok(struct efx_rx_queue *rx_queue,
 		else if (rx_ev_tcp_udp_chksum_err)
 			++rx_queue->channel->n_rx_tcp_udp_chksum_err;
 	}
-	if (rx_ev_ip_frag_err)
-		++rx_queue->channel->n_rx_ip_frag_err;
 
 	/* The frame must be discarded if any of these are true. */
 	*discard = (rx_ev_eth_crc_err | rx_ev_frm_trunc | rx_ev_drib_nib |
@@ -857,7 +852,7 @@ static void falcon_handle_rx_event(struct efx_channel *channel,
 		 * UDP/IPv4, then we can rely on the hardware checksum.
 		 */
 		checksummed =
-			efx->rx_checksum_enabled &&
+			likely(efx->rx_checksum_enabled) &&
 			(rx_ev_hdr_type == FSE_AB_RX_EV_HDR_TYPE_IPV4_TCP ||
 			 rx_ev_hdr_type == FSE_AB_RX_EV_HDR_TYPE_IPV4_UDP);
 	} else {
@@ -872,8 +867,10 @@ static void falcon_handle_rx_event(struct efx_channel *channel,
 		unsigned int rx_ev_mcast_hash_match =
 			EFX_QWORD_FIELD(*event, FSF_AZ_RX_EV_MCAST_HASH_MATCH);
 
-		if (unlikely(!rx_ev_mcast_hash_match))
+		if (unlikely(!rx_ev_mcast_hash_match)) {
+			++channel->n_rx_mcast_mismatch;
 			discard = true;
+		}
 	}
 
 	channel->irq_mod_score += 2;
@@ -893,18 +890,17 @@ static void falcon_handle_global_event(struct efx_channel *channel,
 	if (EFX_QWORD_FIELD(*event, FSF_AB_GLB_EV_G_PHY0_INTR) ||
 	    EFX_QWORD_FIELD(*event, FSF_AB_GLB_EV_XG_PHY0_INTR) ||
 	    EFX_QWORD_FIELD(*event, FSF_AB_GLB_EV_XFP_PHY0_INTR)) {
-		efx->phy_op->clear_interrupt(efx);
-		queue_work(efx->workqueue, &efx->phy_work);
+		/* Ignored */
 		handled = true;
 	}
 
-	if ((falcon_rev(efx) >= FALCON_REV_B0) &&
+	if ((efx_nic_rev(efx) >= EFX_REV_FALCON_B0) &&
 	    EFX_QWORD_FIELD(*event, FSF_BB_GLB_EV_XG_MGT_INTR)) {
 		efx->xmac_poll_required = true;
 		handled = true;
 	}
 
-	if (falcon_rev(efx) <= FALCON_REV_A1 ?
+	if (efx_nic_rev(efx) <= EFX_REV_FALCON_A1 ?
 	    EFX_QWORD_FIELD(*event, FSF_AA_GLB_EV_RX_RECOVERY) :
 	    EFX_QWORD_FIELD(*event, FSF_BB_GLB_EV_RX_RECOVERY)) {
 		EFX_ERR(efx, "channel %d seen global RX_RESET "
@@ -1138,20 +1134,6 @@ void falcon_generate_test_event(struct efx_channel *channel, unsigned int magic)
 			     FSE_AZ_EV_CODE_DRV_GEN_EV,
 			     FSF_AZ_DRV_GEN_EV_MAGIC, magic);
 	falcon_generate_event(channel, &test_event);
-}
-
-void falcon_sim_phy_event(struct efx_nic *efx)
-{
-	efx_qword_t phy_event;
-
-	EFX_POPULATE_QWORD_1(phy_event, FSF_AZ_EV_CODE,
-			     FSE_AZ_EV_CODE_GLOBAL_EV);
-	if (EFX_IS10G(efx))
-		EFX_SET_QWORD_FIELD(phy_event, FSF_AB_GLB_EV_XG_PHY0_INTR, 1);
-	else
-		EFX_SET_QWORD_FIELD(phy_event, FSF_AB_GLB_EV_G_PHY0_INTR, 1);
-
-	falcon_generate_event(&efx->channel[0], &phy_event);
 }
 
 /**************************************************************************
@@ -1546,7 +1528,7 @@ static void falcon_setup_rss_indir_table(struct efx_nic *efx)
 	unsigned long offset;
 	efx_dword_t dword;
 
-	if (falcon_rev(efx) < FALCON_REV_B0)
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
 		return;
 
 	for (offset = FR_BZ_RX_INDIRECTION_TBL;
@@ -1569,7 +1551,7 @@ int falcon_init_interrupt(struct efx_nic *efx)
 
 	if (!EFX_INT_MODE_USE_MSI(efx)) {
 		irq_handler_t handler;
-		if (falcon_rev(efx) >= FALCON_REV_B0)
+		if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 			handler = falcon_legacy_interrupt_b0;
 		else
 			handler = falcon_legacy_interrupt_a1;
@@ -1616,7 +1598,7 @@ void falcon_fini_interrupt(struct efx_nic *efx)
 	}
 
 	/* ACK legacy interrupt */
-	if (falcon_rev(efx) >= FALCON_REV_B0)
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 		efx_reado(efx, &reg, FR_BZ_INT_ISR0);
 	else
 		falcon_irq_ack_a1(efx);
@@ -1856,7 +1838,7 @@ static int falcon_reset_macs(struct efx_nic *efx)
 	efx_oword_t reg;
 	int count;
 
-	if (falcon_rev(efx) < FALCON_REV_B0) {
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0) {
 		/* It's not safe to use GLB_CTL_REG to reset the
 		 * macs, so instead use the internal MAC resets
 		 */
@@ -1932,7 +1914,7 @@ void falcon_drain_tx_fifo(struct efx_nic *efx)
 {
 	efx_oword_t reg;
 
-	if ((falcon_rev(efx) < FALCON_REV_B0) ||
+	if ((efx_nic_rev(efx) < EFX_REV_FALCON_B0) ||
 	    (efx->loopback_mode != LOOPBACK_NONE))
 		return;
 
@@ -1948,7 +1930,7 @@ void falcon_deconfigure_mac_wrapper(struct efx_nic *efx)
 {
 	efx_oword_t reg;
 
-	if (falcon_rev(efx) < FALCON_REV_B0)
+	if (efx_nic_rev(efx) < EFX_REV_FALCON_B0)
 		return;
 
 	/* Isolate the MAC -> RX */
@@ -1985,7 +1967,7 @@ void falcon_reconfigure_mac_wrapper(struct efx_nic *efx)
 			     FRF_AB_MAC_SPEED, link_speed);
 	/* On B0, MAC backpressure can be disabled and packets get
 	 * discarded. */
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
 		EFX_SET_OWORD_FIELD(reg, FRF_BB_TXFIFO_DRAIN_EN,
 				    !link_state->up);
 	}
@@ -2003,7 +1985,7 @@ void falcon_reconfigure_mac_wrapper(struct efx_nic *efx)
 	EFX_SET_OWORD_FIELD(reg, FRF_AZ_RX_XOFF_MAC_EN, tx_fc);
 
 	/* Unisolate the MAC -> RX */
-	if (falcon_rev(efx) >= FALCON_REV_B0)
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 		EFX_SET_OWORD_FIELD(reg, FRF_BZ_RX_INGR_EN, 1);
 	efx_writeo(efx, &reg, FR_AZ_RX_CFG);
 }
@@ -2063,6 +2045,25 @@ static void falcon_stats_timer_func(unsigned long context)
 	spin_unlock(&efx->stats_lock);
 }
 
+static bool falcon_loopback_link_poll(struct efx_nic *efx)
+{
+	struct efx_link_state old_state = efx->link_state;
+
+	WARN_ON(!mutex_is_locked(&efx->mac_lock));
+	WARN_ON(!LOOPBACK_INTERNAL(efx));
+
+	efx->link_state.fd = true;
+	efx->link_state.fc = efx->wanted_fc;
+	efx->link_state.up = true;
+
+	if (efx->loopback_mode == LOOPBACK_GMAC)
+		efx->link_state.speed = 1000;
+	else
+		efx->link_state.speed = 10000;
+
+	return !efx_link_state_equal(&efx->link_state, &old_state);
+}
+
 /**************************************************************************
  *
  * PHY access via GMII
@@ -2106,7 +2107,7 @@ static int falcon_mdio_write(struct net_device *net_dev,
 	EFX_REGDUMP(efx, "writing MDIO %d register %d.%d with 0x%04x\n",
 		    prtad, devad, addr, value);
 
-	spin_lock_bh(&efx->phy_lock);
+	mutex_lock(&efx->mdio_lock);
 
 	/* Check MDIO not currently being accessed */
 	rc = falcon_gmii_wait(efx);
@@ -2141,8 +2142,8 @@ static int falcon_mdio_write(struct net_device *net_dev,
 		udelay(10);
 	}
 
- out:
-	spin_unlock_bh(&efx->phy_lock);
+out:
+	mutex_unlock(&efx->mdio_lock);
 	return rc;
 }
 
@@ -2154,7 +2155,7 @@ static int falcon_mdio_read(struct net_device *net_dev,
 	efx_oword_t reg;
 	int rc;
 
-	spin_lock_bh(&efx->phy_lock);
+	mutex_lock(&efx->mdio_lock);
 
 	/* Check MDIO not currently being accessed */
 	rc = falcon_gmii_wait(efx);
@@ -2190,8 +2191,8 @@ static int falcon_mdio_read(struct net_device *net_dev,
 			prtad, devad, addr, rc);
 	}
 
- out:
-	spin_unlock_bh(&efx->phy_lock);
+out:
+	mutex_unlock(&efx->mdio_lock);
 	return rc;
 }
 
@@ -2203,7 +2204,7 @@ static void falcon_clock_mac(struct efx_nic *efx)
 	/* Configure the NIC generated MAC clock correctly */
 	efx_reado(efx, &nic_stat, FR_AB_NIC_STAT);
 	strap_val = EFX_IS10G(efx) ? 5 : 3;
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
 		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP_EN, 1);
 		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP, strap_val);
 		efx_writeo(efx, &nic_stat, FR_AB_NIC_STAT);
@@ -2224,15 +2225,6 @@ int falcon_switch_mac(struct efx_nic *efx)
 
 	/* Don't try to fetch MAC stats while we're switching MACs */
 	falcon_stop_nic_stats(efx);
-
-	/* Internal loopbacks override the phy speed setting */
-	if (efx->loopback_mode == LOOPBACK_GMAC) {
-		efx->link_state.speed = 1000;
-		efx->link_state.fd = true;
-	} else if (LOOPBACK_INTERNAL(efx)) {
-		efx->link_state.speed = 10000;
-		efx->link_state.fd = true;
-	}
 
 	WARN_ON(!mutex_is_locked(&efx->mac_lock));
 	efx->mac_op = (EFX_IS10G(efx) ?
@@ -2296,8 +2288,12 @@ int falcon_probe_port(struct efx_nic *efx)
 	efx->mdio.mdio_read = falcon_mdio_read;
 	efx->mdio.mdio_write = falcon_mdio_write;
 
+	/* Initial assumption */
+	efx->link_state.speed = 10000;
+	efx->link_state.fd = true;
+
 	/* Hardware flow ctrl. FalconA RX FIFO too small for pause generation */
-	if (falcon_rev(efx) >= FALCON_REV_B0)
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 		efx->wanted_fc = EFX_FC_RX | EFX_FC_TX;
 	else
 		efx->wanted_fc = EFX_FC_RX;
@@ -2610,16 +2606,36 @@ fail5:
 
 void falcon_monitor(struct efx_nic *efx)
 {
+	bool link_changed;
 	int rc;
+
+	BUG_ON(!mutex_is_locked(&efx->mac_lock));
 
 	rc = falcon_board(efx)->type->monitor(efx);
 	if (rc) {
 		EFX_ERR(efx, "Board sensor %s; shutting down PHY\n",
 			(rc == -ERANGE) ? "reported fault" : "failed");
 		efx->phy_mode |= PHY_MODE_LOW_POWER;
-		falcon_sim_phy_event(efx);
+		__efx_reconfigure_port(efx);
 	}
-	efx->phy_op->poll(efx);
+
+	if (LOOPBACK_INTERNAL(efx))
+		link_changed = falcon_loopback_link_poll(efx);
+	else
+		link_changed = efx->phy_op->poll(efx);
+
+	if (link_changed) {
+		falcon_stop_nic_stats(efx);
+		falcon_deconfigure_mac_wrapper(efx);
+
+		falcon_switch_mac(efx);
+		efx->mac_op->reconfigure(efx);
+
+		falcon_start_nic_stats(efx);
+
+		efx_link_status_changed(efx);
+	}
+
 	if (EFX_IS10G(efx))
 		falcon_poll_xmac(efx);
 }
@@ -2787,29 +2803,22 @@ static int falcon_probe_nic_variant(struct efx_nic *efx)
 
 	efx_reado(efx, &nic_stat, FR_AB_NIC_STAT);
 
-	switch (falcon_rev(efx)) {
-	case FALCON_REV_A0:
-	case 0xff:
-		EFX_ERR(efx, "Falcon rev A0 not supported\n");
-		return -ENODEV;
+	if (efx_nic_rev(efx) <= EFX_REV_FALCON_A1) {
+		u8 pci_rev = efx->pci_dev->revision;
 
-	case FALCON_REV_A1:
+		if ((pci_rev == 0xff) || (pci_rev == 0)) {
+			EFX_ERR(efx, "Falcon rev A0 not supported\n");
+			return -ENODEV;
+		}
+		if (EFX_OWORD_FIELD(nic_stat, FRF_AB_STRAP_10G) == 0) {
+			EFX_ERR(efx, "Falcon rev A1 1G not supported\n");
+			return -ENODEV;
+		}
 		if (EFX_OWORD_FIELD(nic_stat, FRF_AA_STRAP_PCIE) == 0) {
 			EFX_ERR(efx, "Falcon rev A1 PCI-X not supported\n");
 			return -ENODEV;
 		}
-		break;
-
-	case FALCON_REV_B0:
-		break;
-
-	default:
-		EFX_ERR(efx, "Unknown Falcon rev %d\n", falcon_rev(efx));
-		return -ENODEV;
 	}
-
-	/* Initial assumed speed */
-	efx->link_state.speed = EFX_OWORD_FIELD(nic_stat, FRF_AB_STRAP_10G) ? 10000 : 1000;
 
 	return 0;
 }
@@ -2971,7 +2980,7 @@ static void falcon_init_rx_cfg(struct efx_nic *efx)
 	efx_oword_t reg;
 
 	efx_reado(efx, &reg, FR_AZ_RX_CFG);
-	if (falcon_rev(efx) <= FALCON_REV_A1) {
+	if (efx_nic_rev(efx) <= EFX_REV_FALCON_A1) {
 		/* Data FIFO size is 5.5K */
 		if (data_xon_thr < 0)
 			data_xon_thr = 512 >> 8;
@@ -3017,7 +3026,7 @@ int falcon_init_nic(struct efx_nic *efx)
 	efx_writeo(efx, &temp, FR_AB_NIC_STAT);
 
 	/* Set the source of the GMAC clock */
-	if (falcon_rev(efx) == FALCON_REV_B0) {
+	if (efx_nic_rev(efx) == EFX_REV_FALCON_B0) {
 		efx_reado(efx, &temp, FR_AB_GPIO_CTL);
 		EFX_SET_OWORD_FIELD(temp, FRF_AB_USE_NIC_CLK, true);
 		efx_writeo(efx, &temp, FR_AB_GPIO_CTL);
@@ -3031,9 +3040,11 @@ int falcon_init_nic(struct efx_nic *efx)
 		return rc;
 
 	/* Set positions of descriptor caches in SRAM. */
-	EFX_POPULATE_OWORD_1(temp, FRF_AZ_SRM_TX_DC_BASE_ADR, TX_DC_BASE / 8);
+	EFX_POPULATE_OWORD_1(temp, FRF_AZ_SRM_TX_DC_BASE_ADR,
+			     efx->type->tx_dc_base / 8);
 	efx_writeo(efx, &temp, FR_AZ_SRM_TX_DC_CFG);
-	EFX_POPULATE_OWORD_1(temp, FRF_AZ_SRM_RX_DC_BASE_ADR, RX_DC_BASE / 8);
+	EFX_POPULATE_OWORD_1(temp, FRF_AZ_SRM_RX_DC_BASE_ADR,
+			     efx->type->rx_dc_base / 8);
 	efx_writeo(efx, &temp, FR_AZ_SRM_RX_DC_CFG);
 
 	/* Set TX descriptor cache size. */
@@ -3108,7 +3119,7 @@ int falcon_init_nic(struct efx_nic *efx)
 	/* Prefetch threshold 2 => fetch when descriptor cache half empty */
 	EFX_SET_OWORD_FIELD(temp, FRF_AZ_TX_PREF_THRESHOLD, 2);
 	/* Squash TX of packets of 16 bytes or less */
-	if (falcon_rev(efx) >= FALCON_REV_B0 && EFX_WORKAROUND_9141(efx))
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0)
 		EFX_SET_OWORD_FIELD(temp, FRF_BZ_TX_FLUSH_MIN_LEN_EN, 1);
 	efx_writeo(efx, &temp, FR_AZ_TX_RESERVED);
 
@@ -3122,7 +3133,7 @@ int falcon_init_nic(struct efx_nic *efx)
 	falcon_init_rx_cfg(efx);
 
 	/* Set destination of both TX and RX Flush events */
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
+	if (efx_nic_rev(efx) >= EFX_REV_FALCON_B0) {
 		EFX_POPULATE_OWORD_1(temp, FRF_BZ_FLS_EVQ_ID, 0);
 		efx_writeo(efx, &temp, FR_BZ_DP_CTRL);
 	}
@@ -3222,7 +3233,10 @@ void falcon_stop_nic_stats(struct efx_nic *efx)
  **************************************************************************
  */
 
-struct efx_nic_type falcon_a_nic_type = {
+struct efx_nic_type falcon_a1_nic_type = {
+	.default_mac_ops = &falcon_xmac_operations,
+
+	.revision = EFX_REV_FALCON_A1,
 	.mem_map_size = 0x20000,
 	.txd_ptr_tbl_base = FR_AA_TX_DESC_PTR_TBL_KER,
 	.rxd_ptr_tbl_base = FR_AA_RX_DESC_PTR_TBL_KER,
@@ -3233,9 +3247,14 @@ struct efx_nic_type falcon_a_nic_type = {
 	.rx_buffer_padding = 0x24,
 	.max_interrupt_mode = EFX_INT_MODE_MSI,
 	.phys_addr_channels = 4,
+	.tx_dc_base = 0x130000,
+	.rx_dc_base = 0x100000,
 };
 
-struct efx_nic_type falcon_b_nic_type = {
+struct efx_nic_type falcon_b0_nic_type = {
+	.default_mac_ops = &falcon_xmac_operations,
+
+	.revision = EFX_REV_FALCON_B0,
 	/* Map everything up to and including the RSS indirection
 	 * table.  Don't map MSI-X table, MSI-X PBA since Linux
 	 * requires that they not be mapped.  */
@@ -3253,5 +3272,7 @@ struct efx_nic_type falcon_b_nic_type = {
 	.phys_addr_channels = 32, /* Hardware limit is 64, but the legacy
 				   * interrupt handler only supports 32
 				   * channels */
+	.tx_dc_base = 0x130000,
+	.rx_dc_base = 0x100000,
 };
 

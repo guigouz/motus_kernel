@@ -350,9 +350,9 @@ enum efx_rx_alloc_method {
  * @rx_alloc_push_pages: RX allocation method currently in use for pushing
  *	descriptors
  * @n_rx_tobe_disc: Count of RX_TOBE_DISC errors
- * @n_rx_ip_frag_err: Count of RX IP fragment errors
  * @n_rx_ip_hdr_chksum_err: Count of RX IP header checksum errors
  * @n_rx_tcp_udp_chksum_err: Count of RX TCP and UDP checksum errors
+ * @n_rx_mcast_mismatch: Count of unmatched multicast frames
  * @n_rx_frm_trunc: Count of RX_FRM_TRUNC errors
  * @n_rx_overlength: Count of RX_OVERLENGTH errors
  * @n_skbuff_leaks: Count of skbuffs leaked due to RX overrun
@@ -380,9 +380,9 @@ struct efx_channel {
 	int rx_alloc_push_pages;
 
 	unsigned n_rx_tobe_disc;
-	unsigned n_rx_ip_frag_err;
 	unsigned n_rx_ip_hdr_chksum_err;
 	unsigned n_rx_tcp_udp_chksum_err;
+	unsigned n_rx_mcast_mismatch;
 	unsigned n_rx_frm_trunc;
 	unsigned n_rx_overlength;
 	unsigned n_skbuff_leaks;
@@ -503,6 +503,13 @@ struct efx_link_state {
 	unsigned int speed;
 };
 
+static inline bool efx_link_state_equal(const struct efx_link_state *left,
+					const struct efx_link_state *right)
+{
+	return left->up == right->up && left->fd == right->fd &&
+		left->fc == right->fc && left->speed == right->speed;
+}
+
 /**
  * struct efx_mac_operations - Efx MAC operations table
  * @reconfigure: Reconfigure MAC. Serialised by the mac_lock
@@ -520,8 +527,8 @@ struct efx_mac_operations {
  * @init: Initialise PHY
  * @fini: Shut down PHY
  * @reconfigure: Reconfigure PHY (e.g. for new link parameters)
- * @clear_interrupt: Clear down interrupt
- * @poll: Poll for hardware state. Serialised by the mac_lock.
+ * @poll: Update @link_state and report whether it changed.
+ *	Serialised by the mac_lock.
  * @get_settings: Get ethtool settings. Serialised by the mac_lock.
  * @set_settings: Set ethtool settings. Serialised by the mac_lock.
  * @set_npage_adv: Set abilities advertised in (Extended) Next Page
@@ -538,8 +545,7 @@ struct efx_phy_operations {
 	int (*init) (struct efx_nic *efx);
 	void (*fini) (struct efx_nic *efx);
 	void (*reconfigure) (struct efx_nic *efx);
-	void (*clear_interrupt) (struct efx_nic *efx);
-	void (*poll) (struct efx_nic *efx);
+	bool (*poll) (struct efx_nic *efx);
 	void (*get_settings) (struct efx_nic *efx,
 			      struct ethtool_cmd *ecmd);
 	int (*set_settings) (struct efx_nic *efx,
@@ -700,10 +706,10 @@ union efx_multicast_hash {
  * @mac_lock: MAC access lock. Protects @port_enabled, @phy_mode,
  *	@port_inhibited, efx_monitor() and efx_reconfigure_port()
  * @port_enabled: Port enabled indicator.
- *	Serialises efx_stop_all(), efx_start_all(), efx_monitor(),
- *	efx_phy_work(), and efx_mac_work() with kernel interfaces. Safe to read
- *	under any one of the rtnl_lock, mac_lock, or netif_tx_lock, but all
- *	three must be held to modify it.
+ *	Serialises efx_stop_all(), efx_start_all(), efx_monitor() and
+ *	efx_mac_work() with kernel interfaces. Safe to read under any
+ *	one of the rtnl_lock, mac_lock, or netif_tx_lock, but all three must
+ *	be held to modify it.
  * @port_inhibited: If set, the netif_carrier is always off. Hold the mac_lock
  * @port_initialized: Port initialized?
  * @net_dev: Operating system network device. Consider holding the rtnl lock
@@ -718,7 +724,7 @@ union efx_multicast_hash {
  * @mac_op: MAC interface
  * @mac_address: Permanent MAC address
  * @phy_type: PHY type
- * @phy_lock: PHY access lock
+ * @mdio_lock: MDIO lock
  * @phy_op: PHY interface
  * @phy_data: PHY private data (including PHY-specific stats)
  * @mdio: PHY MDIO interface
@@ -729,7 +735,6 @@ union efx_multicast_hash {
  * @promiscuous: Promiscuous flag. Protected by netif_tx_lock.
  * @multicast_hash: Multicast hash table
  * @wanted_fc: Wanted flow control flags
- * @phy_work: work item for dealing with PHY events
  * @mac_work: Work item for changing MAC promiscuity and multicast hash
  * @loopback_mode: Loopback status
  * @loopback_modes: Supported loopback mode bitmask
@@ -801,8 +806,7 @@ struct efx_nic {
 	unsigned char mac_address[ETH_ALEN];
 
 	enum phy_type phy_type;
-	spinlock_t phy_lock;
-	struct work_struct phy_work;
+	struct mutex mdio_lock;
 	struct efx_phy_operations *phy_op;
 	void *phy_data;
 	struct mdio_if_info mdio;
@@ -839,6 +843,8 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
 
 /**
  * struct efx_nic_type - Efx device type definition
+ * @default_mac_ops: efx_mac_operations to set at startup
+ * @revision: Hardware architecture revision
  * @mem_map_size: Memory BAR mapped size
  * @txd_ptr_tbl_base: TX descriptor ring base address
  * @rxd_ptr_tbl_base: RX descriptor ring base address
@@ -851,20 +857,25 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
  *	from &enum efx_init_mode.
  * @phys_addr_channels: Number of channels with physically addressed
  *	descriptors
+ * @tx_dc_base: Base address in SRAM of TX queue descriptor caches
+ * @rx_dc_base: Base address in SRAM of RX queue descriptor caches
  */
 struct efx_nic_type {
+	struct efx_mac_operations *default_mac_ops;
+
+	int revision;
 	unsigned int mem_map_size;
 	unsigned int txd_ptr_tbl_base;
 	unsigned int rxd_ptr_tbl_base;
 	unsigned int buf_tbl_base;
 	unsigned int evq_ptr_tbl_base;
 	unsigned int evq_rptr_tbl_base;
-
 	u64 max_dma_mask;
-
 	unsigned int rx_buffer_padding;
 	unsigned int max_interrupt_mode;
 	unsigned int phys_addr_channels;
+	unsigned int tx_dc_base;
+	unsigned int rx_dc_base;
 };
 
 /**************************************************************************

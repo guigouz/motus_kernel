@@ -138,39 +138,27 @@ static int qt202x_reset_phy(struct efx_nic *efx)
 static int qt202x_phy_init(struct efx_nic *efx)
 {
 	struct qt202x_phy_data *phy_data;
-	u32 devid = efx_mdio_read_id(efx, MDIO_MMD_PHYXS);
+	u32 devid;
 	int rc;
+
+	rc = qt202x_reset_phy(efx);
+	if (rc) {
+		EFX_ERR(efx, "PHY init failed\n");
+		return rc;
+	}
 
 	phy_data = kzalloc(sizeof(struct qt202x_phy_data), GFP_KERNEL);
 	if (!phy_data)
 		return -ENOMEM;
 	efx->phy_data = phy_data;
 
+	devid = efx_mdio_read_id(efx, MDIO_MMD_PHYXS);
 	EFX_INFO(efx, "PHY ID reg %x (OUI %06x model %02x revision %x)\n",
 		 devid, efx_mdio_id_oui(devid), efx_mdio_id_model(devid),
 		 efx_mdio_id_rev(devid));
 
 	phy_data->phy_mode = efx->phy_mode;
-
-	rc = qt202x_reset_phy(efx);
-
-	EFX_INFO(efx, "PHY init %s.\n",
-		 rc ? "failed" : "successful");
-	if (rc < 0)
-		goto fail;
-
 	return 0;
-
- fail:
-	kfree(efx->phy_data);
-	efx->phy_data = NULL;
-	return rc;
-}
-
-static void qt202x_phy_clear_interrupt(struct efx_nic *efx)
-{
-	/* Read to clear link status alarm */
-	efx_mdio_read(efx, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_STAT);
 }
 
 static int qt202x_link_ok(struct efx_nic *efx)
@@ -178,18 +166,21 @@ static int qt202x_link_ok(struct efx_nic *efx)
 	return efx_mdio_links_ok(efx, QT202X_REQUIRED_DEVS);
 }
 
-static void qt202x_phy_poll(struct efx_nic *efx)
+static bool qt202x_phy_poll(struct efx_nic *efx)
 {
-	int link_up = qt202x_link_ok(efx);
-	/* Simulate a PHY event if link state has changed */
-	if (link_up != efx->link_state.up)
-		falcon_sim_phy_event(efx);
+	bool was_up = efx->link_state.up;
+
+	efx->link_state.up = qt202x_link_ok(efx);
+	efx->link_state.speed = 10000;
+	efx->link_state.fd = true;
+	efx->link_state.fc = efx->wanted_fc;
+
+	return efx->link_state.up != was_up;
 }
 
 static void qt202x_phy_reconfigure(struct efx_nic *efx)
 {
 	struct qt202x_phy_data *phy_data = efx->phy_data;
-	struct efx_link_state *link_state = &efx->link_state;
 
 	if (efx->phy_type == PHY_TYPE_QT2025C) {
 		/* There are several different register bits which can
@@ -216,10 +207,6 @@ static void qt202x_phy_reconfigure(struct efx_nic *efx)
 	efx_mdio_phy_reconfigure(efx);
 
 	phy_data->phy_mode = efx->phy_mode;
-	link_state->up = qt202x_link_ok(efx);
-	link_state->speed = 10000;
-	link_state->fd = true;
-	link_state->fc = efx->wanted_fc;
 }
 
 static void qt202x_phy_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
@@ -240,7 +227,6 @@ struct efx_phy_operations falcon_qt202x_phy_ops = {
 	.reconfigure	 = qt202x_phy_reconfigure,
 	.poll	     	 = qt202x_phy_poll,
 	.fini	  	 = qt202x_phy_fini,
-	.clear_interrupt = qt202x_phy_clear_interrupt,
 	.get_settings	 = qt202x_phy_get_settings,
 	.set_settings	 = efx_mdio_set_settings,
 	.mmds            = QT202X_REQUIRED_DEVS,

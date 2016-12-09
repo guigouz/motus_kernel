@@ -583,7 +583,7 @@ void efx_schedule_slow_fill(struct efx_rx_queue *rx_queue, int delay)
  * netif_carrier_on/off) of the link status, and also maintains the
  * link status's stop on the port's TX queue.
  */
-static void efx_link_status_changed(struct efx_nic *efx)
+void efx_link_status_changed(struct efx_nic *efx)
 {
 	struct efx_link_state *link_state = &efx->link_state;
 
@@ -675,19 +675,6 @@ void efx_reconfigure_port(struct efx_nic *efx)
 	mutex_unlock(&efx->mac_lock);
 }
 
-/* Asynchronous efx_reconfigure_port work item. To speed up efx_flush_all()
- * we don't efx_reconfigure_port() if the port is disabled. Care is taken
- * in efx_stop_all() and efx_start_port() to prevent PHY events being lost */
-static void efx_phy_work(struct work_struct *data)
-{
-	struct efx_nic *efx = container_of(data, struct efx_nic, phy_work);
-
-	mutex_lock(&efx->mac_lock);
-	if (efx->port_enabled)
-		__efx_reconfigure_port(efx);
-	mutex_unlock(&efx->mac_lock);
-}
-
 /* Asynchronous work item for changing MAC promiscuity and multicast
  * hash.  Avoid a drain/rx_ingress enable by reconfiguring the current
  * MAC directly. */
@@ -768,9 +755,6 @@ fail1:
 	return rc;
 }
 
-/* Allow efx_reconfigure_port() to be scheduled, and close the window
- * between efx_stop_port and efx_flush_all whereby a previously scheduled
- * efx_phy_work()/efx_mac_work() may have been cancelled */
 static void efx_start_port(struct efx_nic *efx)
 {
 	EFX_LOG(efx, "start port\n");
@@ -787,10 +771,7 @@ static void efx_start_port(struct efx_nic *efx)
 	mutex_unlock(&efx->mac_lock);
 }
 
-/* Prevent efx_phy_work, efx_mac_work, and efx_monitor() from executing,
- * and efx_set_multicast_list() from scheduling efx_phy_work. efx_phy_work
- * and efx_mac_work may still be scheduled via NAPI processing until
- * efx_flush_all() is called */
+/* Prevent efx_mac_work() and efx_monitor() from working */
 static void efx_stop_port(struct efx_nic *efx)
 {
 	EFX_LOG(efx, "stop port\n");
@@ -1188,8 +1169,6 @@ static void efx_flush_all(struct efx_nic *efx)
 
 	/* Stop scheduled port reconfigurations */
 	cancel_work_sync(&efx->mac_work);
-	cancel_work_sync(&efx->phy_work);
-
 }
 
 /* Quiesce hardware and software without bringing the link down.
@@ -1227,7 +1206,7 @@ static void efx_stop_all(struct efx_nic *efx)
 	 * window to loose phy events */
 	efx_stop_port(efx);
 
-	/* Flush efx_phy_work, efx_mac_work, refill_workqueue, monitor_work */
+	/* Flush efx_mac_work(), refill_workqueue, monitor_work */
 	efx_flush_all(efx);
 
 	/* Isolate the MAC from the TX and RX engines, so that queue
@@ -1888,9 +1867,9 @@ void efx_schedule_reset(struct efx_nic *efx, enum reset_type type)
 /* PCI device ID table */
 static struct pci_device_id efx_pci_table[] __devinitdata = {
 	{PCI_DEVICE(EFX_VENDID_SFC, FALCON_A_P_DEVID),
-	 .driver_data = (unsigned long) &falcon_a_nic_type},
+	 .driver_data = (unsigned long) &falcon_a1_nic_type},
 	{PCI_DEVICE(EFX_VENDID_SFC, FALCON_B_P_DEVID),
-	 .driver_data = (unsigned long) &falcon_b_nic_type},
+	 .driver_data = (unsigned long) &falcon_b0_nic_type},
 	{0}			/* end of list */
 };
 
@@ -1911,17 +1890,16 @@ void efx_port_dummy_op_void(struct efx_nic *efx) {}
 void efx_port_dummy_op_set_id_led(struct efx_nic *efx, enum efx_led_mode mode)
 {
 }
-
-static struct efx_mac_operations efx_dummy_mac_operations = {
-	.reconfigure	= efx_port_dummy_op_void,
-};
+bool efx_port_dummy_op_poll(struct efx_nic *efx)
+{
+	return false;
+}
 
 static struct efx_phy_operations efx_dummy_phy_operations = {
 	.init		 = efx_port_dummy_op_int,
 	.reconfigure	 = efx_port_dummy_op_void,
-	.poll		 = efx_port_dummy_op_void,
+	.poll		 = efx_port_dummy_op_poll,
 	.fini		 = efx_port_dummy_op_void,
-	.clear_interrupt = efx_port_dummy_op_void,
 };
 
 /**************************************************************************
@@ -1944,7 +1922,7 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	/* Initialise common structures */
 	memset(efx, 0, sizeof(*efx));
 	spin_lock_init(&efx->biu_lock);
-	spin_lock_init(&efx->phy_lock);
+	mutex_init(&efx->mdio_lock);
 	mutex_init(&efx->spi_lock);
 	INIT_WORK(&efx->reset_work, efx_reset_work);
 	INIT_DELAYED_WORK(&efx->monitor_work, efx_monitor);
@@ -1958,10 +1936,9 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	spin_lock_init(&efx->netif_stop_lock);
 	spin_lock_init(&efx->stats_lock);
 	mutex_init(&efx->mac_lock);
-	efx->mac_op = &efx_dummy_mac_operations;
+	efx->mac_op = type->default_mac_ops;
 	efx->phy_op = &efx_dummy_phy_operations;
 	efx->mdio.dev = net_dev;
-	INIT_WORK(&efx->phy_work, efx_phy_work);
 	INIT_WORK(&efx->mac_work, efx_mac_work);
 	atomic_set(&efx->netif_stop_count, 1);
 
