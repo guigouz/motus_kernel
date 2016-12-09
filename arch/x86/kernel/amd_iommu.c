@@ -447,10 +447,10 @@ static int iommu_queue_inv_iommu_pages(struct amd_iommu *iommu,
  * It invalidates a single PTE if the range to flush is within a single
  * page. Otherwise it flushes the whole TLB of the IOMMU.
  */
-static int iommu_flush_pages(struct amd_iommu *iommu, u16 domid,
-		u64 address, size_t size)
+static void __iommu_flush_pages(struct protection_domain *domain,
+				u64 address, size_t size, int pde)
 {
-	int s = 0;
+	int s = 0, i;
 	unsigned pages = iommu_num_pages(address, size, PAGE_SIZE);
 
 	address &= PAGE_MASK;
@@ -464,9 +464,26 @@ static int iommu_flush_pages(struct amd_iommu *iommu, u16 domid,
 		s = 1;
 	}
 
-	iommu_queue_inv_iommu_pages(iommu, address, domid, 0, s);
 
-	return 0;
+	for (i = 0; i < amd_iommus_present; ++i) {
+		if (!domain->dev_iommu[i])
+			continue;
+
+		/*
+		 * Devices of this domain are behind this IOMMU
+		 * We need a TLB flush
+		 */
+		iommu_queue_inv_iommu_pages(amd_iommus[i], address,
+					    domain->id, pde, s);
+	}
+
+	return;
+}
+
+static void iommu_flush_pages(struct protection_domain *domain,
+			     u64 address, size_t size)
+{
+	__iommu_flush_pages(domain, address, size, 0);
 }
 
 /* Flush the whole IO/TLB for a given protection domain */
@@ -557,11 +574,11 @@ static void flush_all_devices_for_iommu(struct amd_iommu *iommu)
 static void flush_devices_by_domain(struct protection_domain *domain)
 {
 	struct amd_iommu *iommu;
-	unsigned long i;
+	int i;
 
 	for (i = 0; i <= amd_iommu_last_bdf; ++i) {
 		if ((domain == NULL && amd_iommu_pd_table[i] == NULL) ||
-		    (domain != NULL && amd_iommu_pd_table[i] != domain))
+		    (amd_iommu_pd_table[i] != domain))
 			continue;
 
 		iommu = amd_iommu_rlookup_table[i];
@@ -859,7 +876,7 @@ static int alloc_new_range(struct amd_iommu *iommu,
 		if (!pte || !IOMMU_PTE_PRESENT(*pte))
 			continue;
 
-		dma_ops_reserve_addresses(dma_dom, i >> PAGE_SHIFT, 1);
+		dma_ops_reserve_addresses(dma_dom, i << PAGE_SHIFT, 1);
 	}
 
 	update_domain(&dma_dom->domain);
@@ -1253,10 +1270,9 @@ static void __detach_device(struct protection_domain *domain, u16 devid)
 
 	/*
 	 * If we run in passthrough mode the device must be assigned to the
-	 * passthrough domain if it is detached from any other domain.
-	 * Make sure we can deassign from the pt_domain itself.
+	 * passthrough domain if it is detached from any other domain
 	 */
-	if (iommu_pass_through && domain != pt_domain) {
+	if (iommu_pass_through) {
 		struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
 		__attach_device(iommu, pt_domain, devid);
 	}
@@ -1684,7 +1700,7 @@ retry:
 		iommu_flush_tlb(iommu, dma_dom->domain.id);
 		dma_dom->need_flush = false;
 	} else if (unlikely(iommu_has_npcache(iommu)))
-		iommu_flush_pages(iommu, dma_dom->domain.id, address, size);
+		iommu_flush_pages(&dma_dom->domain, address, size);
 
 out:
 	return address;
@@ -1711,7 +1727,6 @@ static void __unmap_single(struct amd_iommu *iommu,
 			   size_t size,
 			   int dir)
 {
-	dma_addr_t flush_addr;
 	dma_addr_t i, start;
 	unsigned int pages;
 
@@ -1719,7 +1734,6 @@ static void __unmap_single(struct amd_iommu *iommu,
 	    (dma_addr + size > dma_dom->aperture_size))
 		return;
 
-	flush_addr = dma_addr;
 	pages = iommu_num_pages(dma_addr, size, PAGE_SIZE);
 	dma_addr &= PAGE_MASK;
 	start = dma_addr;
@@ -1734,7 +1748,7 @@ static void __unmap_single(struct amd_iommu *iommu,
 	dma_ops_free_addresses(dma_dom, dma_addr, pages);
 
 	if (amd_iommu_unmap_flush || dma_dom->need_flush) {
-		iommu_flush_pages(iommu, dma_dom->domain.id, flush_addr, size);
+		iommu_flush_pages(&dma_dom->domain, dma_addr, size);
 		dma_dom->need_flush = false;
 	}
 }
@@ -2109,11 +2123,6 @@ static struct dma_map_ops amd_iommu_dma_ops = {
 	.dma_supported = amd_iommu_dma_supported,
 };
 
-void __init amd_iommu_init_api(void)
-{
-	register_iommu(&amd_iommu_ops);
-}
-
 /*
  * The function which clues the AMD IOMMU driver into dma_ops.
  */
@@ -2153,6 +2162,8 @@ int __init amd_iommu_init_dma_ops(void)
 
 	/* Make the driver finally visible to the drivers */
 	dma_ops = &amd_iommu_dma_ops;
+
+	register_iommu(&amd_iommu_ops);
 
 	bus_register_notifier(&pci_bus_type, &device_nb);
 
@@ -2263,7 +2274,9 @@ static void amd_iommu_domain_destroy(struct iommu_domain *dom)
 
 	free_pagetable(domain);
 
-	protection_domain_free(domain);
+	domain_id_free(domain->id);
+
+	kfree(domain);
 
 	dom->priv = NULL;
 }
