@@ -13,7 +13,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/console.h>
+#include <linux/gpio.h>
 #include <linux/i2c.h>
+#include <linux/i2c/pcf857x.h>
 #include <linux/i2c/at24.h>
 
 #include <asm/mach-types.h>
@@ -22,6 +24,8 @@
 #include <mach/common.h>
 #include <mach/irqs.h>
 #include <mach/cp_intc.h>
+#include <mach/mux.h>
+#include <mach/gpio.h>
 #include <mach/da8xx.h>
 #include <mach/asp.h>
 
@@ -36,6 +40,31 @@ static struct at24_platform_data da830_evm_i2c_eeprom_info = {
 	.context	= (void *)0x7f00,
 };
 
+static int da830_evm_ui_expander_setup(struct i2c_client *client, int gpio,
+		unsigned ngpio, void *context)
+{
+	gpio_request(gpio + 6, "MUX_MODE");
+#ifdef CONFIG_DA830_UI_LCD
+	gpio_direction_output(gpio + 6, 0);
+#else /* Must be NAND or NOR */
+	gpio_direction_output(gpio + 6, 1);
+#endif
+	return 0;
+}
+
+static int da830_evm_ui_expander_teardown(struct i2c_client *client, int gpio,
+		unsigned ngpio, void *context)
+{
+	gpio_free(gpio + 6);
+	return 0;
+}
+
+static struct pcf857x_platform_data da830_evm_ui_expander_info = {
+	.gpio_base	= DAVINCI_N_GPIO,
+	.setup		= da830_evm_ui_expander_setup,
+	.teardown	= da830_evm_ui_expander_teardown,
+};
+
 static struct i2c_board_info __initdata da830_evm_i2c_devices[] = {
 	{
 		I2C_BOARD_INFO("24c256", 0x50),
@@ -43,7 +72,11 @@ static struct i2c_board_info __initdata da830_evm_i2c_devices[] = {
 	},
 	{
 		I2C_BOARD_INFO("tlv320aic3x", 0x18),
-	}
+	},
+	{
+		I2C_BOARD_INFO("pcf8574", 0x3f),
+		.platform_data	= &da830_evm_ui_expander_info,
+	},
 };
 
 static struct davinci_i2c_platform_data da830_evm_i2c_0_pdata = {
@@ -53,6 +86,14 @@ static struct davinci_i2c_platform_data da830_evm_i2c_0_pdata = {
 
 static struct davinci_uart_config da830_evm_uart_config __initdata = {
 	.enabled_uarts = 0x7,
+};
+
+static const short da830_evm_mcasp1_pins[] = {
+	DA830_AHCLKX1, DA830_ACLKX1, DA830_AFSX1, DA830_AHCLKR1, DA830_AFSR1,
+	DA830_AMUTE1, DA830_AXR1_0, DA830_AXR1_1, DA830_AXR1_2, DA830_AXR1_5,
+	DA830_ACLKR1, DA830_AXR1_6, DA830_AXR1_7, DA830_AXR1_8, DA830_AXR1_10,
+	DA830_AXR1_11,
+	-1
 };
 
 static u8 da830_iis_serializer_direction[] = {
@@ -73,6 +114,57 @@ static struct snd_platform_data da830_evm_snd_data = {
 	.txnumevt	= 1,
 	.rxnumevt	= 1,
 };
+
+/*
+ * GPIO2[1] is used as MMC_SD_WP and GPIO2[2] as MMC_SD_INS.
+ */
+static const short da830_evm_mmc_sd_pins[] = {
+	DA830_MMCSD_DAT_0, DA830_MMCSD_DAT_1, DA830_MMCSD_DAT_2,
+	DA830_MMCSD_DAT_3, DA830_MMCSD_DAT_4, DA830_MMCSD_DAT_5,
+	DA830_MMCSD_DAT_6, DA830_MMCSD_DAT_7, DA830_MMCSD_CLK,
+	DA830_MMCSD_CMD,   DA830_GPIO2_1,     DA830_GPIO2_2,
+	-1
+};
+
+#define DA830_MMCSD_WP_PIN		GPIO_TO_PIN(2, 1)
+
+static int da830_evm_mmc_get_ro(int index)
+{
+	return gpio_get_value(DA830_MMCSD_WP_PIN);
+}
+
+static struct davinci_mmc_config da830_evm_mmc_config = {
+	.get_ro			= da830_evm_mmc_get_ro,
+	.wires			= 4,
+	.version		= MMC_CTLR_VERSION_2,
+};
+
+static inline void da830_evm_init_mmc(void)
+{
+	int ret;
+
+	ret = da8xx_pinmux_setup(da830_evm_mmc_sd_pins);
+	if (ret) {
+		pr_warning("da830_evm_init: mmc/sd mux setup failed: %d\n",
+				ret);
+		return;
+	}
+
+	ret = gpio_request(DA830_MMCSD_WP_PIN, "MMC WP");
+	if (ret) {
+		pr_warning("da830_evm_init: can not open GPIO %d\n",
+			   DA830_MMCSD_WP_PIN);
+		return;
+	}
+	gpio_direction_input(DA830_MMCSD_WP_PIN);
+
+	ret = da8xx_register_mmcsd0(&da830_evm_mmc_config);
+	if (ret) {
+		pr_warning("da830_evm_init: mmc/sd registration failed: %d\n",
+				ret);
+		gpio_free(DA830_MMCSD_WP_PIN);
+	}
+}
 
 static __init void da830_evm_init(void)
 {
@@ -117,12 +209,29 @@ static __init void da830_evm_init(void)
 	i2c_register_board_info(1, da830_evm_i2c_devices,
 			ARRAY_SIZE(da830_evm_i2c_devices));
 
-	ret = da8xx_pinmux_setup(da830_mcasp1_pins);
+	ret = da8xx_pinmux_setup(da830_evm_mcasp1_pins);
 	if (ret)
 		pr_warning("da830_evm_init: mcasp1 mux setup failed: %d\n",
 				ret);
 
-	da8xx_init_mcasp(1, &da830_evm_snd_data);
+	da8xx_register_mcasp(1, &da830_evm_snd_data);
+
+	da830_evm_init_mmc();
+
+#ifdef CONFIG_DA830_UI_LCD
+	ret = da8xx_pinmux_setup(da830_lcdcntl_pins);
+	if (ret)
+		pr_warning("da830_evm_init: lcdcntl mux setup failed: %d\n",
+				ret);
+
+	ret = da8xx_register_lcdc(&sharp_lcd035q3dg01_pdata);
+	if (ret)
+		pr_warning("da830_evm_init: lcd setup failed: %d\n", ret);
+#endif
+
+	ret = da8xx_register_rtc();
+	if (ret)
+		pr_warning("da830_evm_init: rtc setup failed: %d\n", ret);
 }
 
 #ifdef CONFIG_SERIAL_8250_CONSOLE

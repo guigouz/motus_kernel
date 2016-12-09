@@ -19,6 +19,7 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
+#include <linux/delay.h>
 
 #include <mach/hardware.h>
 
@@ -99,19 +100,73 @@ long clk_round_rate(struct clk *clk, unsigned long rate)
 	if (clk == NULL || IS_ERR(clk))
 		return -EINVAL;
 
+	if (clk->round_rate)
+		return clk->round_rate(clk, rate);
+
 	return clk->rate;
 }
 EXPORT_SYMBOL(clk_round_rate);
 
+/* Propagate rate to children */
+static void propagate_rate(struct clk *root)
+{
+	struct clk *clk;
+
+	list_for_each_entry(clk, &root->children, childnode) {
+		if (clk->recalc)
+			clk->rate = clk->recalc(clk);
+		propagate_rate(clk);
+	}
+}
+
 int clk_set_rate(struct clk *clk, unsigned long rate)
 {
+	unsigned long flags;
+	int ret = -EINVAL;
+
+	if (clk == NULL || IS_ERR(clk))
+		return ret;
+
+	spin_lock_irqsave(&clockfw_lock, flags);
+	if (clk->set_rate)
+		ret = clk->set_rate(clk, rate);
+	if (ret == 0) {
+		if (clk->recalc)
+			clk->rate = clk->recalc(clk);
+		propagate_rate(clk);
+	}
+	spin_unlock_irqrestore(&clockfw_lock, flags);
+
+	return ret;
+}
+EXPORT_SYMBOL(clk_set_rate);
+
+int clk_set_parent(struct clk *clk, struct clk *parent)
+{
+	unsigned long flags;
+
 	if (clk == NULL || IS_ERR(clk))
 		return -EINVAL;
 
-	/* changing the clk rate is not supported */
-	return -EINVAL;
+	/* Cannot change parent on enabled clock */
+	if (WARN_ON(clk->usecount))
+		return -EINVAL;
+
+	mutex_lock(&clocks_mutex);
+	clk->parent = parent;
+	list_del_init(&clk->childnode);
+	list_add(&clk->childnode, &clk->parent->children);
+	mutex_unlock(&clocks_mutex);
+
+	spin_lock_irqsave(&clockfw_lock, flags);
+	if (clk->recalc)
+		clk->rate = clk->recalc(clk);
+	propagate_rate(clk);
+	spin_unlock_irqrestore(&clockfw_lock, flags);
+
+	return 0;
 }
-EXPORT_SYMBOL(clk_set_rate);
+EXPORT_SYMBOL(clk_set_parent);
 
 int clk_register(struct clk *clk)
 {
@@ -123,16 +178,24 @@ int clk_register(struct clk *clk)
 			clk->name, clk->parent->name))
 		return -EINVAL;
 
+	INIT_LIST_HEAD(&clk->children);
+
 	mutex_lock(&clocks_mutex);
 	list_add_tail(&clk->node, &clocks);
+	if (clk->parent)
+		list_add_tail(&clk->childnode, &clk->parent->children);
 	mutex_unlock(&clocks_mutex);
 
 	/* If rate is already set, use it */
 	if (clk->rate)
 		return 0;
 
+	/* Else, see if there is a way to calculate it */
+	if (clk->recalc)
+		clk->rate = clk->recalc(clk);
+
 	/* Otherwise, default to parent rate */
-	if (clk->parent)
+	else if (clk->parent)
 		clk->rate = clk->parent->rate;
 
 	return 0;
@@ -146,6 +209,7 @@ void clk_unregister(struct clk *clk)
 
 	mutex_lock(&clocks_mutex);
 	list_del(&clk->node);
+	list_del(&clk->childnode);
 	mutex_unlock(&clocks_mutex);
 }
 EXPORT_SYMBOL(clk_unregister);
@@ -179,50 +243,62 @@ static int __init clk_disable_unused(void)
 late_initcall(clk_disable_unused);
 #endif
 
-static void clk_sysclk_recalc(struct clk *clk)
+static unsigned long clk_sysclk_recalc(struct clk *clk)
 {
 	u32 v, plldiv;
 	struct pll_data *pll;
+	unsigned long rate = clk->rate;
 
 	/* If this is the PLL base clock, no more calculations needed */
 	if (clk->pll_data)
-		return;
+		return rate;
 
 	if (WARN_ON(!clk->parent))
-		return;
+		return rate;
 
-	clk->rate = clk->parent->rate;
+	rate = clk->parent->rate;
 
 	/* Otherwise, the parent must be a PLL */
 	if (WARN_ON(!clk->parent->pll_data))
-		return;
+		return rate;
 
 	pll = clk->parent->pll_data;
 
 	/* If pre-PLL, source clock is before the multiplier and divider(s) */
 	if (clk->flags & PRE_PLL)
-		clk->rate = pll->input_rate;
+		rate = pll->input_rate;
 
 	if (!clk->div_reg)
-		return;
+		return rate;
 
 	v = __raw_readl(pll->base + clk->div_reg);
 	if (v & PLLDIV_EN) {
 		plldiv = (v & PLLDIV_RATIO_MASK) + 1;
 		if (plldiv)
-			clk->rate /= plldiv;
+			rate /= plldiv;
 	}
+
+	return rate;
 }
 
-static void __init clk_pll_init(struct clk *clk)
+static unsigned long clk_leafclk_recalc(struct clk *clk)
+{
+	if (WARN_ON(!clk->parent))
+		return clk->rate;
+
+	return clk->parent->rate;
+}
+
+static unsigned long clk_pllclk_recalc(struct clk *clk)
 {
 	u32 ctrl, mult = 1, prediv = 1, postdiv = 1;
 	u8 bypass;
 	struct pll_data *pll = clk->pll_data;
+	unsigned long rate = clk->rate;
 
 	pll->base = IO_ADDRESS(pll->phys_base);
 	ctrl = __raw_readl(pll->base + PLLCTL);
-	clk->rate = pll->input_rate = clk->parent->rate;
+	rate = pll->input_rate = clk->parent->rate;
 
 	if (ctrl & PLLCTL_PLLEN) {
 		bypass = 0;
@@ -255,9 +331,9 @@ static void __init clk_pll_init(struct clk *clk)
 	}
 
 	if (!bypass) {
-		clk->rate /= prediv;
-		clk->rate *= mult;
-		clk->rate /= postdiv;
+		rate /= prediv;
+		rate *= mult;
+		rate /= postdiv;
 	}
 
 	pr_debug("PLL%d: input = %lu MHz [ ",
@@ -270,8 +346,90 @@ static void __init clk_pll_init(struct clk *clk)
 		pr_debug("* %d ", mult);
 	if (postdiv > 1)
 		pr_debug("/ %d ", postdiv);
-	pr_debug("] --> %lu MHz output.\n", clk->rate / 1000000);
+	pr_debug("] --> %lu MHz output.\n", rate / 1000000);
+
+	return rate;
 }
+
+/**
+ * davinci_set_pllrate - set the output rate of a given PLL.
+ *
+ * Note: Currently tested to work with OMAP-L138 only.
+ *
+ * @pll: pll whose rate needs to be changed.
+ * @prediv: The pre divider value. Passing 0 disables the pre-divider.
+ * @pllm: The multiplier value. Passing 0 leads to multiply-by-one.
+ * @postdiv: The post divider value. Passing 0 disables the post-divider.
+ */
+int davinci_set_pllrate(struct pll_data *pll, unsigned int prediv,
+					unsigned int mult, unsigned int postdiv)
+{
+	u32 ctrl;
+	unsigned int locktime;
+
+	if (pll->base == NULL)
+		return -EINVAL;
+
+	/*
+	 *  PLL lock time required per OMAP-L138 datasheet is
+	 * (2000 * prediv)/sqrt(pllm) OSCIN cycles. We approximate sqrt(pllm)
+	 * as 4 and OSCIN cycle as 25 MHz.
+	 */
+	if (prediv) {
+		locktime = ((2000 * prediv) / 100);
+		prediv = (prediv - 1) | PLLDIV_EN;
+	} else {
+		locktime = 20;
+	}
+	if (postdiv)
+		postdiv = (postdiv - 1) | PLLDIV_EN;
+	if (mult)
+		mult = mult - 1;
+
+	ctrl = __raw_readl(pll->base + PLLCTL);
+
+	/* Switch the PLL to bypass mode */
+	ctrl &= ~(PLLCTL_PLLENSRC | PLLCTL_PLLEN);
+	__raw_writel(ctrl, pll->base + PLLCTL);
+
+	/*
+	 * Wait for 4 OSCIN/CLKIN cycles to ensure that the PLLC has switched
+	 * to bypass mode. Delay of 1us ensures we are good for all > 4MHz
+	 * OSCIN/CLKIN inputs. Typically the input is ~25MHz.
+	 */
+	udelay(1);
+
+	/* Reset and enable PLL */
+	ctrl &= ~(PLLCTL_PLLRST | PLLCTL_PLLDIS);
+	__raw_writel(ctrl, pll->base + PLLCTL);
+
+	if (pll->flags & PLL_HAS_PREDIV)
+		__raw_writel(prediv, pll->base + PREDIV);
+
+	__raw_writel(mult, pll->base + PLLM);
+
+	if (pll->flags & PLL_HAS_POSTDIV)
+		__raw_writel(postdiv, pll->base + POSTDIV);
+
+	/*
+	 * Wait for PLL to reset properly, OMAP-L138 datasheet says
+	 * 'min' time = 125ns
+	 */
+	udelay(1);
+
+	/* Bring PLL out of reset */
+	ctrl |= PLLCTL_PLLRST;
+	__raw_writel(ctrl, pll->base + PLLCTL);
+
+	udelay(locktime);
+
+	/* Remove PLL from bypass mode */
+	ctrl |= PLLCTL_PLLEN;
+	__raw_writel(ctrl, pll->base + PLLCTL);
+
+	return 0;
+}
+EXPORT_SYMBOL(davinci_set_pllrate);
 
 int __init davinci_clk_init(struct davinci_clk *clocks)
   {
@@ -281,12 +439,23 @@ int __init davinci_clk_init(struct davinci_clk *clocks)
 	for (c = clocks; c->lk.clk; c++) {
 		clk = c->lk.clk;
 
-		if (clk->pll_data)
-			clk_pll_init(clk);
+		if (!clk->recalc) {
 
-		/* Calculate rates for PLL-derived clocks */
-		else if (clk->flags & CLK_PLL)
-			clk_sysclk_recalc(clk);
+			/* Check if clock is a PLL */
+			if (clk->pll_data)
+				clk->recalc = clk_pllclk_recalc;
+
+			/* Else, if it is a PLL-derived clock */
+			else if (clk->flags & CLK_PLL)
+				clk->recalc = clk_sysclk_recalc;
+
+			/* Otherwise, it is a leaf clock (PSC clock) */
+			else if (clk->parent)
+				clk->recalc = clk_leafclk_recalc;
+		}
+
+		if (clk->recalc)
+			clk->rate = clk->recalc(clk);
 
 		if (clk->lpsc)
 			clk->flags |= CLK_PSC;
@@ -352,9 +521,8 @@ dump_clock(struct seq_file *s, unsigned nest, struct clk *parent)
 	/* REVISIT show device associations too */
 
 	/* cost is now small, but not linear... */
-	list_for_each_entry(clk, &clocks, node) {
-		if (clk->parent == parent)
-			dump_clock(s, nest + NEST_DELTA, clk);
+	list_for_each_entry(clk, &parent->children, childnode) {
+		dump_clock(s, nest + NEST_DELTA, clk);
 	}
 }
 

@@ -411,7 +411,7 @@ static struct davinci_clk da830_clks[] = {
 	CLK(NULL,		"pwm2",		&pwm2_clk),
 	CLK("eqep.0",		NULL,		&eqep0_clk),
 	CLK("eqep.1",		NULL,		&eqep1_clk),
-	CLK("da830_lcdc",	NULL,		&lcdc_clk),
+	CLK("da8xx_lcdc.0",	NULL,		&lcdc_clk),
 	CLK("davinci-mcasp.0",	NULL,		&mcasp0_clk),
 	CLK("davinci-mcasp.1",	NULL,		&mcasp1_clk),
 	CLK("davinci-mcasp.2",	NULL,		&mcasp2_clk),
@@ -1178,13 +1178,11 @@ static struct davinci_timer_info da830_timer_info = {
 static struct davinci_soc_info davinci_soc_info_da830 = {
 	.io_desc		= da830_io_desc,
 	.io_desc_num		= ARRAY_SIZE(da830_io_desc),
-	.jtag_id_base		= IO_ADDRESS(DA8XX_JTAG_ID_REG),
 	.ids			= da830_ids,
 	.ids_num		= ARRAY_SIZE(da830_ids),
 	.cpu_clks		= da830_clks,
 	.psc_bases		= da830_psc_bases,
 	.psc_bases_num		= ARRAY_SIZE(da830_psc_bases),
-	.pinmux_base		= IO_ADDRESS(DA8XX_BOOT_CFG_BASE + 0x120),
 	.pinmux_pins		= da830_pins,
 	.pinmux_pins_num	= ARRAY_SIZE(da830_pins),
 	.intc_base		= (void __iomem *)DA8XX_CP_INTC_VIRT,
@@ -1201,5 +1199,13 @@ static struct davinci_soc_info davinci_soc_info_da830 = {
 
 void __init da830_init(void)
 {
+	da8xx_syscfg_base = ioremap(DA8XX_SYSCFG_BASE, SZ_4K);
+	if (WARN(!da8xx_syscfg_base, "Unable to map syscfg module"))
+		return;
+
+	davinci_soc_info_da830.jtag_id_base =
+					DA8XX_SYSCFG_VIRT(DA8XX_JTAG_ID_REG);
+	davinci_soc_info_da830.pinmux_base = DA8XX_SYSCFG_VIRT(0x120);
+
 	davinci_common_init(&davinci_soc_info_da830);
 }
