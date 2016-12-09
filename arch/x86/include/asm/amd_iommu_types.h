@@ -211,6 +211,9 @@ extern bool amd_iommu_dump;
 			printk(KERN_INFO "AMD-Vi: " format, ## arg);	\
 	} while(0);
 
+/* global flag if IOMMUs cache non-present entries */
+extern bool amd_iommu_np_cache;
+
 /*
  * Make iterating over all IOMMUs easier
  */
@@ -232,6 +235,7 @@ extern bool amd_iommu_dump;
  */
 struct protection_domain {
 	struct list_head list;  /* for list of all protection domains */
+	struct list_head dev_list; /* List of all devices in this domain */
 	spinlock_t lock;	/* mostly used to lock the page table*/
 	u16 id;			/* the domain id written to the device table */
 	int mode;		/* paging mode (0-6 levels) */
@@ -242,6 +246,17 @@ struct protection_domain {
 	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
 	void *priv;		/* private data */
 
+};
+
+/*
+ * This struct contains device specific data for the IOMMU
+ */
+struct iommu_dev_data {
+	struct list_head list;		  /* For domain->dev_list */
+	struct device *dev;		  /* Device this data belong to */
+	struct device *alias;		  /* The Alias Device */
+	struct protection_domain *domain; /* Domain the device is bound to */
+	atomic_t bind;			  /* Domain attach reverent count */
 };
 
 /*
@@ -442,14 +457,8 @@ extern unsigned amd_iommu_aperture_order;
 /* largest PCI device id we expect translation requests for */
 extern u16 amd_iommu_last_bdf;
 
-/* data structures for protection domain handling */
-extern struct protection_domain **amd_iommu_pd_table;
-
 /* allocation bitmap for domain ids */
 extern unsigned long *amd_iommu_pd_alloc_bitmap;
-
-/* will be 1 if device isolation is enabled */
-extern bool amd_iommu_isolate;
 
 /*
  * If true, the addresses will be flushed on unmap time, not when
