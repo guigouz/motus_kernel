@@ -600,11 +600,15 @@ cfq_find_next_rq(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 static unsigned long cfq_slice_offset(struct cfq_data *cfqd,
 				      struct cfq_queue *cfqq)
 {
+	struct cfq_rb_root *service_tree;
+
+	service_tree = service_tree_for(cfqq_prio(cfqq), cfqq_type(cfqq), cfqd);
+
 	/*
 	 * just an approximation, should be ok.
 	 */
-	return (cfqd->busy_queues - 1) * (cfq_prio_slice(cfqd, 1, 0) -
-		       cfq_prio_slice(cfqd, cfq_cfqq_sync(cfqq), cfqq->ioprio));
+	return  service_tree->count * (cfq_prio_slice(cfqd, 1, 0) -
+		   cfq_prio_slice(cfqd, cfq_cfqq_sync(cfqq), cfqq->ioprio));
 }
 
 /*
@@ -1265,19 +1269,6 @@ static void cfq_arm_slice_timer(struct cfq_data *cfqd)
 	cfq_mark_cfqq_wait_request(cfqq);
 
 	sl = cfqd->cfq_slice_idle;
-	/* are we servicing noidle tree, and there are more queues?
-	 * non-rotational or NCQ: no idle
-	 * non-NCQ rotational : very small idle, to allow
-	 *     fair distribution of slice time for a process doing back-to-back
-	 *     seeks.
-	 */
-	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD &&
-	    service_tree_for(cfqd->serving_prio, SYNC_NOIDLE_WORKLOAD, cfqd)
-		->count > 0) {
-		if (blk_queue_nonrot(cfqd->queue) || cfqd->hw_tag)
-			return;
-		sl = min(sl, msecs_to_jiffies(CFQ_MIN_TT));
-	}
 
 	mod_timer(&cfqd->idle_slice_timer, jiffies + sl);
 	cfq_log_cfqq(cfqd, cfqq, "arm_idle: %lu", sl);

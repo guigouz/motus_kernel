@@ -83,7 +83,7 @@ TRACE_EVENT(sched_wait_task,
  * (NOTE: the 'rq' argument is not used by generic trace events,
  *        but used by the latency tracer plugin. )
  */
-TRACE_EVENT_TEMPLATE(sched_wakeup_template,
+DECLARE_EVENT_CLASS(sched_wakeup_template,
 
 	TP_PROTO(struct rq *rq, struct task_struct *p, int success),
 
@@ -197,7 +197,7 @@ TRACE_EVENT(sched_migrate_task,
 		  __entry->orig_cpu, __entry->dest_cpu)
 );
 
-TRACE_EVENT_TEMPLATE(sched_process_template,
+DECLARE_EVENT_CLASS(sched_process_template,
 
 	TP_PROTO(struct task_struct *p),
 
@@ -316,7 +316,7 @@ TRACE_EVENT(sched_signal_send,
  * XXX the below sched_stat tracepoints only apply to SCHED_OTHER/BATCH/IDLE
  *     adding sched_stat support to SCHED_FIFO/RR would be welcome.
  */
-TRACE_EVENT_TEMPLATE(sched_stat_template,
+DECLARE_EVENT_CLASS(sched_stat_template,
 
 	TP_PROTO(struct task_struct *tsk, u64 delay),
 
@@ -355,23 +355,17 @@ DEFINE_EVENT(sched_stat_template, sched_stat_wait,
  * Tracepoint for accounting sleep time (time the task is not runnable,
  * including iowait, see below).
  */
-DEFINE_EVENT_PRINT(sched_stat_template, sched_stat_sleep,
-		   TP_PROTO(struct task_struct *tsk, u64 delay),
-		   TP_ARGS(tsk, delay),
-		   TP_printk("task: %s:%d sleep: %Lu [ns]",
-			     __entry->comm, __entry->pid,
-			     (unsigned long long)__entry->delay));
+DEFINE_EVENT(sched_stat_template, sched_stat_sleep,
+	     TP_PROTO(struct task_struct *tsk, u64 delay),
+	     TP_ARGS(tsk, delay));
 
 /*
  * Tracepoint for accounting iowait time (time the task is not runnable
  * due to waiting on IO to complete).
  */
-DEFINE_EVENT_PRINT(sched_stat_template, sched_stat_iowait,
-		   TP_PROTO(struct task_struct *tsk, u64 delay),
-		   TP_ARGS(tsk, delay),
-		   TP_printk("task: %s:%d iowait: %Lu [ns]",
-			     __entry->comm, __entry->pid,
-			     (unsigned long long)__entry->delay));
+DEFINE_EVENT(sched_stat_template, sched_stat_iowait,
+	     TP_PROTO(struct task_struct *tsk, u64 delay),
+	     TP_ARGS(tsk, delay));
 
 /*
  * Tracepoint for accounting runtime (time the task is executing

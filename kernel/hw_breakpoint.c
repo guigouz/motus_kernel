@@ -121,7 +121,7 @@ static void toggle_bp_task_slot(struct task_struct *tsk, int cpu, bool enable)
 	int count = 0;
 	struct perf_event *bp;
 	struct perf_event_context *ctx = tsk->perf_event_ctxp;
-	unsigned int *task_bp_pinned;
+	unsigned int *tsk_pinned;
 	struct list_head *list;
 	unsigned long flags;
 
@@ -146,15 +146,15 @@ static void toggle_bp_task_slot(struct task_struct *tsk, int cpu, bool enable)
 	if (WARN_ONCE(count < 0, "No breakpoint counter found in the counter list"))
 		return;
 
-	task_bp_pinned = per_cpu(task_bp_pinned, cpu);
+	tsk_pinned = per_cpu(task_bp_pinned, cpu);
 	if (enable) {
-		task_bp_pinned[count]++;
+		tsk_pinned[count]++;
 		if (count > 0)
-			task_bp_pinned[count-1]--;
+			tsk_pinned[count-1]--;
 	} else {
-		task_bp_pinned[count]--;
+		tsk_pinned[count]--;
 		if (count > 0)
-			task_bp_pinned[count-1]++;
+			tsk_pinned[count-1]++;
 	}
 }
 
@@ -442,7 +442,7 @@ register_wide_hw_breakpoint(unsigned long addr,
 
 		*pevent = bp;
 
-		if (IS_ERR(bp) || !bp) {
+		if (IS_ERR(bp)) {
 			err = PTR_ERR(bp);
 			goto fail;
 		}
@@ -453,7 +453,7 @@ register_wide_hw_breakpoint(unsigned long addr,
 fail:
 	for_each_possible_cpu(cpu) {
 		pevent = per_cpu_ptr(cpu_events, cpu);
-		if (IS_ERR(*pevent) || !*pevent)
+		if (IS_ERR(*pevent))
 			break;
 		unregister_hw_breakpoint(*pevent);
 	}

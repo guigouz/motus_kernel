@@ -200,12 +200,9 @@ int process_new_ksym_entry(char *ksymname, int op, unsigned long addr)
 	entry->ksym_hbp = register_wide_hw_breakpoint(entry->ksym_addr,
 					entry->len, entry->type,
 					ksym_hbp_handler, true);
-	if (IS_ERR(entry->ksym_hbp)) {
-		entry->ksym_hbp = NULL;
-		ret = PTR_ERR(entry->ksym_hbp);
-	}
 
-	if (!entry->ksym_hbp) {
+	if (IS_ERR(entry->ksym_hbp)) {
+		ret = PTR_ERR(entry->ksym_hbp);
 		printk(KERN_INFO "ksym_tracer request failed. Try again"
 					" later!!\n");
 		goto err;
@@ -332,21 +329,22 @@ static ssize_t ksym_trace_filter_write(struct file *file,
 	if (changed) {
 		unregister_wide_hw_breakpoint(entry->ksym_hbp);
 		entry->type = op;
+		ret = 0;
 		if (op > 0) {
 			entry->ksym_hbp =
 				register_wide_hw_breakpoint(entry->ksym_addr,
 					entry->len, entry->type,
 					ksym_hbp_handler, true);
 			if (IS_ERR(entry->ksym_hbp))
-				entry->ksym_hbp = NULL;
-			if (!entry->ksym_hbp)
+				ret = PTR_ERR(entry->ksym_hbp);
+			else
 				goto out;
 		}
+		/* Error or "symbol:---" case: drop it */
 		ksym_filter_entry_count--;
 		hlist_del_rcu(&(entry->ksym_hlist));
 		synchronize_rcu();
 		kfree(entry);
-		ret = 0;
 		goto out;
 	} else {
 		/* Check for malformed request: (4) */
