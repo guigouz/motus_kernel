@@ -20,9 +20,10 @@ static int strcommon(const char *pathname, char *cwd, int cwdlen)
 	return n;
 }
 
-void map__init(struct map *self, u64 start, u64 end, u64 pgoff,
-	       struct dso *dso)
+void map__init(struct map *self, enum map_type type,
+	       u64 start, u64 end, u64 pgoff, struct dso *dso)
 {
+	self->type     = type;
 	self->start    = start;
 	self->end      = end;
 	self->pgoff    = pgoff;
@@ -32,7 +33,8 @@ void map__init(struct map *self, u64 start, u64 end, u64 pgoff,
 	RB_CLEAR_NODE(&self->rb_node);
 }
 
-struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen)
+struct map *map__new(struct mmap_event *event, enum map_type type,
+		     char *cwd, int cwdlen)
 {
 	struct map *self = malloc(sizeof(*self));
 
@@ -63,7 +65,7 @@ struct map *map__new(struct mmap_event *event, char *cwd, int cwdlen)
 		if (dso == NULL)
 			goto out_delete;
 
-		map__init(self, event->start, event->start + event->len,
+		map__init(self, type, event->start, event->start + event->len,
 			  event->pgoff, dso);
 
 		if (self->dso == vdso || anon)
@@ -80,8 +82,9 @@ void map__delete(struct map *self)
 	free(self);
 }
 
-void map__fixup_start(struct map *self, struct rb_root *symbols)
+void map__fixup_start(struct map *self)
 {
+	struct rb_root *symbols = &self->dso->symbols[self->type];
 	struct rb_node *nd = rb_first(symbols);
 	if (nd != NULL) {
 		struct symbol *sym = rb_entry(nd, struct symbol, rb_node);
@@ -89,8 +92,9 @@ void map__fixup_start(struct map *self, struct rb_root *symbols)
 	}
 }
 
-void map__fixup_end(struct map *self, struct rb_root *symbols)
+void map__fixup_end(struct map *self)
 {
+	struct rb_root *symbols = &self->dso->symbols[self->type];
 	struct rb_node *nd = rb_last(symbols);
 	if (nd != NULL) {
 		struct symbol *sym = rb_entry(nd, struct symbol, rb_node);
@@ -100,10 +104,10 @@ void map__fixup_end(struct map *self, struct rb_root *symbols)
 
 #define DSO__DELETED "(deleted)"
 
-struct symbol *map__find_function(struct map *self, u64 ip,
-				  symbol_filter_t filter)
+struct symbol *map__find_symbol(struct map *self, u64 addr,
+				symbol_filter_t filter)
 {
-	if (!self->dso->loaded) {
+	if (!dso__loaded(self->dso, self->type)) {
 		int nr = dso__load(self->dso, self, filter);
 
 		if (nr < 0) {
@@ -136,7 +140,7 @@ struct symbol *map__find_function(struct map *self, u64 ip,
 		}
 	}
 
-	return self->dso->find_function(self->dso, ip);
+	return self->dso->find_symbol(self->dso, self->type, addr);
 }
 
 struct map *map__clone(struct map *self)

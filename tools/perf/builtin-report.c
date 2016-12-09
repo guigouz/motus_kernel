@@ -30,7 +30,6 @@
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
-#include "util/process_events.h"
 
 static char		const *input_name = "perf.data";
 
@@ -409,55 +408,6 @@ static int thread__set_comm_adjust(struct thread *self, const char *comm)
 	return 0;
 }
 
-
-static struct symbol *
-resolve_symbol(struct thread *thread, struct map **mapp, u64 *ipp)
-{
-	struct map *map = mapp ? *mapp : NULL;
-	u64 ip = *ipp;
-
-	if (map)
-		goto got_map;
-
-	if (!thread)
-		return NULL;
-
-	map = thread__find_map(thread, ip);
-	if (map != NULL) {
-		/*
-		 * We have to do this here as we may have a dso
-		 * with no symbol hit that has a name longer than
-		 * the ones with symbols sampled.
-		 */
-		if (!sort_dso.elide && !map->dso->slen_calculated)
-			dso__calc_col_width(map->dso);
-
-		if (mapp)
-			*mapp = map;
-got_map:
-		ip = map->map_ip(map, ip);
-	} else {
-		/*
-		 * If this is outside of all known maps,
-		 * and is a negative address, try to look it
-		 * up in the kernel dso, as it might be a
-		 * vsyscall or vdso (which executes in user-mode).
-		 *
-		 * XXX This is nasty, we should have a symbol list in
-		 * the "[vdso]" dso, but for now lets use the old
-		 * trick of looking in the whole kernel symbol list.
-		 */
-		if ((long long)ip < 0)
-			return kernel_maps__find_function(ip, mapp, NULL);
-	}
-	dump_printf(" ...... dso: %s\n",
-		    map ? map->dso->long_name : "<not found>");
-	dump_printf(" ...... map: %Lx -> %Lx\n", *ipp, ip);
-	*ipp  = ip;
-
-	return map ? map__find_function(map, ip, NULL) : NULL;
-}
-
 static int call__match(struct symbol *sym)
 {
 	if (sym->name && !regexec(&parent_regex, sym->name, 0, NULL, 0))
@@ -470,7 +420,7 @@ static struct symbol **resolve_callchain(struct thread *thread,
 					 struct ip_callchain *chain,
 					 struct symbol **parent)
 {
-	u64 context = PERF_CONTEXT_MAX;
+	u8 cpumode = PERF_RECORD_MISC_USER;
 	struct symbol **syms = NULL;
 	unsigned int i;
 
@@ -484,30 +434,31 @@ static struct symbol **resolve_callchain(struct thread *thread,
 
 	for (i = 0; i < chain->nr; i++) {
 		u64 ip = chain->ips[i];
-		struct symbol *sym = NULL;
+		struct addr_location al;
 
 		if (ip >= PERF_CONTEXT_MAX) {
-			context = ip;
+			switch (ip) {
+			case PERF_CONTEXT_HV:
+				cpumode = PERF_RECORD_MISC_HYPERVISOR;	break;
+			case PERF_CONTEXT_KERNEL:
+				cpumode = PERF_RECORD_MISC_KERNEL;	break;
+			case PERF_CONTEXT_USER:
+				cpumode = PERF_RECORD_MISC_USER;	break;
+			default:
+				break;
+			}
 			continue;
 		}
 
-		switch (context) {
-		case PERF_CONTEXT_HV:
-			break;
-		case PERF_CONTEXT_KERNEL:
-			sym = kernel_maps__find_function(ip, NULL, NULL);
-			break;
-		default:
-			sym = resolve_symbol(thread, NULL, &ip);
-			break;
-		}
-
-		if (sym) {
-			if (sort__has_parent && !*parent && call__match(sym))
-				*parent = sym;
+		thread__find_addr_location(thread, cpumode, MAP__FUNCTION,
+					   ip, &al, NULL);
+		if (al.sym != NULL) {
+			if (sort__has_parent && !*parent &&
+			    call__match(al.sym))
+				*parent = al.sym;
 			if (!callchain)
 				break;
-			syms[i] = sym;
+			syms[i] = al.sym;
 		}
 	}
 
@@ -518,20 +469,17 @@ static struct symbol **resolve_callchain(struct thread *thread,
  * collect histogram counts
  */
 
-static int
-hist_entry__add(struct thread *thread, struct map *map,
-		struct symbol *sym, u64 ip, struct ip_callchain *chain,
-		char level, u64 count)
+static int hist_entry__add(struct addr_location *al,
+			   struct ip_callchain *chain, u64 count)
 {
 	struct symbol **syms = NULL, *parent = NULL;
 	bool hit;
 	struct hist_entry *he;
 
 	if ((sort__has_parent || callchain) && chain)
-		syms = resolve_callchain(thread, chain, &parent);
+		syms = resolve_callchain(al->thread, chain, &parent);
 
-	he = __hist_entry__add(thread, map, sym, parent,
-			       ip, count, level, &hit);
+	he = __hist_entry__add(al, parent, count, &hit);
 	if (he == NULL)
 		return -ENOMEM;
 
@@ -655,17 +603,14 @@ static int validate_chain(struct ip_callchain *chain, event_t *event)
 	return 0;
 }
 
-static int
-process_sample_event(event_t *event, unsigned long offset, unsigned long head)
+static int process_sample_event(event_t *event)
 {
-	char level;
-	struct symbol *sym = NULL;
 	u64 ip = event->ip.ip;
 	u64 period = 1;
-	struct map *map = NULL;
 	void *more_data = event->ip.__more_data;
 	struct ip_callchain *chain = NULL;
 	int cpumode;
+	struct addr_location al;
 	struct thread *thread = threads__findnew(event->ip.pid);
 
 	if (sample_type & PERF_SAMPLE_PERIOD) {
@@ -673,9 +618,7 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 		more_data += sizeof(u64);
 	}
 
-	dump_printf("%p [%p]: PERF_RECORD_SAMPLE (IP, %d): %d/%d: %p period: %Ld\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
+	dump_printf("(IP, %d): %d/%d: %p period: %Ld\n",
 		event->header.misc,
 		event->ip.pid, event->ip.tid,
 		(void *)(long)ip,
@@ -713,77 +656,51 @@ process_sample_event(event_t *event, unsigned long offset, unsigned long head)
 
 	cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
-	if (cpumode == PERF_RECORD_MISC_KERNEL) {
-		level = 'k';
-		sym = kernel_maps__find_function(ip, &map, NULL);
-		dump_printf(" ...... dso: %s\n",
-			    map ? map->dso->long_name : "<not found>");
-	} else if (cpumode == PERF_RECORD_MISC_USER) {
-		level = '.';
-		sym = resolve_symbol(thread, &map, &ip);
-
-	} else {
-		level = 'H';
-		dump_printf(" ...... dso: [hypervisor]\n");
-	}
+	thread__find_addr_location(thread, cpumode,
+				   MAP__FUNCTION, ip, &al, NULL);
+	/*
+	 * We have to do this here as we may have a dso with no symbol hit that
+	 * has a name longer than the ones with symbols sampled.
+	 */
+	if (al.map && !sort_dso.elide && !al.map->dso->slen_calculated)
+		dso__calc_col_width(al.map->dso);
 
 	if (dso_list &&
-	    (!map || !map->dso ||
-	     !(strlist__has_entry(dso_list, map->dso->short_name) ||
-	       (map->dso->short_name != map->dso->long_name &&
-		strlist__has_entry(dso_list, map->dso->long_name)))))
+	    (!al.map || !al.map->dso ||
+	     !(strlist__has_entry(dso_list, al.map->dso->short_name) ||
+	       (al.map->dso->short_name != al.map->dso->long_name &&
+		strlist__has_entry(dso_list, al.map->dso->long_name)))))
 		return 0;
 
-	if (sym_list && sym && !strlist__has_entry(sym_list, sym->name))
+	if (sym_list && al.sym && !strlist__has_entry(sym_list, al.sym->name))
 		return 0;
 
-	if (hist_entry__add(thread, map, sym, ip,
-			    chain, level, period)) {
+	if (hist_entry__add(&al, chain, period)) {
 		pr_debug("problem incrementing symbol count, skipping event\n");
 		return -1;
 	}
 
-	total += period;
+	event__stats.total += period;
 
 	return 0;
 }
 
-static int
-process_comm_event(event_t *event, unsigned long offset, unsigned long head)
+static int process_comm_event(event_t *event)
 {
 	struct thread *thread = threads__findnew(event->comm.pid);
 
-	dump_printf("%p [%p]: PERF_RECORD_COMM: %s:%d\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->comm.comm, event->comm.pid);
+	dump_printf(": %s:%d\n", event->comm.comm, event->comm.pid);
 
 	if (thread == NULL ||
 	    thread__set_comm_adjust(thread, event->comm.comm)) {
 		dump_printf("problem processing PERF_RECORD_COMM, skipping event.\n");
 		return -1;
 	}
-	total_comm++;
 
 	return 0;
 }
 
-static int
-process_lost_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	dump_printf("%p [%p]: PERF_RECORD_LOST: id:%Ld: lost:%Ld\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->lost.id,
-		event->lost.lost);
-
-	total_lost += event->lost.lost;
-
-	return 0;
-}
-
-static int
-process_read_event(event_t *event, unsigned long offset, unsigned long head)
+static int process_read_event(event_t *event)
 {
 	struct perf_event_attr *attr;
 
@@ -799,14 +716,9 @@ process_read_event(event_t *event, unsigned long offset, unsigned long head)
 					   event->read.value);
 	}
 
-	dump_printf("%p [%p]: PERF_RECORD_READ: %d %d %s %Lu\n",
-			(void *)(offset + head),
-			(void *)(long)(event->header.size),
-			event->read.pid,
-			event->read.tid,
-			attr ? __event_name(attr->type, attr->config)
-			     : "FAIL",
-			event->read.value);
+	dump_printf(": %d %d %s %Lu\n", event->read.pid, event->read.tid,
+		    attr ? __event_name(attr->type, attr->config) : "FAIL",
+		    event->read.value);
 
 	return 0;
 }
@@ -842,11 +754,11 @@ static int sample_type_check(u64 type)
 
 static struct perf_file_handler file_handler = {
 	.process_sample_event	= process_sample_event,
-	.process_mmap_event	= process_mmap_event,
+	.process_mmap_event	= event__process_mmap,
 	.process_comm_event	= process_comm_event,
-	.process_exit_event	= process_task_event,
-	.process_fork_event	= process_task_event,
-	.process_lost_event	= process_lost_event,
+	.process_exit_event	= event__process_task,
+	.process_fork_event	= event__process_task,
+	.process_lost_event	= event__process_lost,
 	.process_read_event	= process_read_event,
 	.sample_type_check	= sample_type_check,
 };
@@ -866,19 +778,14 @@ static int __cmd_report(void)
 	register_perf_file_handler(&file_handler);
 
 	ret = mmap_dispatch_perf_file(&header, input_name, force,
-				      full_paths, &cwdlen, &cwd);
+				      full_paths, &event__cwdlen, &event__cwd);
 	if (ret)
 		return ret;
 
-	dump_printf("      IP events: %10ld\n", total);
-	dump_printf("    mmap events: %10ld\n", total_mmap);
-	dump_printf("    comm events: %10ld\n", total_comm);
-	dump_printf("    fork events: %10ld\n", total_fork);
-	dump_printf("    lost events: %10ld\n", total_lost);
-	dump_printf(" unknown events: %10ld\n", file_handler.total_unknown);
-
-	if (dump_trace)
+	if (dump_trace) {
+		event__print_totals();
 		return 0;
+	}
 
 	if (verbose > 3)
 		threads__fprintf(stdout);
@@ -887,8 +794,8 @@ static int __cmd_report(void)
 		dsos__fprintf(stdout);
 
 	collapse__resort();
-	output__resort(total);
-	output__fprintf(stdout, total);
+	output__resort(event__stats.total);
+	output__fprintf(stdout, event__stats.total);
 
 	if (show_threads)
 		perf_read_values_destroy(&show_threads_values);

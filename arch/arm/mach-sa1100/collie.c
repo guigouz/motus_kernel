@@ -56,6 +56,7 @@ static struct resource collie_scoop_resources[] = {
 static struct scoop_config collie_scoop_setup = {
 	.io_dir 	= COLLIE_SCOOP_IO_DIR,
 	.io_out		= COLLIE_SCOOP_IO_OUT,
+	.gpio_base	= COLLIE_SCOOP_GPIO_BASE,
 };
 
 struct platform_device colliescoop_device = {
@@ -85,6 +86,7 @@ static struct scoop_pcmcia_config collie_pcmcia_config = {
 static struct mcp_plat_data collie_mcp_data = {
 	.mccr0		= MCCR0_ADM | MCCR0_ExtClk,
 	.sclk_rate	= 9216000,
+	.gpio_base	= COLLIE_TC35143_GPIO_BASE,
 };
 
 #ifdef CONFIG_SHARP_LOCOMO
@@ -248,21 +250,23 @@ static void __init collie_init(void)
 	GPDR = GPIO_LDD8 | GPIO_LDD9 | GPIO_LDD10 | GPIO_LDD11 | GPIO_LDD12 |
 		GPIO_LDD13 | GPIO_LDD14 | GPIO_LDD15 | GPIO_SSP_TXD |
 		GPIO_SSP_SCLK | GPIO_SSP_SFRM | GPIO_SDLC_SCLK |
-		COLLIE_GPIO_UCB1x00_RESET | COLLIE_GPIO_nMIC_ON |
-		COLLIE_GPIO_nREMOCON_ON | GPIO_32_768kHz;
+		_COLLIE_GPIO_UCB1x00_RESET | _COLLIE_GPIO_nMIC_ON |
+		_COLLIE_GPIO_nREMOCON_ON | GPIO_32_768kHz;
 
 	PPDR = PPC_LDD0 | PPC_LDD1 | PPC_LDD2 | PPC_LDD3 | PPC_LDD4 | PPC_LDD5 |
 		PPC_LDD6 | PPC_LDD7 | PPC_L_PCLK | PPC_L_LCLK | PPC_L_FCLK | PPC_L_BIAS |
 		PPC_TXD1 | PPC_TXD2 | PPC_TXD3 | PPC_TXD4 | PPC_SCLK | PPC_SFRM;
 
-	PWER = COLLIE_GPIO_AC_IN | COLLIE_GPIO_CO | COLLIE_GPIO_ON_KEY |
-		COLLIE_GPIO_WAKEUP | COLLIE_GPIO_nREMOCON_INT | PWER_RTC;
+	PWER = _COLLIE_GPIO_AC_IN | _COLLIE_GPIO_CO | _COLLIE_GPIO_ON_KEY |
+		_COLLIE_GPIO_WAKEUP | _COLLIE_GPIO_nREMOCON_INT | PWER_RTC;
 
-	PGSR = COLLIE_GPIO_nREMOCON_ON;
+	PGSR = _COLLIE_GPIO_nREMOCON_ON;
 
 	PSDR = PPC_RXD1 | PPC_RXD2 | PPC_RXD3 | PPC_RXD4;
 
 	PCFR = PCFR_OPDE;
+
+	GPSR |= _COLLIE_GPIO_UCB1x00_RESET;
 
 
 	platform_scoop_config = &collie_pcmcia_config;

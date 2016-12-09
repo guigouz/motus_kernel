@@ -19,12 +19,12 @@
 #include "perf.h"
 #include "util/debug.h"
 
+#include "util/event.h"
 #include "util/parse-options.h"
 #include "util/parse-events.h"
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
-#include "util/process_events.h"
 
 static char		const *input_name = "perf.data";
 
@@ -124,122 +124,52 @@ static void hist_hit(struct hist_entry *he, u64 ip)
 			h->ip[offset]);
 }
 
-static int hist_entry__add(struct thread *thread, struct map *map,
-			   struct symbol *sym, u64 ip, u64 count, char level)
+static int hist_entry__add(struct addr_location *al, u64 count)
 {
 	bool hit;
-	struct hist_entry *he = __hist_entry__add(thread, map, sym, NULL, ip,
-						  count, level, &hit);
+	struct hist_entry *he = __hist_entry__add(al, NULL, count, &hit);
 	if (he == NULL)
 		return -ENOMEM;
-	hist_hit(he, ip);
+	hist_hit(he, al->addr);
 	return 0;
 }
 
-static int
-process_sample_event(event_t *event, unsigned long offset, unsigned long head)
+static int process_sample_event(event_t *event)
 {
-	char level;
-	u64 ip = event->ip.ip;
-	struct map *map = NULL;
-	struct symbol *sym = NULL;
-	struct thread *thread = threads__findnew(event->ip.pid);
+	struct addr_location al;
 
-	dump_printf("%p [%p]: PERF_EVENT (IP, %d): %d: %p\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->header.misc,
-		event->ip.pid,
-		(void *)(long)ip);
+	dump_printf("(IP, %d): %d: %p\n", event->header.misc,
+		    event->ip.pid, (void *)(long)event->ip.ip);
 
-	if (thread == NULL) {
+	if (event__preprocess_sample(event, &al, symbol_filter) < 0) {
 		fprintf(stderr, "problem processing %d event, skipping it.\n",
 			event->header.type);
 		return -1;
 	}
 
-	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
-
-	if (event->header.misc & PERF_RECORD_MISC_KERNEL) {
-		level = 'k';
-		sym = kernel_maps__find_function(ip, &map, symbol_filter);
-		dump_printf(" ...... dso: %s\n",
-			    map ? map->dso->long_name : "<not found>");
-	} else if (event->header.misc & PERF_RECORD_MISC_USER) {
-		level = '.';
-		map = thread__find_map(thread, ip);
-		if (map != NULL) {
-got_map:
-			ip = map->map_ip(map, ip);
-			sym = map__find_function(map, ip, symbol_filter);
-		} else {
-			/*
-			 * If this is outside of all known maps,
-			 * and is a negative address, try to look it
-			 * up in the kernel dso, as it might be a
-			 * vsyscall or vdso (which executes in user-mode).
-			 *
-			 * XXX This is nasty, we should have a symbol list in
-			 * the "[vdso]" dso, but for now lets use the old
-			 * trick of looking in the whole kernel symbol list.
-			 */
-			if ((long long)ip < 0) {
-				map = kernel_map;
-				goto got_map;
-			}
-		}
-		dump_printf(" ...... dso: %s\n",
-			    map ? map->dso->long_name : "<not found>");
-	} else {
-		level = 'H';
-		dump_printf(" ...... dso: [hypervisor]\n");
-	}
-
-	if (hist_entry__add(thread, map, sym, ip, 1, level)) {
+	if (hist_entry__add(&al, 1)) {
 		fprintf(stderr, "problem incrementing symbol count, "
 				"skipping event\n");
 		return -1;
 	}
-	total++;
 
 	return 0;
 }
 
-static int
-process_comm_event(event_t *event, unsigned long offset, unsigned long head)
+static int event__process(event_t *self)
 {
-	struct thread *thread = threads__findnew(event->comm.pid);
-
-	dump_printf("%p [%p]: PERF_RECORD_COMM: %s:%d\n",
-		(void *)(offset + head),
-		(void *)(long)(event->header.size),
-		event->comm.comm, event->comm.pid);
-
-	if (thread == NULL ||
-	    thread__set_comm(thread, event->comm.comm)) {
-		dump_printf("problem processing PERF_RECORD_COMM, skipping event.\n");
-		return -1;
-	}
-	total_comm++;
-
-	return 0;
-}
-
-static int
-process_event(event_t *event, unsigned long offset, unsigned long head)
-{
-	switch (event->header.type) {
+	switch (self->header.type) {
 	case PERF_RECORD_SAMPLE:
-		return process_sample_event(event, offset, head);
+		return process_sample_event(self);
 
 	case PERF_RECORD_MMAP:
-		return process_mmap_event(event, offset, head);
+		return event__process_mmap(self);
 
 	case PERF_RECORD_COMM:
-		return process_comm_event(event, offset, head);
+		return event__process_comm(self);
 
 	case PERF_RECORD_FORK:
-		return process_task_event(event, offset, head);
+		return event__process_task(self);
 	/*
 	 * We dont process them right now but they are fine:
 	 */
@@ -623,15 +553,12 @@ more:
 			(void *)(long)event->header.size,
 			event->header.type);
 
-	if (!size || process_event(event, offset, head) < 0) {
+	if (!size || event__process(event) < 0) {
 
 		dump_printf("%p [%p]: skipping unknown header type: %d\n",
 			(void *)(offset + head),
 			(void *)(long)(event->header.size),
 			event->header.type);
-
-		total_unknown++;
-
 		/*
 		 * assume we lost track of the stream, check alignment, and
 		 * increment a single u64 in the hope to catch on again 'soon'.
@@ -651,14 +578,11 @@ more:
 	rc = EXIT_SUCCESS;
 	close(input);
 
-	dump_printf("      IP events: %10ld\n", total);
-	dump_printf("    mmap events: %10ld\n", total_mmap);
-	dump_printf("    comm events: %10ld\n", total_comm);
-	dump_printf("    fork events: %10ld\n", total_fork);
-	dump_printf(" unknown events: %10ld\n", total_unknown);
 
-	if (dump_trace)
+	if (dump_trace) {
+		event__print_totals();
 		return 0;
+	}
 
 	if (verbose > 3)
 		threads__fprintf(stdout);
@@ -667,7 +591,7 @@ more:
 		dsos__fprintf(stdout);
 
 	collapse__resort();
-	output__resort(total);
+	output__resort(event__total[0]);
 
 	find_annotations();
 
