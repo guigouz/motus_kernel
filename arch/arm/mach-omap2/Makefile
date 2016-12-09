@@ -83,8 +83,17 @@ obj-$(CONFIG_MACH_OMAP_ZOOM3)		+= board-zoom3.o \
 					   board-zoom-peripherals.o \
 					   mmc-twl4030.o \
 					   board-zoom-debugboard.o
+obj-$(CONFIG_MACH_OMAP_3630SDP)		+= board-3630sdp.o \
+					   board-zoom-peripherals.o \
+					   mmc-twl4030.o
+obj-$(CONFIG_MACH_CM_T35)		+= board-cm-t35.o \
+					   mmc-twl4030.o
+obj-$(CONFIG_MACH_IGEP0020)		+= board-igep0020.o \
+					   mmc-twl4030.o
 
 obj-$(CONFIG_MACH_OMAP_4430SDP)		+= board-4430sdp.o
+
+obj-$(CONFIG_MACH_OMAP3517EVM)     += board-am3517evm.o
 
 # Platform specific device init code
 obj-y					+= usb-musb.o

@@ -514,43 +514,42 @@ static const struct file_operations rt_cpu_seq_fops = {
 };
 
 #ifdef CONFIG_NET_CLS_ROUTE
-static int ip_rt_acct_read(char *buffer, char **start, off_t offset,
-			   int length, int *eof, void *data)
+static int rt_acct_proc_show(struct seq_file *m, void *v)
 {
-	unsigned int i;
+	struct ip_rt_acct *dst, *src;
+	unsigned int i, j;
 
-	if ((offset & 3) || (length & 3))
-		return -EIO;
+	dst = kcalloc(256, sizeof(struct ip_rt_acct), GFP_KERNEL);
+	if (!dst)
+		return -ENOMEM;
 
-	if (offset >= sizeof(struct ip_rt_acct) * 256) {
-		*eof = 1;
-		return 0;
-	}
-
-	if (offset + length >= sizeof(struct ip_rt_acct) * 256) {
-		length = sizeof(struct ip_rt_acct) * 256 - offset;
-		*eof = 1;
-	}
-
-	offset /= sizeof(u32);
-
-	if (length > 0) {
-		u32 *dst = (u32 *) buffer;
-
-		*start = buffer;
-		memset(dst, 0, length);
-
-		for_each_possible_cpu(i) {
-			unsigned int j;
-			u32 *src;
-
-			src = ((u32 *) per_cpu_ptr(ip_rt_acct, i)) + offset;
-			for (j = 0; j < length/4; j++)
-				dst[j] += src[j];
+	for_each_possible_cpu(i) {
+		src = (struct ip_rt_acct *)per_cpu_ptr(ip_rt_acct, i);
+		for (j = 0; j < 256; j++) {
+			dst[j].o_bytes   += src[j].o_bytes;
+			dst[j].o_packets += src[j].o_packets;
+			dst[j].i_bytes   += src[j].i_bytes;
+			dst[j].i_packets += src[j].i_packets;
 		}
 	}
-	return length;
+
+	seq_write(m, dst, 256 * sizeof(struct ip_rt_acct));
+	kfree(dst);
+	return 0;
 }
+
+static int rt_acct_proc_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, rt_acct_proc_show, NULL);
+}
+
+static const struct file_operations rt_acct_proc_fops = {
+	.owner		= THIS_MODULE,
+	.open		= rt_acct_proc_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
 #endif
 
 static int __net_init ip_rt_do_proc_init(struct net *net)
@@ -568,8 +567,7 @@ static int __net_init ip_rt_do_proc_init(struct net *net)
 		goto err2;
 
 #ifdef CONFIG_NET_CLS_ROUTE
-	pde = create_proc_read_entry("rt_acct", 0, net->proc_net,
-			ip_rt_acct_read, NULL);
+	pde = proc_create("rt_acct", 0, net->proc_net, &rt_acct_proc_fops);
 	if (!pde)
 		goto err3;
 #endif
@@ -704,7 +702,7 @@ static inline int compare_keys(struct flowi *fl1, struct flowi *fl2)
 
 static inline int compare_netns(struct rtable *rt1, struct rtable *rt2)
 {
-	return dev_net(rt1->u.dst.dev) == dev_net(rt2->u.dst.dev);
+	return net_eq(dev_net(rt1->u.dst.dev), dev_net(rt2->u.dst.dev));
 }
 
 static inline int rt_is_expired(struct rtable *rth)
@@ -3268,7 +3266,7 @@ static __net_init int sysctl_route_net_init(struct net *net)
 	struct ctl_table *tbl;
 
 	tbl = ipv4_route_flush_table;
-	if (net != &init_net) {
+	if (!net_eq(net, &init_net)) {
 		tbl = kmemdup(tbl, sizeof(ipv4_route_flush_table), GFP_KERNEL);
 		if (tbl == NULL)
 			goto err_dup;

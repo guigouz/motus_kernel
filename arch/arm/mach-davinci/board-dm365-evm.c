@@ -13,9 +13,8 @@
  * GNU General Public License for more details.
  */
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/init.h>
-#include <linux/dma-mapping.h>
+#include <linux/err.h>
 #include <linux/i2c.h>
 #include <linux/io.h>
 #include <linux/clk.h>
@@ -24,20 +23,19 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/nand.h>
-#include <asm/setup.h>
+#include <linux/input.h>
+
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
-#include <asm/mach/map.h>
+
 #include <mach/mux.h>
-#include <mach/hardware.h>
 #include <mach/dm365.h>
-#include <mach/psc.h>
 #include <mach/common.h>
 #include <mach/i2c.h>
 #include <mach/serial.h>
 #include <mach/mmc.h>
 #include <mach/nand.h>
-
+#include <mach/keyscan.h>
 
 static inline int have_imager(void)
 {
@@ -144,6 +142,7 @@ static struct davinci_nand_pdata davinci_nand_data = {
 	.nr_parts		= ARRAY_SIZE(davinci_nand_partitions),
 	.ecc_mode		= NAND_ECC_HW,
 	.options		= NAND_USE_FLASH_BBT,
+	.ecc_bits		= 4,
 };
 
 static struct resource davinci_nand_resources[] = {
@@ -192,6 +191,38 @@ static struct davinci_i2c_platform_data i2c_pdata = {
 	.bus_freq	= 400	/* kHz */,
 	.bus_delay	= 0	/* usec */,
 };
+
+#ifdef CONFIG_KEYBOARD_DAVINCI
+static unsigned short dm365evm_keymap[] = {
+	KEY_KP2,
+	KEY_LEFT,
+	KEY_EXIT,
+	KEY_DOWN,
+	KEY_ENTER,
+	KEY_UP,
+	KEY_KP1,
+	KEY_RIGHT,
+	KEY_MENU,
+	KEY_RECORD,
+	KEY_REWIND,
+	KEY_KPMINUS,
+	KEY_STOP,
+	KEY_FASTFORWARD,
+	KEY_KPPLUS,
+	KEY_PLAYPAUSE,
+	0
+};
+
+static struct davinci_ks_platform_data dm365evm_ks_data = {
+	.keymap		= dm365evm_keymap,
+	.keymapsize	= ARRAY_SIZE(dm365evm_keymap),
+	.rep		= 1,
+	/* Scan period = strobe + interval */
+	.strobe		= 0x5,
+	.interval	= 0x2,
+	.matrix_type	= DAVINCI_KEYSCAN_MATRIX_4X4,
+};
+#endif
 
 static int cpld_mmc_get_cd(int module)
 {
@@ -479,6 +510,11 @@ static __init void dm365_evm_init(void)
 	evm_init_cpld();
 
 	dm365_init_asp(&dm365_evm_snd_data);
+	dm365_init_rtc();
+
+#ifdef CONFIG_KEYBOARD_DAVINCI
+	dm365_init_ks(&dm365evm_ks_data);
+#endif
 }
 
 static __init void dm365_evm_irq_init(void)
