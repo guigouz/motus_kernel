@@ -451,7 +451,7 @@ static void __iommu_flush_pages(struct protection_domain *domain,
 				u64 address, size_t size, int pde)
 {
 	int s = 0, i;
-	unsigned pages = iommu_num_pages(address, size, PAGE_SIZE);
+	unsigned long pages = iommu_num_pages(address, size, PAGE_SIZE);
 
 	address &= PAGE_MASK;
 
@@ -487,23 +487,15 @@ static void iommu_flush_pages(struct protection_domain *domain,
 }
 
 /* Flush the whole IO/TLB for a given protection domain */
-static void iommu_flush_tlb(struct amd_iommu *iommu, u16 domid)
+static void iommu_flush_tlb(struct protection_domain *domain)
 {
-	u64 address = CMD_INV_IOMMU_ALL_PAGES_ADDRESS;
-
-	INC_STATS_COUNTER(domain_flush_single);
-
-	iommu_queue_inv_iommu_pages(iommu, address, domid, 0, 1);
+	__iommu_flush_pages(domain, 0, CMD_INV_IOMMU_ALL_PAGES_ADDRESS, 0);
 }
 
 /* Flush the whole IO/TLB for a given protection domain - including PDE */
-static void iommu_flush_tlb_pde(struct amd_iommu *iommu, u16 domid)
+static void iommu_flush_tlb_pde(struct protection_domain *domain)
 {
-       u64 address = CMD_INV_IOMMU_ALL_PAGES_ADDRESS;
-
-       INC_STATS_COUNTER(domain_flush_single);
-
-       iommu_queue_inv_iommu_pages(iommu, address, domid, 1, 1);
+	__iommu_flush_pages(domain, 0, CMD_INV_IOMMU_ALL_PAGES_ADDRESS, 1);
 }
 
 /*
@@ -534,20 +526,6 @@ static void flush_all_domains_on_iommu(struct amd_iommu *iommu)
 		flush_domain_on_iommu(iommu, i);
 	}
 
-}
-
-/*
- * This function is used to flush the IO/TLB for a given protection domain
- * on every IOMMU in the system
- */
-static void iommu_flush_domain(u16 domid)
-{
-	struct amd_iommu *iommu;
-
-	INC_STATS_COUNTER(domain_flush_all);
-
-	for_each_iommu(iommu)
-		flush_domain_on_iommu(iommu, domid);
 }
 
 void amd_iommu_flush_all_domains(void)
@@ -1007,6 +985,31 @@ static void dma_ops_free_addresses(struct dma_ops_domain *dom,
  *
  ****************************************************************************/
 
+/*
+ * This function adds a protection domain to the global protection domain list
+ */
+static void add_domain_to_list(struct protection_domain *domain)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&amd_iommu_pd_lock, flags);
+	list_add(&domain->list, &amd_iommu_pd_list);
+	spin_unlock_irqrestore(&amd_iommu_pd_lock, flags);
+}
+
+/*
+ * This function removes a protection domain to the global
+ * protection domain list
+ */
+static void del_domain_from_list(struct protection_domain *domain)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&amd_iommu_pd_lock, flags);
+	list_del(&domain->list);
+	spin_unlock_irqrestore(&amd_iommu_pd_lock, flags);
+}
+
 static u16 domain_id_alloc(void)
 {
 	unsigned long flags;
@@ -1095,6 +1098,8 @@ static void dma_ops_domain_free(struct dma_ops_domain *dom)
 	if (!dom)
 		return;
 
+	del_domain_from_list(&dom->domain);
+
 	free_pagetable(&dom->domain);
 
 	for (i = 0; i < APERTURE_MAX_RANGES; ++i) {
@@ -1134,6 +1139,8 @@ static struct dma_ops_domain *dma_ops_domain_alloc(struct amd_iommu *iommu)
 
 	dma_dom->need_flush = false;
 	dma_dom->target_dev = 0xffff;
+
+	add_domain_to_list(&dma_dom->domain);
 
 	if (alloc_new_range(iommu, dma_dom, true, GFP_KERNEL))
 		goto free_dma_dom;
@@ -1236,7 +1243,7 @@ static void attach_device(struct amd_iommu *iommu,
 	 * here to evict all dirty stuff.
 	 */
 	iommu_queue_inv_dev_entry(iommu, devid);
-	iommu_flush_tlb_pde(iommu, domain->id);
+	iommu_flush_tlb_pde(domain);
 }
 
 /*
@@ -1472,7 +1479,7 @@ static void update_domain(struct protection_domain *domain)
 
 	update_device_table(domain);
 	flush_devices_by_domain(domain);
-	iommu_flush_domain(domain->id);
+	iommu_flush_tlb_pde(domain);
 
 	domain->updated = false;
 }
@@ -1697,7 +1704,7 @@ retry:
 	ADD_STATS_COUNTER(alloced_io_mem, size);
 
 	if (unlikely(dma_dom->need_flush && !amd_iommu_unmap_flush)) {
-		iommu_flush_tlb(iommu, dma_dom->domain.id);
+		iommu_flush_tlb(&dma_dom->domain);
 		dma_dom->need_flush = false;
 	} else if (unlikely(iommu_has_npcache(iommu)))
 		iommu_flush_pages(&dma_dom->domain, address, size);
@@ -2210,6 +2217,8 @@ static void protection_domain_free(struct protection_domain *domain)
 	if (!domain)
 		return;
 
+	del_domain_from_list(domain);
+
 	if (domain->id)
 		domain_id_free(domain->id);
 
@@ -2228,6 +2237,8 @@ static struct protection_domain *protection_domain_alloc(void)
 	domain->id = domain_id_alloc();
 	if (!domain->id)
 		goto out_err;
+
+	add_domain_to_list(domain);
 
 	return domain;
 
@@ -2385,7 +2396,7 @@ static void amd_iommu_unmap_range(struct iommu_domain *dom,
 		iova  += PAGE_SIZE;
 	}
 
-	iommu_flush_domain(domain->id);
+	iommu_flush_tlb_pde(domain);
 }
 
 static phys_addr_t amd_iommu_iova_to_phys(struct iommu_domain *dom,
