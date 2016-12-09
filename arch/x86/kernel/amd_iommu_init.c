@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2008 Advanced Micro Devices, Inc.
+ * Copyright (C) 2007-2009 Advanced Micro Devices, Inc.
  * Author: Joerg Roedel <joerg.roedel@amd.com>
  *         Leo Duran <leo.duran@amd.com>
  *
@@ -136,6 +136,10 @@ bool amd_iommu_unmap_flush;		/* if true, flush on every unmap */
 
 LIST_HEAD(amd_iommu_list);		/* list of all AMD IOMMUs in the
 					   system */
+
+/* Array to assign indices to IOMMUs*/
+struct amd_iommu *amd_iommus[MAX_IOMMUS];
+int amd_iommus_present;
 
 /*
  * Set to true if ACPI table parsing and hardware intialization went properly
@@ -832,7 +836,18 @@ static void __init free_iommu_all(void)
 static int __init init_iommu_one(struct amd_iommu *iommu, struct ivhd_header *h)
 {
 	spin_lock_init(&iommu->lock);
+
+	/* Add IOMMU to internal data structures */
 	list_add_tail(&iommu->list, &amd_iommu_list);
+	iommu->index             = amd_iommus_present++;
+
+	if (unlikely(iommu->index >= MAX_IOMMUS)) {
+		WARN(1, "AMD-Vi: System has more IOMMUs than supported by this driver\n");
+		return -ENOSYS;
+	}
+
+	/* Index is fine - add IOMMU to the array */
+	amd_iommus[iommu->index] = iommu;
 
 	/*
 	 * Copy data from ACPI table entry to the iommu struct

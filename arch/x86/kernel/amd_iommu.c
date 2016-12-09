@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2008 Advanced Micro Devices, Inc.
+ * Copyright (C) 2007-2009 Advanced Micro Devices, Inc.
  * Author: Joerg Roedel <joerg.roedel@amd.com>
  *         Leo Duran <leo.duran@amd.com>
  *
@@ -374,6 +374,22 @@ out:
 	spin_unlock_irqrestore(&iommu->lock, flags);
 
 	return 0;
+}
+
+static void iommu_flush_complete(struct protection_domain *domain)
+{
+	int i;
+
+	for (i = 0; i < amd_iommus_present; ++i) {
+		if (!domain->dev_iommu[i])
+			continue;
+
+		/*
+		 * Devices of this domain are behind this IOMMU
+		 * We need to wait for completion of all commands.
+		 */
+		iommu_completion_wait(amd_iommus[i]);
+	}
 }
 
 /*
@@ -1175,7 +1191,9 @@ static void __attach_device(struct amd_iommu *iommu,
 	/* update DTE entry */
 	set_dte_entry(devid, domain);
 
-	domain->dev_cnt += 1;
+	/* Do reference counting */
+	domain->dev_iommu[iommu->index] += 1;
+	domain->dev_cnt                 += 1;
 
 	/* ready */
 	spin_unlock(&domain->lock);
@@ -1209,6 +1227,9 @@ static void attach_device(struct amd_iommu *iommu,
  */
 static void __detach_device(struct protection_domain *domain, u16 devid)
 {
+	struct amd_iommu *iommu = amd_iommu_rlookup_table[devid];
+
+	BUG_ON(!iommu);
 
 	/* lock domain */
 	spin_lock(&domain->lock);
@@ -1223,8 +1244,9 @@ static void __detach_device(struct protection_domain *domain, u16 devid)
 
 	amd_iommu_apply_erratum_63(devid);
 
-	/* decrease reference counter */
-	domain->dev_cnt -= 1;
+	/* decrease reference counters */
+	domain->dev_iommu[iommu->index] -= 1;
+	domain->dev_cnt                 -= 1;
 
 	/* ready */
 	spin_unlock(&domain->lock);
@@ -1755,7 +1777,7 @@ static dma_addr_t map_page(struct device *dev, struct page *page,
 	if (addr == DMA_ERROR_CODE)
 		goto out;
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 out:
 	spin_unlock_irqrestore(&domain->lock, flags);
@@ -1788,7 +1810,7 @@ static void unmap_page(struct device *dev, dma_addr_t dma_addr, size_t size,
 
 	__unmap_single(iommu, domain->priv, dma_addr, size, dir);
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 	spin_unlock_irqrestore(&domain->lock, flags);
 }
@@ -1860,7 +1882,7 @@ static int map_sg(struct device *dev, struct scatterlist *sglist,
 			goto unmap;
 	}
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 out:
 	spin_unlock_irqrestore(&domain->lock, flags);
@@ -1911,7 +1933,7 @@ static void unmap_sg(struct device *dev, struct scatterlist *sglist,
 		s->dma_address = s->dma_length = 0;
 	}
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 	spin_unlock_irqrestore(&domain->lock, flags);
 }
@@ -1966,7 +1988,7 @@ static void *alloc_coherent(struct device *dev, size_t size,
 		goto out_free;
 	}
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 	spin_unlock_irqrestore(&domain->lock, flags);
 
@@ -2007,7 +2029,7 @@ static void free_coherent(struct device *dev, size_t size,
 
 	__unmap_single(iommu, domain->priv, dma_addr, size, DMA_BIDIRECTIONAL);
 
-	iommu_completion_wait(iommu);
+	iommu_flush_complete(domain);
 
 	spin_unlock_irqrestore(&domain->lock, flags);
 

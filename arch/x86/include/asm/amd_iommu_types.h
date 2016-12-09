@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2008 Advanced Micro Devices, Inc.
+ * Copyright (C) 2007-2009 Advanced Micro Devices, Inc.
  * Author: Joerg Roedel <joerg.roedel@amd.com>
  *         Leo Duran <leo.duran@amd.com>
  *
@@ -23,6 +23,11 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+
+/*
+ * Maximum number of IOMMUs supported
+ */
+#define MAX_IOMMUS	32
 
 /*
  * some size calculation constants
@@ -233,7 +238,9 @@ struct protection_domain {
 	unsigned long flags;	/* flags to find out type of domain */
 	bool updated;		/* complete domain flush required */
 	unsigned dev_cnt;	/* devices assigned to this domain */
+	unsigned dev_iommu[MAX_IOMMUS]; /* per-IOMMU reference count */
 	void *priv;		/* private data */
+
 };
 
 /*
@@ -290,6 +297,9 @@ struct dma_ops_domain {
  */
 struct amd_iommu {
 	struct list_head list;
+
+	/* Index within the IOMMU array */
+	int index;
 
 	/* locks the accesses to the hardware */
 	spinlock_t lock;
@@ -355,6 +365,15 @@ struct amd_iommu {
  * only written and read at driver initialization or suspend time
  */
 extern struct list_head amd_iommu_list;
+
+/*
+ * Array with pointers to each IOMMU struct
+ * The indices are referenced in the protection domains
+ */
+extern struct amd_iommu *amd_iommus[MAX_IOMMUS];
+
+/* Number of IOMMUs present in the system */
+extern int amd_iommus_present;
 
 /*
  * Structure defining one entry in the device table
