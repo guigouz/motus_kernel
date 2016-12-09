@@ -27,10 +27,7 @@
 #include "phy.h"
 #include "workarounds.h"
 
-/* Falcon hardware control.
- * Falcon is the internal codename for the SFC4000 controller that is
- * present in SFE400X evaluation boards
- */
+/* Hardware control for SFC4000 (aka Falcon). */
 
 /**************************************************************************
  *
@@ -38,8 +35,6 @@
  *
  **************************************************************************
  */
-
-static int disable_dma_stats;
 
 /* This is set to 16 for a good reason.  In summary, if larger than
  * 16, the descriptor cache holds more than a default socket
@@ -49,11 +44,11 @@ static int disable_dma_stats;
  * goes idle.
  */
 #define TX_DC_ENTRIES 16
-#define TX_DC_ENTRIES_ORDER 0
+#define TX_DC_ENTRIES_ORDER 1
 #define TX_DC_BASE 0x130000
 
 #define RX_DC_ENTRIES 64
-#define RX_DC_ENTRIES_ORDER 2
+#define RX_DC_ENTRIES_ORDER 3
 #define RX_DC_BASE 0x100000
 
 static const unsigned int
@@ -112,8 +107,8 @@ MODULE_PARM_DESC(rx_xon_thresh_bytes, "RX fifo XON threshold");
 /* Size and alignment of special buffers (4KB) */
 #define FALCON_BUF_SIZE 4096
 
-/* Dummy SRAM size code */
-#define SRM_NB_BSZ_ONCHIP_ONLY (-1)
+/* Depth of RX flush request fifo */
+#define FALCON_RX_FLUSH_COUNT 4
 
 #define FALCON_IS_DUAL_FUNC(efx)		\
 	(falcon_rev(efx) < FALCON_REV_B0)
@@ -432,7 +427,7 @@ void falcon_init_tx(struct efx_tx_queue *tx_queue)
 	efx_oword_t tx_desc_ptr;
 	struct efx_nic *efx = tx_queue->efx;
 
-	tx_queue->flushed = false;
+	tx_queue->flushed = FLUSH_NONE;
 
 	/* Pin TX descriptor ring */
 	falcon_init_special_buffer(efx, &tx_queue->txd);
@@ -482,6 +477,8 @@ static void falcon_flush_tx_queue(struct efx_tx_queue *tx_queue)
 	struct efx_nic *efx = tx_queue->efx;
 	efx_oword_t tx_flush_descq;
 
+	tx_queue->flushed = FLUSH_PENDING;
+
 	/* Post a flush command */
 	EFX_POPULATE_OWORD_2(tx_flush_descq,
 			     FRF_AZ_TX_FLUSH_DESCQ_CMD, 1,
@@ -495,7 +492,7 @@ void falcon_fini_tx(struct efx_tx_queue *tx_queue)
 	efx_oword_t tx_desc_ptr;
 
 	/* The queue should have been flushed */
-	WARN_ON(!tx_queue->flushed);
+	WARN_ON(tx_queue->flushed != FLUSH_DONE);
 
 	/* Remove TX descriptor ring from card */
 	EFX_ZERO_OWORD(tx_desc_ptr);
@@ -584,7 +581,7 @@ void falcon_init_rx(struct efx_rx_queue *rx_queue)
 		rx_queue->queue, rx_queue->rxd.index,
 		rx_queue->rxd.index + rx_queue->rxd.entries - 1);
 
-	rx_queue->flushed = false;
+	rx_queue->flushed = FLUSH_NONE;
 
 	/* Pin RX descriptor ring */
 	falcon_init_special_buffer(efx, &rx_queue->rxd);
@@ -613,6 +610,8 @@ static void falcon_flush_rx_queue(struct efx_rx_queue *rx_queue)
 	struct efx_nic *efx = rx_queue->efx;
 	efx_oword_t rx_flush_descq;
 
+	rx_queue->flushed = FLUSH_PENDING;
+
 	/* Post a flush command */
 	EFX_POPULATE_OWORD_2(rx_flush_descq,
 			     FRF_AZ_RX_FLUSH_DESCQ_CMD, 1,
@@ -626,7 +625,7 @@ void falcon_fini_rx(struct efx_rx_queue *rx_queue)
 	struct efx_nic *efx = rx_queue->efx;
 
 	/* The queue should already have been flushed */
-	WARN_ON(!rx_queue->flushed);
+	WARN_ON(rx_queue->flushed != FLUSH_DONE);
 
 	/* Remove RX descriptor ring from card */
 	EFX_ZERO_OWORD(rx_desc_ptr);
@@ -901,7 +900,7 @@ static void falcon_handle_global_event(struct efx_channel *channel,
 
 	if ((falcon_rev(efx) >= FALCON_REV_B0) &&
 	    EFX_QWORD_FIELD(*event, FSF_BB_GLB_EV_XG_MGT_INTR)) {
-		queue_work(efx->workqueue, &efx->mac_work);
+		efx->xmac_poll_required = true;
 		handled = true;
 	}
 
@@ -1187,7 +1186,7 @@ static void falcon_poll_flush_events(struct efx_nic *efx)
 						   FSF_AZ_DRIVER_EV_SUBDATA);
 			if (ev_queue < EFX_TX_QUEUE_COUNT) {
 				tx_queue = efx->tx_queue + ev_queue;
-				tx_queue->flushed = true;
+				tx_queue->flushed = FLUSH_DONE;
 			}
 		} else if (ev_code == FSE_AZ_EV_CODE_DRIVER_EV &&
 			   ev_sub_code == FSE_AZ_RX_DESCQ_FLS_DONE_EV) {
@@ -1197,17 +1196,29 @@ static void falcon_poll_flush_events(struct efx_nic *efx)
 				*event, FSF_AZ_DRIVER_EV_RX_FLUSH_FAIL);
 			if (ev_queue < efx->n_rx_queues) {
 				rx_queue = efx->rx_queue + ev_queue;
-
-				/* retry the rx flush */
-				if (ev_failed)
-					falcon_flush_rx_queue(rx_queue);
-				else
-					rx_queue->flushed = true;
+				rx_queue->flushed =
+					ev_failed ? FLUSH_FAILED : FLUSH_DONE;
 			}
 		}
 
+		/* We're about to destroy the queue anyway, so
+		 * it's ok to throw away every non-flush event */
+		EFX_SET_QWORD(*event);
+
 		read_ptr = (read_ptr + 1) & EFX_EVQ_MASK;
 	} while (read_ptr != end_ptr);
+
+	channel->eventq_read_ptr = read_ptr;
+}
+
+static void falcon_prepare_flush(struct efx_nic *efx)
+{
+	falcon_deconfigure_mac_wrapper(efx);
+
+	/* Wait for the tx and rx fifo's to get to the next packet boundary
+	 * (~1ms without back-pressure), then to drain the remainder of the
+	 * fifo's at data path speeds (negligible), with a healthy margin. */
+	msleep(10);
 }
 
 /* Handle tx and rx flushes at the same time, since they run in
@@ -1217,50 +1228,56 @@ int falcon_flush_queues(struct efx_nic *efx)
 {
 	struct efx_rx_queue *rx_queue;
 	struct efx_tx_queue *tx_queue;
-	int i;
-	bool outstanding;
+	int i, tx_pending, rx_pending;
 
-	/* Issue flush requests */
-	efx_for_each_tx_queue(tx_queue, efx) {
-		tx_queue->flushed = false;
+	falcon_prepare_flush(efx);
+
+	/* Flush all tx queues in parallel */
+	efx_for_each_tx_queue(tx_queue, efx)
 		falcon_flush_tx_queue(tx_queue);
-	}
-	efx_for_each_rx_queue(rx_queue, efx) {
-		rx_queue->flushed = false;
-		falcon_flush_rx_queue(rx_queue);
-	}
 
-	/* Poll the evq looking for flush completions. Since we're not pushing
-	 * any more rx or tx descriptors at this point, we're in no danger of
-	 * overflowing the evq whilst we wait */
+	/* The hardware supports four concurrent rx flushes, each of which may
+	 * need to be retried if there is an outstanding descriptor fetch */
 	for (i = 0; i < FALCON_FLUSH_POLL_COUNT; ++i) {
+		rx_pending = tx_pending = 0;
+		efx_for_each_rx_queue(rx_queue, efx) {
+			if (rx_queue->flushed == FLUSH_PENDING)
+				++rx_pending;
+		}
+		efx_for_each_rx_queue(rx_queue, efx) {
+			if (rx_pending == FALCON_RX_FLUSH_COUNT)
+				break;
+			if (rx_queue->flushed == FLUSH_FAILED ||
+			    rx_queue->flushed == FLUSH_NONE) {
+				falcon_flush_rx_queue(rx_queue);
+				++rx_pending;
+			}
+		}
+		efx_for_each_tx_queue(tx_queue, efx) {
+			if (tx_queue->flushed != FLUSH_DONE)
+				++tx_pending;
+		}
+
+		if (rx_pending == 0 && tx_pending == 0)
+			return 0;
+
 		msleep(FALCON_FLUSH_INTERVAL);
 		falcon_poll_flush_events(efx);
-
-		/* Check if every queue has been succesfully flushed */
-		outstanding = false;
-		efx_for_each_tx_queue(tx_queue, efx)
-			outstanding |= !tx_queue->flushed;
-		efx_for_each_rx_queue(rx_queue, efx)
-			outstanding |= !rx_queue->flushed;
-		if (!outstanding)
-			return 0;
 	}
 
 	/* Mark the queues as all flushed. We're going to return failure
-	 * leading to a reset, or fake up success anyway. "flushed" now
-	 * indicates that we tried to flush. */
+	 * leading to a reset, or fake up success anyway */
 	efx_for_each_tx_queue(tx_queue, efx) {
-		if (!tx_queue->flushed)
+		if (tx_queue->flushed != FLUSH_DONE)
 			EFX_ERR(efx, "tx queue %d flush command timed out\n",
 				tx_queue->queue);
-		tx_queue->flushed = true;
+		tx_queue->flushed = FLUSH_DONE;
 	}
 	efx_for_each_rx_queue(rx_queue, efx) {
-		if (!rx_queue->flushed)
+		if (rx_queue->flushed != FLUSH_DONE)
 			EFX_ERR(efx, "rx queue %d flush command timed out\n",
 				rx_queue->queue);
-		rx_queue->flushed = true;
+		rx_queue->flushed = FLUSH_DONE;
 	}
 
 	if (EFX_WORKAROUND_7803(efx))
@@ -1871,7 +1888,7 @@ static int falcon_reset_macs(struct efx_nic *efx)
 
 	/* MAC stats will fail whilst the TX fifo is draining. Serialise
 	 * the drain sequence with the statistics fetch */
-	efx_stats_disable(efx);
+	falcon_stop_nic_stats(efx);
 
 	efx_reado(efx, &reg, FR_AB_MAC_CTRL);
 	EFX_SET_OWORD_FIELD(reg, FRF_BB_TXFIFO_DRAIN_EN, 1);
@@ -1901,12 +1918,12 @@ static int falcon_reset_macs(struct efx_nic *efx)
 		udelay(10);
 	}
 
-	efx_stats_enable(efx);
-
 	/* If we've reset the EM block and the link is up, then
 	 * we'll have to kick the XAUI link so the PHY can recover */
 	if (efx->link_state.up && EFX_IS10G(efx) && EFX_WORKAROUND_5147(efx))
 		falcon_reset_xaui(efx);
+
+	falcon_start_nic_stats(efx);
 
 	return 0;
 }
@@ -1976,7 +1993,7 @@ void falcon_reconfigure_mac_wrapper(struct efx_nic *efx)
 	efx_writeo(efx, &reg, FR_AB_MAC_CTRL);
 
 	/* Restore the multicast hash registers. */
-	falcon_set_multicast_hash(efx);
+	falcon_push_multicast_hash(efx);
 
 	/* Transmission of pause frames when RX crosses the threshold is
 	 * covered by RX_XOFF_MAC_EN and XM_TX_CFG_REG:XM_FCNTL.
@@ -1991,25 +2008,19 @@ void falcon_reconfigure_mac_wrapper(struct efx_nic *efx)
 	efx_writeo(efx, &reg, FR_AZ_RX_CFG);
 }
 
-int falcon_dma_stats(struct efx_nic *efx, unsigned int done_offset)
+static void falcon_stats_request(struct efx_nic *efx)
 {
+	struct falcon_nic_data *nic_data = efx->nic_data;
 	efx_oword_t reg;
-	u32 *dma_done;
-	int i;
 
-	if (disable_dma_stats)
-		return 0;
+	WARN_ON(nic_data->stats_pending);
+	WARN_ON(nic_data->stats_disable_count);
 
-	/* Statistics fetch will fail if the MAC is in TX drain */
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
-		efx_oword_t temp;
-		efx_reado(efx, &temp, FR_AB_MAC_CTRL);
-		if (EFX_OWORD_FIELD(temp, FRF_BB_TXFIFO_DRAIN_EN))
-			return 0;
-	}
+	if (nic_data->stats_dma_done == NULL)
+		return;	/* no mac selected */
 
-	dma_done = (efx->stats_buffer.addr + done_offset);
-	*dma_done = FALCON_STATS_NOT_DONE;
+	*nic_data->stats_dma_done = FALCON_STATS_NOT_DONE;
+	nic_data->stats_pending = true;
 	wmb(); /* ensure done flag is clear */
 
 	/* Initiate DMA transfer of stats */
@@ -2019,17 +2030,37 @@ int falcon_dma_stats(struct efx_nic *efx, unsigned int done_offset)
 			     efx->stats_buffer.dma_addr);
 	efx_writeo(efx, &reg, FR_AB_MAC_STAT_DMA);
 
-	/* Wait for transfer to complete */
-	for (i = 0; i < 400; i++) {
-		if (*(volatile u32 *)dma_done == FALCON_STATS_DONE) {
-			rmb(); /* Ensure the stats are valid. */
-			return 0;
-		}
-		udelay(10);
-	}
+	mod_timer(&nic_data->stats_timer, round_jiffies_up(jiffies + HZ / 2));
+}
 
-	EFX_ERR(efx, "timed out waiting for statistics\n");
-	return -ETIMEDOUT;
+static void falcon_stats_complete(struct efx_nic *efx)
+{
+	struct falcon_nic_data *nic_data = efx->nic_data;
+
+	if (!nic_data->stats_pending)
+		return;
+
+	nic_data->stats_pending = 0;
+	if (*nic_data->stats_dma_done == FALCON_STATS_DONE) {
+		rmb(); /* read the done flag before the stats */
+		efx->mac_op->update_stats(efx);
+	} else {
+		EFX_ERR(efx, "timed out waiting for statistics\n");
+	}
+}
+
+static void falcon_stats_timer_func(unsigned long context)
+{
+	struct efx_nic *efx = (struct efx_nic *)context;
+	struct falcon_nic_data *nic_data = efx->nic_data;
+
+	spin_lock(&efx->stats_lock);
+
+	falcon_stats_complete(efx);
+	if (nic_data->stats_disable_count == 0)
+		falcon_stats_request(efx);
+
+	spin_unlock(&efx->stats_lock);
 }
 
 /**************************************************************************
@@ -2042,18 +2073,18 @@ int falcon_dma_stats(struct efx_nic *efx, unsigned int done_offset)
 /* Wait for GMII access to complete */
 static int falcon_gmii_wait(struct efx_nic *efx)
 {
-	efx_dword_t md_stat;
+	efx_oword_t md_stat;
 	int count;
 
 	/* wait upto 50ms - taken max from datasheet */
 	for (count = 0; count < 5000; count++) {
-		efx_readd(efx, &md_stat, FR_AB_MD_STAT);
-		if (EFX_DWORD_FIELD(md_stat, FRF_AB_MD_BSY) == 0) {
-			if (EFX_DWORD_FIELD(md_stat, FRF_AB_MD_LNFL) != 0 ||
-			    EFX_DWORD_FIELD(md_stat, FRF_AB_MD_BSERR) != 0) {
+		efx_reado(efx, &md_stat, FR_AB_MD_STAT);
+		if (EFX_OWORD_FIELD(md_stat, FRF_AB_MD_BSY) == 0) {
+			if (EFX_OWORD_FIELD(md_stat, FRF_AB_MD_LNFL) != 0 ||
+			    EFX_OWORD_FIELD(md_stat, FRF_AB_MD_BSERR) != 0) {
 				EFX_ERR(efx, "error from GMII access "
-					EFX_DWORD_FMT"\n",
-					EFX_DWORD_VAL(md_stat));
+					EFX_OWORD_FMT"\n",
+					EFX_OWORD_VAL(md_stat));
 				return -EIO;
 			}
 			return 0;
@@ -2164,15 +2195,35 @@ static int falcon_mdio_read(struct net_device *net_dev,
 	return rc;
 }
 
+static void falcon_clock_mac(struct efx_nic *efx)
+{
+	unsigned strap_val;
+	efx_oword_t nic_stat;
+
+	/* Configure the NIC generated MAC clock correctly */
+	efx_reado(efx, &nic_stat, FR_AB_NIC_STAT);
+	strap_val = EFX_IS10G(efx) ? 5 : 3;
+	if (falcon_rev(efx) >= FALCON_REV_B0) {
+		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP_EN, 1);
+		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP, strap_val);
+		efx_writeo(efx, &nic_stat, FR_AB_NIC_STAT);
+	} else {
+		/* Falcon A1 does not support 1G/10G speed switching
+		 * and must not be used with a PHY that does. */
+		BUG_ON(EFX_OWORD_FIELD(nic_stat, FRF_AB_STRAP_PINS) !=
+		       strap_val);
+	}
+}
+
 int falcon_switch_mac(struct efx_nic *efx)
 {
 	struct efx_mac_operations *old_mac_op = efx->mac_op;
-	efx_oword_t nic_stat;
-	unsigned strap_val;
+	struct falcon_nic_data *nic_data = efx->nic_data;
+	unsigned int stats_done_offset;
 	int rc = 0;
 
 	/* Don't try to fetch MAC stats while we're switching MACs */
-	efx_stats_disable(efx);
+	falcon_stop_nic_stats(efx);
 
 	/* Internal loopbacks override the phy speed setting */
 	if (efx->loopback_mode == LOOPBACK_GMAC) {
@@ -2187,31 +2238,24 @@ int falcon_switch_mac(struct efx_nic *efx)
 	efx->mac_op = (EFX_IS10G(efx) ?
 		       &falcon_xmac_operations : &falcon_gmac_operations);
 
-	/* Always push the NIC_STAT_REG setting even if the mac hasn't
-	 * changed, because this function is run post online reset */
-	efx_reado(efx, &nic_stat, FR_AB_NIC_STAT);
-	strap_val = EFX_IS10G(efx) ? 5 : 3;
-	if (falcon_rev(efx) >= FALCON_REV_B0) {
-		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP_EN, 1);
-		EFX_SET_OWORD_FIELD(nic_stat, FRF_BB_EE_STRAP, strap_val);
-		efx_writeo(efx, &nic_stat, FR_AB_NIC_STAT);
-	} else {
-		/* Falcon A1 does not support 1G/10G speed switching
-		 * and must not be used with a PHY that does. */
-		BUG_ON(EFX_OWORD_FIELD(nic_stat, FRF_AB_STRAP_PINS) !=
-		       strap_val);
-	}
+	if (EFX_IS10G(efx))
+		stats_done_offset = XgDmaDone_offset;
+	else
+		stats_done_offset = GDmaDone_offset;
+	nic_data->stats_dma_done = efx->stats_buffer.addr + stats_done_offset;
 
 	if (old_mac_op == efx->mac_op)
 		goto out;
 
+	falcon_clock_mac(efx);
+
 	EFX_LOG(efx, "selected %cMAC\n", EFX_IS10G(efx) ? 'X' : 'G');
 	/* Not all macs support a mac-level link state */
-	efx->mac_up = true;
+	efx->xmac_poll_required = false;
 
 	rc = falcon_reset_macs(efx);
 out:
-	efx_stats_enable(efx);
+	falcon_start_nic_stats(efx);
 	return rc;
 }
 
@@ -2283,15 +2327,11 @@ void falcon_remove_port(struct efx_nic *efx)
  **************************************************************************
  */
 
-void falcon_set_multicast_hash(struct efx_nic *efx)
+void falcon_push_multicast_hash(struct efx_nic *efx)
 {
 	union efx_multicast_hash *mc_hash = &efx->multicast_hash;
 
-	/* Broadcast packets go through the multicast hash filter.
-	 * ether_crc_le() of the broadcast address is 0xbe2612ff
-	 * so we always add bit 0xff to the mask.
-	 */
-	set_bit_le(0xff, mc_hash->byte);
+	WARN_ON(!mutex_is_locked(&efx->mac_lock));
 
 	efx_writeo(efx, &mc_hash->oword[0], FR_AB_MAC_MC_HASH_REG0);
 	efx_writeo(efx, &mc_hash->oword[1], FR_AB_MAC_MC_HASH_REG1);
@@ -2566,6 +2606,22 @@ fail1:
 fail4:
 fail5:
 	return rc;
+}
+
+void falcon_monitor(struct efx_nic *efx)
+{
+	int rc;
+
+	rc = falcon_board(efx)->type->monitor(efx);
+	if (rc) {
+		EFX_ERR(efx, "Board sensor %s; shutting down PHY\n",
+			(rc == -ERANGE) ? "reported fault" : "failed");
+		efx->phy_mode |= PHY_MODE_LOW_POWER;
+		falcon_sim_phy_event(efx);
+	}
+	efx->phy_op->poll(efx);
+	if (EFX_IS10G(efx))
+		falcon_poll_xmac(efx);
 }
 
 /* Zeroes out the SRAM contents.  This routine must be called in
@@ -2870,11 +2926,15 @@ int falcon_probe_nic(struct efx_nic *efx)
 	if (rc)
 		goto fail5;
 
-	rc = falcon_board(efx)->init(efx);
+	rc = falcon_board(efx)->type->init(efx);
 	if (rc) {
 		EFX_ERR(efx, "failed to initialise board\n");
 		goto fail6;
 	}
+
+	nic_data->stats_disable_count = 1;
+	setup_timer(&nic_data->stats_timer, &falcon_stats_timer_func,
+		    (unsigned long)efx);
 
 	return 0;
 
@@ -2963,6 +3023,9 @@ int falcon_init_nic(struct efx_nic *efx)
 		efx_writeo(efx, &temp, FR_AB_GPIO_CTL);
 	}
 
+	/* Select the correct MAC */
+	falcon_clock_mac(efx);
+
 	rc = falcon_reset_sram(efx);
 	if (rc)
 		return rc;
@@ -2974,14 +3037,14 @@ int falcon_init_nic(struct efx_nic *efx)
 	efx_writeo(efx, &temp, FR_AZ_SRM_RX_DC_CFG);
 
 	/* Set TX descriptor cache size. */
-	BUILD_BUG_ON(TX_DC_ENTRIES != (16 << TX_DC_ENTRIES_ORDER));
+	BUILD_BUG_ON(TX_DC_ENTRIES != (8 << TX_DC_ENTRIES_ORDER));
 	EFX_POPULATE_OWORD_1(temp, FRF_AZ_TX_DC_SIZE, TX_DC_ENTRIES_ORDER);
 	efx_writeo(efx, &temp, FR_AZ_TX_DC_CFG);
 
 	/* Set RX descriptor cache size.  Set low watermark to size-8, as
 	 * this allows most efficient prefetching.
 	 */
-	BUILD_BUG_ON(RX_DC_ENTRIES != (16 << RX_DC_ENTRIES_ORDER));
+	BUILD_BUG_ON(RX_DC_ENTRIES != (8 << RX_DC_ENTRIES_ORDER));
 	EFX_POPULATE_OWORD_1(temp, FRF_AZ_RX_DC_SIZE, RX_DC_ENTRIES_ORDER);
 	efx_writeo(efx, &temp, FR_AZ_RX_DC_CFG);
 	EFX_POPULATE_OWORD_1(temp, FRF_AZ_RX_DC_PF_LWM, RX_DC_ENTRIES - 8);
@@ -3073,7 +3136,7 @@ void falcon_remove_nic(struct efx_nic *efx)
 	struct falcon_board *board = falcon_board(efx);
 	int rc;
 
-	falcon_board(efx)->fini(efx);
+	board->type->fini(efx);
 
 	/* Remove I2C adapter and clear it in preparation for a retry */
 	rc = i2c_del_adapter(&board->i2c_adap);
@@ -3098,11 +3161,58 @@ void falcon_remove_nic(struct efx_nic *efx)
 
 void falcon_update_nic_stats(struct efx_nic *efx)
 {
+	struct falcon_nic_data *nic_data = efx->nic_data;
 	efx_oword_t cnt;
+
+	if (nic_data->stats_disable_count)
+		return;
 
 	efx_reado(efx, &cnt, FR_AZ_RX_NODESC_DROP);
 	efx->n_rx_nodesc_drop_cnt +=
 		EFX_OWORD_FIELD(cnt, FRF_AB_RX_NODESC_DROP_CNT);
+
+	if (nic_data->stats_pending &&
+	    *nic_data->stats_dma_done == FALCON_STATS_DONE) {
+		nic_data->stats_pending = false;
+		rmb(); /* read the done flag before the stats */
+		efx->mac_op->update_stats(efx);
+	}
+}
+
+void falcon_start_nic_stats(struct efx_nic *efx)
+{
+	struct falcon_nic_data *nic_data = efx->nic_data;
+
+	spin_lock_bh(&efx->stats_lock);
+	if (--nic_data->stats_disable_count == 0)
+		falcon_stats_request(efx);
+	spin_unlock_bh(&efx->stats_lock);
+}
+
+void falcon_stop_nic_stats(struct efx_nic *efx)
+{
+	struct falcon_nic_data *nic_data = efx->nic_data;
+	int i;
+
+	might_sleep();
+
+	spin_lock_bh(&efx->stats_lock);
+	++nic_data->stats_disable_count;
+	spin_unlock_bh(&efx->stats_lock);
+
+	del_timer_sync(&nic_data->stats_timer);
+
+	/* Wait enough time for the most recent transfer to
+	 * complete. */
+	for (i = 0; i < 4 && nic_data->stats_pending; i++) {
+		if (*nic_data->stats_dma_done == FALCON_STATS_DONE)
+			break;
+		msleep(1);
+	}
+
+	spin_lock_bh(&efx->stats_lock);
+	falcon_stats_complete(efx);
+	spin_unlock_bh(&efx->stats_lock);
 }
 
 /**************************************************************************

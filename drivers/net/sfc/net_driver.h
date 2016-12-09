@@ -113,6 +113,13 @@ struct efx_special_buffer {
 	int entries;
 };
 
+enum efx_flush_state {
+	FLUSH_NONE,
+	FLUSH_PENDING,
+	FLUSH_FAILED,
+	FLUSH_DONE,
+};
+
 /**
  * struct efx_tx_buffer - An Efx TX buffer
  * @skb: The associated socket buffer.
@@ -189,7 +196,7 @@ struct efx_tx_queue {
 	struct efx_nic *nic;
 	struct efx_tx_buffer *buffer;
 	struct efx_special_buffer txd;
-	bool flushed;
+	enum efx_flush_state flushed;
 
 	/* Members used mainly on the completion path */
 	unsigned int read_count ____cacheline_aligned_in_smp;
@@ -284,7 +291,7 @@ struct efx_rx_queue {
 	struct page *buf_page;
 	dma_addr_t buf_dma_addr;
 	char *buf_data;
-	bool flushed;
+	enum efx_flush_state flushed;
 };
 
 /**
@@ -500,14 +507,12 @@ struct efx_link_state {
  * struct efx_mac_operations - Efx MAC operations table
  * @reconfigure: Reconfigure MAC. Serialised by the mac_lock
  * @update_stats: Update statistics
- * @irq: Hardware MAC event callback. Serialised by the mac_lock
- * @poll: Poll for hardware state. Serialised by the mac_lock
+ * @check_fault: Check fault state. True if fault present.
  */
 struct efx_mac_operations {
 	void (*reconfigure) (struct efx_nic *efx);
 	void (*update_stats) (struct efx_nic *efx);
-	void (*irq) (struct efx_nic *efx);
-	void (*poll) (struct efx_nic *efx);
+	bool (*check_fault)(struct efx_nic *efx);
 };
 
 /**
@@ -710,7 +715,6 @@ union efx_multicast_hash {
  *	&struct net_device_stats.
  * @stats_buffer: DMA buffer for statistics
  * @stats_lock: Statistics update lock. Serialises statistics fetches
- * @stats_disable_count: Nest count for disabling statistics fetches
  * @mac_op: MAC interface
  * @mac_address: Permanent MAC address
  * @phy_type: PHY type
@@ -719,14 +723,14 @@ union efx_multicast_hash {
  * @phy_data: PHY private data (including PHY-specific stats)
  * @mdio: PHY MDIO interface
  * @phy_mode: PHY operating mode. Serialised by @mac_lock.
- * @mac_up: MAC link state
+ * @xmac_poll_required: XMAC link state needs polling
  * @link_state: Current state of the link
  * @n_link_state_changes: Number of times the link has changed state
  * @promiscuous: Promiscuous flag. Protected by netif_tx_lock.
  * @multicast_hash: Multicast hash table
  * @wanted_fc: Wanted flow control flags
  * @phy_work: work item for dealing with PHY events
- * @mac_work: work item for dealing with MAC events
+ * @mac_work: Work item for changing MAC promiscuity and multicast hash
  * @loopback_mode: Loopback status
  * @loopback_modes: Supported loopback mode bitmask
  * @loopback_selftest: Offline self-test private state
@@ -792,7 +796,6 @@ struct efx_nic {
 	struct efx_mac_stats mac_stats;
 	struct efx_buffer stats_buffer;
 	spinlock_t stats_lock;
-	unsigned int stats_disable_count;
 
 	struct efx_mac_operations *mac_op;
 	unsigned char mac_address[ETH_ALEN];
@@ -805,7 +808,7 @@ struct efx_nic {
 	struct mdio_if_info mdio;
 	enum efx_phy_mode phy_mode;
 
-	bool mac_up;
+	bool xmac_poll_required;
 	struct efx_link_state link_state;
 	unsigned int n_link_state_changes;
 

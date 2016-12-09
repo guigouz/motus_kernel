@@ -243,7 +243,11 @@ static int probe_arg_string(char *buf, size_t n, struct fetch_func *ff)
 		ret = snprintf(buf, n, "@0x%p", ff->data);
 	else if (ff->func == fetch_symbol) {
 		struct symbol_cache *sc = ff->data;
-		ret = snprintf(buf, n, "@%s%+ld", sc->symbol, sc->offset);
+		if (sc->offset)
+			ret = snprintf(buf, n, "@%s%+ld", sc->symbol,
+					sc->offset);
+		else
+			ret = snprintf(buf, n, "@%s", sc->symbol);
 	} else if (ff->func == fetch_retvalue)
 		ret = snprintf(buf, n, "$retval");
 	else if (ff->func == fetch_stack_address)
@@ -704,10 +708,12 @@ static int create_trace_probe(int argc, char **argv)
 		ret = parse_probe_arg(arg, &tp->args[i].fetch, is_return);
 		if (ret) {
 			pr_info("Parse error at argument%d. (%d)\n", i, ret);
+			kfree(tp->args[i].name);
 			goto error;
 		}
+
+		tp->nr_args++;
 	}
-	tp->nr_args = i;
 
 	ret = register_trace_probe(tp);
 	if (ret)
@@ -758,12 +764,14 @@ static int probes_seq_show(struct seq_file *m, void *v)
 	char buf[MAX_ARGSTR_LEN + 1];
 
 	seq_printf(m, "%c", probe_is_return(tp) ? 'r' : 'p');
-	seq_printf(m, ":%s", tp->call.name);
+	seq_printf(m, ":%s/%s", tp->call.system, tp->call.name);
 
-	if (tp->symbol)
+	if (!tp->symbol)
+		seq_printf(m, " 0x%p", tp->rp.kp.addr);
+	else if (tp->rp.kp.offset)
 		seq_printf(m, " %s+%u", probe_symbol(tp), tp->rp.kp.offset);
 	else
-		seq_printf(m, " 0x%p", tp->rp.kp.addr);
+		seq_printf(m, " %s", probe_symbol(tp));
 
 	for (i = 0; i < tp->nr_args; i++) {
 		ret = probe_arg_string(buf, MAX_ARGSTR_LEN, &tp->args[i].fetch);

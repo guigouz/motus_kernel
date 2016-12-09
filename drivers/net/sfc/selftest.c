@@ -55,6 +55,7 @@ static const char *payload_msg =
  * @flush:		Drop all packets in efx_loopback_rx_packet
  * @packet_count:	Number of packets being used in this test
  * @skbs:		An array of skbs transmitted
+ * @offload_csum:	Checksums are being offloaded
  * @rx_good:		RX good packet count
  * @rx_bad:		RX bad packet count
  * @payload:		Payload used in tests
@@ -63,10 +64,7 @@ struct efx_loopback_state {
 	bool flush;
 	int packet_count;
 	struct sk_buff **skbs;
-
-	/* Checksums are being offloaded */
 	bool offload_csum;
-
 	atomic_t rx_good;
 	atomic_t rx_bad;
 	struct efx_loopback_payload payload;
@@ -437,7 +435,6 @@ static int efx_begin_loopback(struct efx_tx_queue *tx_queue)
 			kfree_skb(skb);
 			return -EPIPE;
 		}
-		efx->net_dev->trans_start = jiffies;
 	}
 
 	return 0;
@@ -610,13 +607,10 @@ static int efx_test_loopbacks(struct efx_nic *efx, struct efx_self_tests *tests,
 			flush_workqueue(efx->workqueue);
 			rmb();
 
-			/* We need both the phy and xaui links to be ok.
-			 * rather than relying on the falcon_xmac irq/poll
-			 * regime, just poll xaui directly */
+			/* We need both the PHY and MAC-PHY links to be OK */
 			link_up = efx->link_state.up;
-			if (link_up && EFX_IS10G(efx) &&
-			    !falcon_xaui_link_ok(efx))
-				link_up = false;
+			if (link_up)
+				link_up = !efx->mac_op->check_fault(efx);
 
 		} while ((++count < 20) && !link_up);
 

@@ -303,7 +303,7 @@ static int tenxpress_phy_init(struct efx_nic *efx)
 	u16 old_adv, adv;
 	int rc = 0;
 
-	falcon_board(efx)->init_phy(efx);
+	falcon_board(efx)->type->init_phy(efx);
 
 	phy_data = kzalloc(sizeof(*phy_data), GFP_KERNEL);
 	if (!phy_data)
@@ -374,7 +374,7 @@ static int tenxpress_special_reset(struct efx_nic *efx)
 	/* The XGMAC clock is driven from the SFC7101/SFT9001 312MHz clock, so
 	 * a special software reset can glitch the XGMAC sufficiently for stats
 	 * requests to fail. */
-	efx_stats_disable(efx);
+	falcon_stop_nic_stats(efx);
 
 	/* Initiate reset */
 	reg = efx_mdio_read(efx, MDIO_MMD_PMAPMD, PMA_PMD_XCONTROL_REG);
@@ -396,7 +396,7 @@ static int tenxpress_special_reset(struct efx_nic *efx)
 	/* Wait for the XGXS state machine to churn */
 	mdelay(10);
 out:
-	efx_stats_enable(efx);
+	falcon_start_nic_stats(efx);
 	return rc;
 }
 
