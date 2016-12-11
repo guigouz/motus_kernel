@@ -433,8 +433,6 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_ROTATE:	                return "Rotate";
 	case V4L2_CID_BG_COLOR:                 return "Background color";
 	case V4L2_CID_COLORFX:			return "Color Effects";
-	case V4L2_CID_ROTATE:			return "Rotate";
-	case V4L2_CID_BG_COLOR:			return "Background color";
 
 	/* MPEG controls */
 	case V4L2_CID_MPEG_CLASS: 		return "MPEG Encoder Controls";
