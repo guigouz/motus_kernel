@@ -58,6 +58,11 @@
 #define LPFC_FCOE_FKA_ADV_PER	0
 #define LPFC_FCOE_FIP_PRIORITY	0x80
 
+#define sli4_sid_from_fc_hdr(fc_hdr)  \
+	((fc_hdr)->fh_s_id[0] << 16 | \
+	 (fc_hdr)->fh_s_id[1] <<  8 | \
+	 (fc_hdr)->fh_s_id[2])
+
 enum lpfc_sli4_queue_type {
 	LPFC_EQ,
 	LPFC_GCQ,
@@ -110,18 +115,6 @@ struct lpfc_queue {
 	union sli4_qe qe[1];	/* array to index entries (must be last) */
 };
 
-struct lpfc_cq_event {
-	struct list_head list;
-	union {
-		struct lpfc_mcqe		mcqe_cmpl;
-		struct lpfc_acqe_link		acqe_link;
-		struct lpfc_acqe_fcoe		acqe_fcoe;
-		struct lpfc_acqe_dcbx		acqe_dcbx;
-		struct lpfc_rcqe		rcqe_cmpl;
-		struct sli4_wcqe_xri_aborted	wcqe_axri;
-	} cqe;
-};
-
 struct lpfc_sli4_link {
 	uint8_t speed;
 	uint8_t duplex;
@@ -166,7 +159,7 @@ struct lpfc_fip_param_hdr {
 #define	lpfc_fip_param_hdr_fipp_mode_SHIFT	6
 #define	lpfc_fip_param_hdr_fipp_mode_MASK	0x3
 #define lpfc_fip_param_hdr_fipp_mode_WORD	parm_flags
-#define	FIPP_MODE_ON				0x2
+#define	FIPP_MODE_ON				0x1
 #define	FIPP_MODE_OFF				0x0
 #define FIPP_VLAN_VALID				0x1
 };
@@ -325,7 +318,6 @@ struct lpfc_sli4_hba {
 	struct lpfc_queue **fcp_cq;/* Fast-path FCP compl queue */
 	struct lpfc_queue *mbx_cq; /* Slow-path mailbox complete queue */
 	struct lpfc_queue *els_cq; /* Slow-path ELS response complete queue */
-	struct lpfc_queue *rxq_cq; /* Slow-path unsolicited complete queue */
 
 	/* Setup information for various queue parameters */
 	int eq_esize;
