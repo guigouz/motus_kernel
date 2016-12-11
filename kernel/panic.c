@@ -10,6 +10,7 @@
  */
 #include <linux/debug_locks.h>
 #include <linux/interrupt.h>
+#include <linux/kmsg_dump.h>
 #include <linux/kallsyms.h>
 #include <linux/notifier.h>
 #include <linux/module.h>
@@ -82,6 +83,7 @@ NORET_TYPE void panic(const char * fmt, ...)
 	/* Inform modem that the power down reason is due to Panic */
 	set_powerdown_panic();
 
+	kmsg_dump(KMSG_DUMP_PANIC);
 	/*
 	 * If we have crashed and we have a crash kernel loaded let it handle
 	 * everything else.
@@ -347,6 +349,7 @@ void oops_exit(void)
 {
 	do_oops_enter_exit();
 	print_oops_end_marker();
+	kmsg_dump(KMSG_DUMP_OOPS);
 }
 
 #ifdef WANT_WARN_ON_SLOWPATH
