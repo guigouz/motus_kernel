@@ -517,7 +517,7 @@ static inline bool efx_link_state_equal(const struct efx_link_state *left,
  * @check_fault: Check fault state. True if fault present.
  */
 struct efx_mac_operations {
-	void (*reconfigure) (struct efx_nic *efx);
+	int (*reconfigure) (struct efx_nic *efx);
 	void (*update_stats) (struct efx_nic *efx);
 	bool (*check_fault)(struct efx_nic *efx);
 };
@@ -544,7 +544,7 @@ struct efx_phy_operations {
 	enum efx_mac_type macs;
 	int (*init) (struct efx_nic *efx);
 	void (*fini) (struct efx_nic *efx);
-	void (*reconfigure) (struct efx_nic *efx);
+	int (*reconfigure) (struct efx_nic *efx);
 	bool (*poll) (struct efx_nic *efx);
 	void (*get_settings) (struct efx_nic *efx,
 			      struct ethtool_cmd *ecmd);
@@ -730,6 +730,7 @@ union efx_multicast_hash {
  * @mdio: PHY MDIO interface
  * @phy_mode: PHY operating mode. Serialised by @mac_lock.
  * @xmac_poll_required: XMAC link state needs polling
+ * @link_advertising: Autonegotiation advertising flags
  * @link_state: Current state of the link
  * @n_link_state_changes: Number of times the link has changed state
  * @promiscuous: Promiscuous flag. Protected by netif_tx_lock.
@@ -813,6 +814,7 @@ struct efx_nic {
 	enum efx_phy_mode phy_mode;
 
 	bool xmac_poll_required;
+	u32 link_advertising;
 	struct efx_link_state link_state;
 	unsigned int n_link_state_changes;
 
@@ -843,6 +845,28 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
 
 /**
  * struct efx_nic_type - Efx device type definition
+ * @probe: Probe the controller
+ * @remove: Free resources allocated by probe()
+ * @init: Initialise the controller
+ * @fini: Shut down the controller
+ * @monitor: Periodic function for polling link state and hardware monitor
+ * @reset: Reset the controller hardware and possibly the PHY.  This will
+ *	be called while the controller is uninitialised.
+ * @probe_port: Probe the MAC and PHY
+ * @remove_port: Free resources allocated by probe_port()
+ * @prepare_flush: Prepare the hardware for flushing the DMA queues
+ * @update_stats: Update statistics not provided by event handling
+ * @start_stats: Start the regular fetching of statistics
+ * @stop_stats: Stop the regular fetching of statistics
+ * @set_id_led: Set state of identifying LED or revert to automatic function
+ * @push_irq_moderation: Apply interrupt moderation value
+ * @push_multicast_hash: Apply multicast hash table
+ * @reconfigure_port: Push loopback/power/txdis changes to the MAC and PHY
+ * @get_wol: Get WoL configuration from driver state
+ * @set_wol: Push WoL configuration to the NIC
+ * @resume_wol: Synchronise WoL state between driver and MC (e.g. after resume)
+ * @test_registers: Test read/write functionality of control registers
+ * @test_nvram: Test validity of NVRAM contents
  * @default_mac_ops: efx_mac_operations to set at startup
  * @revision: Hardware architecture revision
  * @mem_map_size: Memory BAR mapped size
@@ -859,8 +883,31 @@ static inline const char *efx_dev_name(struct efx_nic *efx)
  *	descriptors
  * @tx_dc_base: Base address in SRAM of TX queue descriptor caches
  * @rx_dc_base: Base address in SRAM of RX queue descriptor caches
+ * @reset_world_flags: Flags for additional components covered by
+ *	reset method RESET_TYPE_WORLD
  */
 struct efx_nic_type {
+	int (*probe)(struct efx_nic *efx);
+	void (*remove)(struct efx_nic *efx);
+	int (*init)(struct efx_nic *efx);
+	void (*fini)(struct efx_nic *efx);
+	void (*monitor)(struct efx_nic *efx);
+	int (*reset)(struct efx_nic *efx, enum reset_type method);
+	int (*probe_port)(struct efx_nic *efx);
+	void (*remove_port)(struct efx_nic *efx);
+	void (*prepare_flush)(struct efx_nic *efx);
+	void (*update_stats)(struct efx_nic *efx);
+	void (*start_stats)(struct efx_nic *efx);
+	void (*stop_stats)(struct efx_nic *efx);
+	void (*set_id_led)(struct efx_nic *efx, enum efx_led_mode mode);
+	void (*push_irq_moderation)(struct efx_channel *channel);
+	void (*push_multicast_hash)(struct efx_nic *efx);
+	int (*reconfigure_port)(struct efx_nic *efx);
+	void (*get_wol)(struct efx_nic *efx, struct ethtool_wolinfo *wol);
+	int (*set_wol)(struct efx_nic *efx, u32 type);
+	void (*resume_wol)(struct efx_nic *efx);
+	int (*test_registers)(struct efx_nic *efx);
+	int (*test_nvram)(struct efx_nic *efx);
 	struct efx_mac_operations *default_mac_ops;
 
 	int revision;
@@ -876,6 +923,7 @@ struct efx_nic_type {
 	unsigned int phys_addr_channels;
 	unsigned int tx_dc_base;
 	unsigned int rx_dc_base;
+	u32 reset_world_flags;
 };
 
 /**************************************************************************

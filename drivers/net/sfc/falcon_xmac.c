@@ -112,7 +112,7 @@ static void falcon_mask_status_intr(struct efx_nic *efx, bool enable)
 }
 
 /* Get status of XAUI link */
-bool falcon_xaui_link_ok(struct efx_nic *efx)
+static bool falcon_xaui_link_ok(struct efx_nic *efx)
 {
 	efx_oword_t reg;
 	bool align_done, link_ok = false;
@@ -143,11 +143,12 @@ bool falcon_xaui_link_ok(struct efx_nic *efx)
 	return link_ok;
 }
 
-static void falcon_reconfigure_xmac_core(struct efx_nic *efx)
+void falcon_reconfigure_xmac_core(struct efx_nic *efx)
 {
 	unsigned int max_frame_len;
 	efx_oword_t reg;
 	bool rx_fc = !!(efx->link_state.fc & EFX_FC_RX);
+	bool tx_fc = !!(efx->link_state.fc & EFX_FC_TX);
 
 	/* Configure MAC  - cut-thru mode is hard wired on */
 	EFX_POPULATE_OWORD_3(reg,
@@ -162,7 +163,7 @@ static void falcon_reconfigure_xmac_core(struct efx_nic *efx)
 			     FRF_AB_XM_TX_PRMBL, 1,
 			     FRF_AB_XM_AUTO_PAD, 1,
 			     FRF_AB_XM_TXCRC, 1,
-			     FRF_AB_XM_FCNTL, 1,
+			     FRF_AB_XM_FCNTL, tx_fc,
 			     FRF_AB_XM_IPG, 0x3);
 	efx_writeo(efx, &reg, FR_AB_XM_TX_CFG);
 
@@ -274,7 +275,7 @@ static bool falcon_xmac_check_fault(struct efx_nic *efx)
 	return !falcon_check_xaui_link_up(efx, 5);
 }
 
-static void falcon_reconfigure_xmac(struct efx_nic *efx)
+static int falcon_reconfigure_xmac(struct efx_nic *efx)
 {
 	falcon_mask_status_intr(efx, false);
 
@@ -285,6 +286,8 @@ static void falcon_reconfigure_xmac(struct efx_nic *efx)
 
 	efx->xmac_poll_required = !falcon_check_xaui_link_up(efx, 5);
 	falcon_mask_status_intr(efx, true);
+
+	return 0;
 }
 
 static void falcon_update_stats_xmac(struct efx_nic *efx)
