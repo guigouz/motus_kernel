@@ -59,8 +59,8 @@
 
 #define DRV_MODULE_NAME		"bnx2"
 #define PFX DRV_MODULE_NAME	": "
-#define DRV_MODULE_VERSION	"2.0.2"
-#define DRV_MODULE_RELDATE	"Aug 21, 2009"
+#define DRV_MODULE_VERSION	"2.0.3"
+#define DRV_MODULE_RELDATE	"Dec 03, 2009"
 #define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-5.0.0.j3.fw"
 #define FW_RV2P_FILE_06		"bnx2/bnx2-rv2p-06-5.0.0.j3.fw"
 #define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-5.0.0.j3.fw"
@@ -5165,8 +5165,12 @@ bnx2_init_rx_ring(struct bnx2 *bp, int ring_num)
 
 	ring_prod = prod = rxr->rx_pg_prod;
 	for (i = 0; i < bp->rx_pg_ring_size; i++) {
-		if (bnx2_alloc_rx_page(bp, rxr, ring_prod) < 0)
+		if (bnx2_alloc_rx_page(bp, rxr, ring_prod) < 0) {
+			printk(KERN_WARNING PFX "%s: init'ed rx page ring %d "
+						"with %d/%d pages only\n",
+			       bp->dev->name, ring_num, i, bp->rx_pg_ring_size);
 			break;
+		}
 		prod = NEXT_RX_BD(prod);
 		ring_prod = RX_PG_RING_IDX(prod);
 	}
@@ -5174,8 +5178,12 @@ bnx2_init_rx_ring(struct bnx2 *bp, int ring_num)
 
 	ring_prod = prod = rxr->rx_prod;
 	for (i = 0; i < bp->rx_ring_size; i++) {
-		if (bnx2_alloc_rx_skb(bp, rxr, ring_prod) < 0)
+		if (bnx2_alloc_rx_skb(bp, rxr, ring_prod) < 0) {
+			printk(KERN_WARNING PFX "%s: init'ed rx ring %d with "
+						"%d/%d skbs only\n",
+			       bp->dev->name, ring_num, i, bp->rx_ring_size);
 			break;
+		}
 		prod = NEXT_RX_BD(prod);
 		ring_prod = RX_RING_IDX(prod);
 	}
@@ -6272,8 +6280,11 @@ bnx2_reset_task(struct work_struct *work)
 {
 	struct bnx2 *bp = container_of(work, struct bnx2, reset_task);
 
-	if (!netif_running(bp->dev))
+	rtnl_lock();
+	if (!netif_running(bp->dev)) {
+		rtnl_unlock();
 		return;
+	}
 
 	bnx2_netif_stop(bp);
 
@@ -6281,12 +6292,36 @@ bnx2_reset_task(struct work_struct *work)
 
 	atomic_set(&bp->intr_sem, 1);
 	bnx2_netif_start(bp);
+	rtnl_unlock();
+}
+
+static void
+bnx2_dump_state(struct bnx2 *bp)
+{
+	struct net_device *dev = bp->dev;
+
+	printk(KERN_ERR PFX "%s DEBUG: intr_sem[%x]\n", dev->name,
+		atomic_read(&bp->intr_sem));
+	printk(KERN_ERR PFX "%s DEBUG: EMAC_TX_STATUS[%08x] "
+			    "RPM_MGMT_PKT_CTRL[%08x]\n", dev->name,
+		REG_RD(bp, BNX2_EMAC_TX_STATUS),
+		REG_RD(bp, BNX2_RPM_MGMT_PKT_CTRL));
+	printk(KERN_ERR PFX "%s DEBUG: MCP_STATE_P0[%08x] MCP_STATE_P1[%08x]\n",
+		dev->name, bnx2_reg_rd_ind(bp, BNX2_MCP_STATE_P0),
+		bnx2_reg_rd_ind(bp, BNX2_MCP_STATE_P1));
+	printk(KERN_ERR PFX "%s DEBUG: HC_STATS_INTERRUPT_STATUS[%08x]\n",
+		dev->name, REG_RD(bp, BNX2_HC_STATS_INTERRUPT_STATUS));
+	if (bp->flags & BNX2_FLAG_USING_MSIX)
+		printk(KERN_ERR PFX "%s DEBUG: PBA[%08x]\n", dev->name,
+			REG_RD(bp, BNX2_PCI_GRC_WINDOW3_BASE));
 }
 
 static void
 bnx2_tx_timeout(struct net_device *dev)
 {
 	struct bnx2 *bp = netdev_priv(dev);
+
+	bnx2_dump_state(bp);
 
 	/* This allows the netif to be shutdown gracefully before resetting */
 	schedule_work(&bp->reset_task);
@@ -7697,6 +7732,93 @@ bnx2_get_pci_speed(struct bnx2 *bp)
 
 }
 
+static void __devinit
+bnx2_read_vpd_fw_ver(struct bnx2 *bp)
+{
+	int rc, i, v0_len = 0;
+	u8 *data;
+	u8 *v0_str = NULL;
+	bool mn_match = false;
+
+#define BNX2_MAX_VER_SLEN	30
+
+	data = kmalloc(256, GFP_KERNEL);
+	if (!data)
+		return;
+
+	rc = bnx2_nvram_read(bp, 0x300, data + 128, 128);
+	if (rc)
+		goto vpd_done;
+
+	for (i = 0; i < 128; i += 4) {
+		data[i] = data[i + 131];
+		data[i + 1] = data[i + 130];
+		data[i + 2] = data[i + 129];
+		data[i + 3] = data[i + 128];
+	}
+
+	for (i = 0; i < 128; ) {
+		unsigned char val = data[i];
+		unsigned int block_end;
+
+		if (val == 0x82 || val == 0x91) {
+			i = (i + 3 + (data[i + 1] + (data[i + 2] << 8)));
+			continue;
+		}
+
+		if (val != 0x90)
+			goto vpd_done;
+
+		block_end = (i + 3 + (data[i + 1] + (data[i + 2] << 8)));
+		i += 3;
+
+		if (block_end > 128)
+			goto vpd_done;
+
+		while (i < (block_end - 2)) {
+			if (data[i] == 'M' && data[i + 1] == 'N') {
+				int mn_len = data[i + 2];
+
+				if (mn_len != 4)
+					goto vpd_done;
+
+				i += 3;
+				if (memcmp(&data[i], "1028", 4))
+					goto vpd_done;
+				mn_match = true;
+				i += 4;
+
+			} else if (data[i] == 'V' && data[i + 1] == '0') {
+				v0_len = data[i + 2];
+
+				i += 3;
+				if (v0_len > BNX2_MAX_VER_SLEN ||
+				    (v0_len + i) > 128)
+					goto vpd_done;
+
+				if (v0_len > BNX2_MAX_VER_SLEN)
+					v0_len = BNX2_MAX_VER_SLEN;
+
+				v0_str = &data[i];
+				i += data[i + 2];
+
+			} else {
+				i += 3 + data[i + 2];
+			}
+
+			if (mn_match && v0_str) {
+				memcpy(bp->fw_version, v0_str, v0_len);
+				bp->fw_version[v0_len] = ' ';
+				goto vpd_done;
+			}
+		}
+		goto vpd_done;
+	}
+
+vpd_done:
+	kfree(data);
+}
+
 static int __devinit
 bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 {
@@ -7870,10 +7992,18 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 		goto err_out_unmap;
 	}
 
+	bnx2_read_vpd_fw_ver(bp);
+
+	j = strlen(bp->fw_version);
 	reg = bnx2_shmem_rd(bp, BNX2_DEV_INFO_BC_REV);
-	for (i = 0, j = 0; i < 3; i++) {
+	for (i = 0; i < 3 && j < 24; i++) {
 		u8 num, k, skip0;
 
+		if (i == 0) {
+			bp->fw_version[j++] = 'b';
+			bp->fw_version[j++] = 'c';
+			bp->fw_version[j++] = ' ';
+		}
 		num = (u8) (reg >> (24 - (i * 8)));
 		for (k = 100, skip0 = 1; k >= 1; num %= k, k /= 10) {
 			if (num >= k || !skip0 || k == 1) {
@@ -7904,8 +8034,9 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
 	    reg != BNX2_CONDITION_MFW_RUN_NONE) {
 		u32 addr = bnx2_shmem_rd(bp, BNX2_MFW_VER_PTR);
 
-		bp->fw_version[j++] = ' ';
-		for (i = 0; i < 3; i++) {
+		if (j < 32)
+			bp->fw_version[j++] = ' ';
+		for (i = 0; i < 3 && j < 28; i++) {
 			reg = bnx2_reg_rd_ind(bp, addr + i * 4);
 			reg = swab32(reg);
 			memcpy(&bp->fw_version[j], &reg, 4);
