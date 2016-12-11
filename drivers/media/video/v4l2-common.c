@@ -433,6 +433,8 @@ const char *v4l2_ctrl_get_name(u32 id)
 	case V4L2_CID_ROTATE:	                return "Rotate";
 	case V4L2_CID_BG_COLOR:                 return "Background color";
 	case V4L2_CID_COLORFX:			return "Color Effects";
+	case V4L2_CID_ROTATE:			return "Rotate";
+	case V4L2_CID_BG_COLOR:			return "Background color";
 
 	/* MPEG controls */
 	case V4L2_CID_MPEG_CLASS: 		return "MPEG Encoder Controls";
@@ -593,7 +595,7 @@ int v4l2_ctrl_query_fill(struct v4l2_queryctrl *qctrl, s32 min, s32 max, s32 ste
 		qctrl->type = V4L2_CTRL_TYPE_INTEGER;
 		step = 1;
 		min = 0;
-		/* Max is calculated as RGB888 that is 2^12*/
+		/* Max is calculated as RGB888 that is 2^24 */
 		max = 0xFFFFFF;
 		break;
 	default:

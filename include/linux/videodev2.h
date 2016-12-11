@@ -919,6 +919,8 @@ enum v4l2_colorfx {
 #define V4L2_CID_AUTOBRIGHTNESS			(V4L2_CID_BASE+34)
 #define V4L2_CID_BAND_STOP_FILTER		(V4L2_CID_BASE+35)
 
+#define V4L2_CID_ROTATE				(V4L2_CID_BASE+34)
+#define V4L2_CID_BG_COLOR			(V4L2_CID_BASE+35)
 /* last CID + 1 */
 #define V4L2_CID_LASTP1                         (V4L2_CID_BASE+36)
 
