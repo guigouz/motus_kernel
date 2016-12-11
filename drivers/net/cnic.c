@@ -667,14 +667,14 @@ static void cnic_free_dma(struct cnic_dev *dev, struct cnic_dma *dma)
 
 	for (i = 0; i < dma->num_pages; i++) {
 		if (dma->pg_arr[i]) {
-			pci_free_consistent(dev->pcidev, BCM_PAGE_SIZE,
-					    dma->pg_arr[i], dma->pg_map_arr[i]);
+			dma_free_coherent(&dev->pcidev->dev, BCM_PAGE_SIZE,
+					  dma->pg_arr[i], dma->pg_map_arr[i]);
 			dma->pg_arr[i] = NULL;
 		}
 	}
 	if (dma->pgtbl) {
-		pci_free_consistent(dev->pcidev, dma->pgtbl_size,
-				    dma->pgtbl, dma->pgtbl_map);
+		dma_free_coherent(&dev->pcidev->dev, dma->pgtbl_size,
+				  dma->pgtbl, dma->pgtbl_map);
 		dma->pgtbl = NULL;
 	}
 	kfree(dma->pg_arr);
@@ -725,9 +725,10 @@ static int cnic_alloc_dma(struct cnic_dev *dev, struct cnic_dma *dma,
 	dma->num_pages = pages;
 
 	for (i = 0; i < pages; i++) {
-		dma->pg_arr[i] = pci_alloc_consistent(dev->pcidev,
-						      BCM_PAGE_SIZE,
-						      &dma->pg_map_arr[i]);
+		dma->pg_arr[i] = dma_alloc_coherent(&dev->pcidev->dev,
+						    BCM_PAGE_SIZE,
+						    &dma->pg_map_arr[i],
+						    GFP_ATOMIC);
 		if (dma->pg_arr[i] == NULL)
 			goto error;
 	}
@@ -736,8 +737,8 @@ static int cnic_alloc_dma(struct cnic_dev *dev, struct cnic_dma *dma,
 
 	dma->pgtbl_size = ((pages * 8) + BCM_PAGE_SIZE - 1) &
 			  ~(BCM_PAGE_SIZE - 1);
-	dma->pgtbl = pci_alloc_consistent(dev->pcidev, dma->pgtbl_size,
-					  &dma->pgtbl_map);
+	dma->pgtbl = dma_alloc_coherent(&dev->pcidev->dev, dma->pgtbl_size,
+					&dma->pgtbl_map, GFP_ATOMIC);
 	if (dma->pgtbl == NULL)
 		goto error;
 
@@ -757,9 +758,9 @@ static void cnic_free_context(struct cnic_dev *dev)
 
 	for (i = 0; i < cp->ctx_blks; i++) {
 		if (cp->ctx_arr[i].ctx) {
-			pci_free_consistent(dev->pcidev, cp->ctx_blk_size,
-					    cp->ctx_arr[i].ctx,
-					    cp->ctx_arr[i].mapping);
+			dma_free_coherent(&dev->pcidev->dev, cp->ctx_blk_size,
+					  cp->ctx_arr[i].ctx,
+					  cp->ctx_arr[i].mapping);
 			cp->ctx_arr[i].ctx = NULL;
 		}
 	}
@@ -781,14 +782,14 @@ static void cnic_free_resc(struct cnic_dev *dev)
 	}
 
 	if (cp->l2_buf) {
-		pci_free_consistent(dev->pcidev, cp->l2_buf_size,
-				    cp->l2_buf, cp->l2_buf_map);
+		dma_free_coherent(&dev->pcidev->dev, cp->l2_buf_size,
+				  cp->l2_buf, cp->l2_buf_map);
 		cp->l2_buf = NULL;
 	}
 
 	if (cp->l2_ring) {
-		pci_free_consistent(dev->pcidev, cp->l2_ring_size,
-				    cp->l2_ring, cp->l2_ring_map);
+		dma_free_coherent(&dev->pcidev->dev, cp->l2_ring_size,
+				  cp->l2_ring, cp->l2_ring_map);
 		cp->l2_ring = NULL;
 	}
 
@@ -849,8 +850,10 @@ static int cnic_alloc_context(struct cnic_dev *dev)
 
 		for (i = 0; i < cp->ctx_blks; i++) {
 			cp->ctx_arr[i].ctx =
-				pci_alloc_consistent(dev->pcidev, BCM_PAGE_SIZE,
-						     &cp->ctx_arr[i].mapping);
+				dma_alloc_coherent(&dev->pcidev->dev,
+						   BCM_PAGE_SIZE,
+						   &cp->ctx_arr[i].mapping,
+						   GFP_KERNEL);
 			if (cp->ctx_arr[i].ctx == NULL)
 				return -ENOMEM;
 		}
@@ -863,15 +866,17 @@ static int cnic_alloc_l2_rings(struct cnic_dev *dev, int pages)
 	struct cnic_local *cp = dev->cnic_priv;
 
 	cp->l2_ring_size = pages * BCM_PAGE_SIZE;
-	cp->l2_ring = pci_alloc_consistent(dev->pcidev, cp->l2_ring_size,
-					   &cp->l2_ring_map);
+	cp->l2_ring = dma_alloc_coherent(&dev->pcidev->dev, cp->l2_ring_size,
+					 &cp->l2_ring_map,
+					 GFP_KERNEL | __GFP_COMP);
 	if (!cp->l2_ring)
 		return -ENOMEM;
 
 	cp->l2_buf_size = (cp->l2_rx_ring_size + 1) * cp->l2_single_buf_size;
 	cp->l2_buf_size = PAGE_ALIGN(cp->l2_buf_size);
-	cp->l2_buf = pci_alloc_consistent(dev->pcidev, cp->l2_buf_size,
-					   &cp->l2_buf_map);
+	cp->l2_buf = dma_alloc_coherent(&dev->pcidev->dev, cp->l2_buf_size,
+					&cp->l2_buf_map,
+					GFP_KERNEL | __GFP_COMP);
 	if (!cp->l2_buf)
 		return -ENOMEM;
 
@@ -1006,8 +1011,9 @@ static int cnic_alloc_bnx2x_context(struct cnic_dev *dev)
 
 	for (i = 0; i < blks; i++) {
 		cp->ctx_arr[i].ctx =
-			pci_alloc_consistent(dev->pcidev, cp->ctx_blk_size,
-					     &cp->ctx_arr[i].mapping);
+			dma_alloc_coherent(&dev->pcidev->dev, cp->ctx_blk_size,
+					   &cp->ctx_arr[i].mapping,
+					   GFP_KERNEL);
 		if (cp->ctx_arr[i].ctx == NULL)
 			return -ENOMEM;
 
@@ -1500,9 +1506,9 @@ static int cnic_setup_bnx2x_ctx(struct cnic_dev *dev, struct kwqe *wqes[],
 	ictx->timers_context.flags |= ISCSI_TIMERS_BLOCK_CONTEXT_CONN_VALID_FLG;
 
 	ictx->ustorm_st_context.ring.rq.pbl_base.lo =
-		req2->rq_page_table_addr_lo & 0xffffffff;
+		req2->rq_page_table_addr_lo;
 	ictx->ustorm_st_context.ring.rq.pbl_base.hi =
-		(u64) req2->rq_page_table_addr_hi >> 32;
+		req2->rq_page_table_addr_hi;
 	ictx->ustorm_st_context.ring.rq.curr_pbe.lo = req3->qp_first_pte[0].hi;
 	ictx->ustorm_st_context.ring.rq.curr_pbe.hi = req3->qp_first_pte[0].lo;
 	ictx->ustorm_st_context.ring.r2tq.pbl_base.lo =
@@ -3997,14 +4003,18 @@ static void cnic_get_bnx2x_iscsi_info(struct cnic_dev *dev)
 	if (base < 0xa0000 || base >= 0xc0000)
 		return;
 
-	val = BNX2X_SHMEM_ADDR(base,
+	addr = BNX2X_SHMEM_ADDR(base,
 		dev_info.port_hw_config[port].iscsi_mac_upper);
+
+	val = CNIC_RD(dev, addr);
 
 	dev->mac_addr[0] = (u8) (val >> 8);
 	dev->mac_addr[1] = (u8) val;
 
-	val = BNX2X_SHMEM_ADDR(base,
+	addr = BNX2X_SHMEM_ADDR(base,
 		dev_info.port_hw_config[port].iscsi_mac_lower);
+
+	val = CNIC_RD(dev, addr);
 
 	dev->mac_addr[2] = (u8) (val >> 24);
 	dev->mac_addr[3] = (u8) (val >> 16);
@@ -4131,22 +4141,20 @@ static void cnic_init_rings(struct cnic_dev *dev)
 		cnic_init_bnx2_rx_ring(dev);
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
 		struct cnic_local *cp = dev->cnic_priv;
-		struct cnic_eth_dev *ethdev = cp->ethdev;
 		u32 cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
 		union l5cm_specific_data l5_data;
 		struct ustorm_eth_rx_producers rx_prods = {0};
-		void __iomem *doorbell;
-		int i;
+		u32 off, i;
 
 		rx_prods.bd_prod = 0;
 		rx_prods.cqe_prod = BNX2X_MAX_RCQ_DESC_CNT;
 		barrier();
 
-		doorbell = ethdev->io_base2 + BAR_USTRORM_INTMEM +
+		off = BAR_USTRORM_INTMEM +
 			USTORM_RX_PRODS_OFFSET(CNIC_PORT(cp), cli);
 
 		for (i = 0; i < sizeof(struct ustorm_eth_rx_producers) / 4; i++)
-			writel(((u32 *) &rx_prods)[i], doorbell + i * 4);
+			CNIC_WR(dev, off + i * 4, ((u32 *) &rx_prods)[i]);
 
 		cnic_init_bnx2x_tx_ring(dev);
 		cnic_init_bnx2x_rx_ring(dev);
@@ -4166,8 +4174,15 @@ static void cnic_shutdown_rings(struct cnic_dev *dev)
 	} else if (test_bit(CNIC_F_BNX2X_CLASS, &dev->flags)) {
 		struct cnic_local *cp = dev->cnic_priv;
 		u32 cli = BNX2X_ISCSI_CL_ID(CNIC_E1HVN(cp));
+		union l5cm_specific_data l5_data;
 
 		cnic_ring_ctl(dev, BNX2X_ISCSI_L2_CID, cli, 0);
+
+		l5_data.phy_address.lo = cli;
+		l5_data.phy_address.hi = 0;
+		cnic_submit_kwqe_16(dev, RAMROD_CMD_ID_ETH_HALT,
+			BNX2X_ISCSI_L2_CID, ETH_CONNECTION_TYPE, &l5_data);
+		msleep(10);
 	}
 }
 
