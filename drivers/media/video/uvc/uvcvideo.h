@@ -75,6 +75,7 @@ struct uvc_xu_control {
 
 #define UVC_TERM_INPUT			0x0000
 #define UVC_TERM_OUTPUT			0x8000
+#define UVC_TERM_DIRECTION(term)	((term)->type & 0x8000)
 
 #define UVC_ENTITY_TYPE(entity)		((entity)->type & 0x7fff)
 #define UVC_ENTITY_IS_UNIT(entity)	(((entity)->type & 0xff00) == 0)
@@ -297,11 +298,9 @@ struct uvc_entity {
 		} media;
 
 		struct {
-			__u8  bSourceID;
 		} output;
 
 		struct {
-			__u8  bSourceID;
 			__u16 wMaxMultiplier;
 			__u8  bControlSize;
 			__u8  *bmControls;
@@ -309,20 +308,19 @@ struct uvc_entity {
 		} processing;
 
 		struct {
-			__u8  bNrInPins;
-			__u8  *baSourceID;
 		} selector;
 
 		struct {
 			__u8  guidExtensionCode[16];
 			__u8  bNumControls;
-			__u8  bNrInPins;
-			__u8  *baSourceID;
 			__u8  bControlSize;
 			__u8  *bmControls;
 			__u8  *bmControlsType;
 		} extension;
 	};
+
+	__u8 bNrInPins;
+	__u8 *baSourceID;
 
 	unsigned int ncontrols;
 	struct uvc_control *controls;
@@ -413,11 +411,9 @@ struct uvc_video_chain {
 	struct uvc_device *dev;
 	struct list_head list;
 
-	struct list_head iterms;		/* Input terminals */
-	struct list_head oterms;		/* Output terminals */
+	struct list_head entities;		/* All entities */
 	struct uvc_entity *processing;		/* Processing unit */
 	struct uvc_entity *selector;		/* Selector unit */
-	struct list_head extensions;		/* Extension units */
 
 	struct mutex ctrl_mutex;
 };

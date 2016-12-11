@@ -259,29 +259,9 @@ static struct uvc_entity *uvc_entity_by_reference(struct uvc_device *dev,
 		entity = list_entry(&dev->entities, struct uvc_entity, list);
 
 	list_for_each_entry_continue(entity, &dev->entities, list) {
-		switch (UVC_ENTITY_TYPE(entity)) {
-		case UVC_TT_STREAMING:
-			if (entity->output.bSourceID == id)
+		for (i = 0; i < entity->bNrInPins; ++i)
+			if (entity->baSourceID[i] == id)
 				return entity;
-			break;
-
-		case UVC_VC_PROCESSING_UNIT:
-			if (entity->processing.bSourceID == id)
-				return entity;
-			break;
-
-		case UVC_VC_SELECTOR_UNIT:
-			for (i = 0; i < entity->selector.bNrInPins; ++i)
-				if (entity->selector.baSourceID[i] == id)
-					return entity;
-			break;
-
-		case UVC_VC_EXTENSION_UNIT:
-			for (i = 0; i < entity->extension.bNrInPins; ++i)
-				if (entity->extension.baSourceID[i] == id)
-					return entity;
-			break;
-		}
 	}
 
 	return NULL;
@@ -795,6 +775,28 @@ error:
 	return ret;
 }
 
+static struct uvc_entity *uvc_alloc_entity(u16 type, u8 id,
+		unsigned int num_pads, unsigned int extra_size)
+{
+	struct uvc_entity *entity;
+	unsigned int num_inputs;
+	unsigned int size;
+
+	num_inputs = (type & UVC_TERM_OUTPUT) ? num_pads : num_pads - 1;
+	size = sizeof(*entity) + extra_size + num_inputs;
+	entity = kzalloc(size, GFP_KERNEL);
+	if (entity == NULL)
+		return NULL;
+
+	entity->id = id;
+	entity->type = type;
+
+	entity->bNrInPins = num_inputs;
+	entity->baSourceID = ((__u8 *)entity) + sizeof(*entity) + extra_size;
+
+	return entity;
+}
+
 /* Parse vendor-specific extensions. */
 static int uvc_parse_vendor_control(struct uvc_device *dev,
 	const unsigned char *buffer, int buflen)
@@ -846,21 +848,18 @@ static int uvc_parse_vendor_control(struct uvc_device *dev,
 			break;
 		}
 
-		unit = kzalloc(sizeof *unit + p + 2*n, GFP_KERNEL);
+		unit = uvc_alloc_entity(UVC_VC_EXTENSION_UNIT, buffer[3],
+					p + 1, 2*n);
 		if (unit == NULL)
 			return -ENOMEM;
 
-		unit->id = buffer[3];
-		unit->type = UVC_VC_EXTENSION_UNIT;
 		memcpy(unit->extension.guidExtensionCode, &buffer[4], 16);
 		unit->extension.bNumControls = buffer[20];
-		unit->extension.bNrInPins = get_unaligned_le16(&buffer[21]);
-		unit->extension.baSourceID = (__u8 *)unit + sizeof *unit;
-		memcpy(unit->extension.baSourceID, &buffer[22], p);
+		memcpy(unit->baSourceID, &buffer[22], p);
 		unit->extension.bControlSize = buffer[22+p];
-		unit->extension.bmControls = (__u8 *)unit + sizeof *unit + p;
-		unit->extension.bmControlsType = (__u8 *)unit + sizeof *unit
-					       + p + n;
+		unit->extension.bmControls = (__u8 *)unit + sizeof(*unit);
+		unit->extension.bmControlsType = (__u8 *)unit + sizeof(*unit)
+					       + n;
 		memcpy(unit->extension.bmControls, &buffer[23+p], 2*n);
 
 		if (buffer[24+p+2*n] != 0)
@@ -957,12 +956,10 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 			return -EINVAL;
 		}
 
-		term = kzalloc(sizeof *term + n + p, GFP_KERNEL);
+		term = uvc_alloc_entity(type | UVC_TERM_INPUT, buffer[3],
+					1, n + p);
 		if (term == NULL)
 			return -ENOMEM;
-
-		term->id = buffer[3];
-		term->type = type | UVC_TERM_INPUT;
 
 		if (UVC_ENTITY_TYPE(term) == UVC_ITT_CAMERA) {
 			term->camera.bControlSize = n;
@@ -1018,13 +1015,12 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 			return 0;
 		}
 
-		term = kzalloc(sizeof *term, GFP_KERNEL);
+		term = uvc_alloc_entity(type | UVC_TERM_OUTPUT, buffer[3],
+					1, 0);
 		if (term == NULL)
 			return -ENOMEM;
 
-		term->id = buffer[3];
-		term->type = type | UVC_TERM_OUTPUT;
-		term->output.bSourceID = buffer[7];
+		memcpy(term->baSourceID, &buffer[7], 1);
 
 		if (buffer[8] != 0)
 			usb_string(udev, buffer[8], term->name,
@@ -1045,15 +1041,11 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 			return -EINVAL;
 		}
 
-		unit = kzalloc(sizeof *unit + p, GFP_KERNEL);
+		unit = uvc_alloc_entity(buffer[2], buffer[3], p + 1, 0);
 		if (unit == NULL)
 			return -ENOMEM;
 
-		unit->id = buffer[3];
-		unit->type = buffer[2];
-		unit->selector.bNrInPins = buffer[4];
-		unit->selector.baSourceID = (__u8 *)unit + sizeof *unit;
-		memcpy(unit->selector.baSourceID, &buffer[5], p);
+		memcpy(unit->baSourceID, &buffer[5], p);
 
 		if (buffer[5+p] != 0)
 			usb_string(udev, buffer[5+p], unit->name,
@@ -1075,13 +1067,11 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 			return -EINVAL;
 		}
 
-		unit = kzalloc(sizeof *unit + n, GFP_KERNEL);
+		unit = uvc_alloc_entity(buffer[2], buffer[3], 2, n);
 		if (unit == NULL)
 			return -ENOMEM;
 
-		unit->id = buffer[3];
-		unit->type = buffer[2];
-		unit->processing.bSourceID = buffer[4];
+		memcpy(unit->baSourceID, &buffer[4], 1);
 		unit->processing.wMaxMultiplier =
 			get_unaligned_le16(&buffer[5]);
 		unit->processing.bControlSize = buffer[7];
@@ -1110,19 +1100,15 @@ static int uvc_parse_standard_control(struct uvc_device *dev,
 			return -EINVAL;
 		}
 
-		unit = kzalloc(sizeof *unit + p + n, GFP_KERNEL);
+		unit = uvc_alloc_entity(buffer[2], buffer[3], p + 1, n);
 		if (unit == NULL)
 			return -ENOMEM;
 
-		unit->id = buffer[3];
-		unit->type = buffer[2];
 		memcpy(unit->extension.guidExtensionCode, &buffer[4], 16);
 		unit->extension.bNumControls = buffer[20];
-		unit->extension.bNrInPins = get_unaligned_le16(&buffer[21]);
-		unit->extension.baSourceID = (__u8 *)unit + sizeof *unit;
-		memcpy(unit->extension.baSourceID, &buffer[22], p);
+		memcpy(unit->baSourceID, &buffer[22], p);
 		unit->extension.bControlSize = buffer[22+p];
-		unit->extension.bmControls = (__u8 *)unit + sizeof *unit + p;
+		unit->extension.bmControls = (__u8 *)unit + sizeof *unit;
 		memcpy(unit->extension.bmControls, &buffer[23+p], n);
 
 		if (buffer[23+p+n] != 0)
@@ -1228,13 +1214,12 @@ static int uvc_scan_chain_entity(struct uvc_video_chain *chain,
 		if (uvc_trace_param & UVC_TRACE_PROBE)
 			printk(" <- XU %d", entity->id);
 
-		if (entity->extension.bNrInPins != 1) {
+		if (entity->bNrInPins != 1) {
 			uvc_trace(UVC_TRACE_DESCR, "Extension unit %d has more "
 				"than 1 input pin.\n", entity->id);
 			return -1;
 		}
 
-		list_add_tail(&entity->chain, &chain->extensions);
 		break;
 
 	case UVC_VC_PROCESSING_UNIT:
@@ -1255,7 +1240,7 @@ static int uvc_scan_chain_entity(struct uvc_video_chain *chain,
 			printk(" <- SU %d", entity->id);
 
 		/* Single-input selector units are ignored. */
-		if (entity->selector.bNrInPins == 1)
+		if (entity->bNrInPins == 1)
 			break;
 
 		if (chain->selector != NULL) {
@@ -1273,20 +1258,17 @@ static int uvc_scan_chain_entity(struct uvc_video_chain *chain,
 		if (uvc_trace_param & UVC_TRACE_PROBE)
 			printk(" <- IT %d\n", entity->id);
 
-		list_add_tail(&entity->chain, &chain->iterms);
 		break;
 
 	case UVC_TT_STREAMING:
-		if (uvc_trace_param & UVC_TRACE_PROBE)
-			printk(" <- IT %d\n", entity->id);
-
-		if (!UVC_ENTITY_IS_ITERM(entity)) {
-			uvc_trace(UVC_TRACE_DESCR, "Unsupported input "
-				"terminal %u.\n", entity->id);
-			return -1;
+		if (UVC_ENTITY_IS_ITERM(entity)) {
+			if (uvc_trace_param & UVC_TRACE_PROBE)
+				printk(" <- IT %d\n", entity->id);
+		} else {
+			if (uvc_trace_param & UVC_TRACE_PROBE)
+				printk(" OT %d", entity->id);
 		}
 
-		list_add_tail(&entity->chain, &chain->iterms);
 		break;
 
 	default:
@@ -1295,6 +1277,7 @@ static int uvc_scan_chain_entity(struct uvc_video_chain *chain,
 		return -1;
 	}
 
+	list_add_tail(&entity->chain, &chain->entities);
 	return 0;
 }
 
@@ -1318,14 +1301,14 @@ static int uvc_scan_chain_forward(struct uvc_video_chain *chain,
 
 		switch (UVC_ENTITY_TYPE(forward)) {
 		case UVC_VC_EXTENSION_UNIT:
-			if (forward->extension.bNrInPins != 1) {
+			if (forward->bNrInPins != 1) {
 				uvc_trace(UVC_TRACE_DESCR, "Extension unit %d "
 					  "has more than 1 input pin.\n",
 					  entity->id);
 				return -EINVAL;
 			}
 
-			list_add_tail(&forward->chain, &chain->extensions);
+			list_add_tail(&forward->chain, &chain->entities);
 			if (uvc_trace_param & UVC_TRACE_PROBE) {
 				if (!found)
 					printk(" (->");
@@ -1345,7 +1328,7 @@ static int uvc_scan_chain_forward(struct uvc_video_chain *chain,
 				return -EINVAL;
 			}
 
-			list_add_tail(&forward->chain, &chain->oterms);
+			list_add_tail(&forward->chain, &chain->entities);
 			if (uvc_trace_param & UVC_TRACE_PROBE) {
 				if (!found)
 					printk(" (->");
@@ -1363,24 +1346,22 @@ static int uvc_scan_chain_forward(struct uvc_video_chain *chain,
 }
 
 static int uvc_scan_chain_backward(struct uvc_video_chain *chain,
-	struct uvc_entity *entity)
+	struct uvc_entity **_entity)
 {
+	struct uvc_entity *entity = *_entity;
 	struct uvc_entity *term;
-	int id = -1, i;
+	int id = -EINVAL, i;
 
 	switch (UVC_ENTITY_TYPE(entity)) {
 	case UVC_VC_EXTENSION_UNIT:
-		id = entity->extension.baSourceID[0];
-		break;
-
 	case UVC_VC_PROCESSING_UNIT:
-		id = entity->processing.bSourceID;
+		id = entity->baSourceID[0];
 		break;
 
 	case UVC_VC_SELECTOR_UNIT:
 		/* Single-input selector units are ignored. */
-		if (entity->selector.bNrInPins == 1) {
-			id = entity->selector.baSourceID[0];
+		if (entity->bNrInPins == 1) {
+			id = entity->baSourceID[0];
 			break;
 		}
 
@@ -1388,8 +1369,8 @@ static int uvc_scan_chain_backward(struct uvc_video_chain *chain,
 			printk(" <- IT");
 
 		chain->selector = entity;
-		for (i = 0; i < entity->selector.bNrInPins; ++i) {
-			id = entity->selector.baSourceID[i];
+		for (i = 0; i < entity->bNrInPins; ++i) {
+			id = entity->baSourceID[i];
 			term = uvc_entity_by_id(chain->dev, id);
 			if (term == NULL || !UVC_ENTITY_IS_ITERM(term)) {
 				uvc_trace(UVC_TRACE_DESCR, "Selector unit %d "
@@ -1401,7 +1382,7 @@ static int uvc_scan_chain_backward(struct uvc_video_chain *chain,
 			if (uvc_trace_param & UVC_TRACE_PROBE)
 				printk(" %d", term->id);
 
-			list_add_tail(&term->chain, &chain->iterms);
+			list_add_tail(&term->chain, &chain->entities);
 			uvc_scan_chain_forward(chain, term, entity);
 		}
 
@@ -1410,34 +1391,49 @@ static int uvc_scan_chain_backward(struct uvc_video_chain *chain,
 
 		id = 0;
 		break;
+
+	case UVC_ITT_VENDOR_SPECIFIC:
+	case UVC_ITT_CAMERA:
+	case UVC_ITT_MEDIA_TRANSPORT_INPUT:
+	case UVC_OTT_VENDOR_SPECIFIC:
+	case UVC_OTT_DISPLAY:
+	case UVC_OTT_MEDIA_TRANSPORT_OUTPUT:
+	case UVC_TT_STREAMING:
+		id = UVC_ENTITY_IS_OTERM(entity) ? entity->baSourceID[0] : 0;
+		break;
 	}
 
-	return id;
+	if (id <= 0) {
+		*_entity = NULL;
+		return id;
+	}
+
+	entity = uvc_entity_by_id(chain->dev, id);
+	if (entity == NULL) {
+		uvc_trace(UVC_TRACE_DESCR, "Found reference to "
+			"unknown entity %d.\n", id);
+		return -EINVAL;
+	}
+
+	*_entity = entity;
+	return 0;
 }
 
 static int uvc_scan_chain(struct uvc_video_chain *chain,
-			  struct uvc_entity *oterm)
+			  struct uvc_entity *term)
 {
 	struct uvc_entity *entity, *prev;
-	int id;
 
-	entity = oterm;
-	list_add_tail(&entity->chain, &chain->oterms);
-	uvc_trace(UVC_TRACE_PROBE, "Scanning UVC chain: OT %d", entity->id);
+	uvc_trace(UVC_TRACE_PROBE, "Scanning UVC chain:");
 
-	id = entity->output.bSourceID;
-	while (id != 0) {
-		prev = entity;
-		entity = uvc_entity_by_id(chain->dev, id);
-		if (entity == NULL) {
-			uvc_trace(UVC_TRACE_DESCR, "Found reference to "
-				"unknown entity %d.\n", id);
-			return -EINVAL;
-		}
+	entity = term;
+	prev = NULL;
 
+	while (entity != NULL) {
+		/* Entity must not be part of an existing chain */
 		if (entity->chain.next || entity->chain.prev) {
 			uvc_trace(UVC_TRACE_DESCR, "Found reference to "
-				"entity %d already in chain.\n", id);
+				"entity %d already in chain.\n", entity->id);
 			return -EINVAL;
 		}
 
@@ -1449,34 +1445,34 @@ static int uvc_scan_chain(struct uvc_video_chain *chain,
 		if (uvc_scan_chain_forward(chain, entity, prev) < 0)
 			return -EINVAL;
 
-		/* Stop when a terminal is found. */
-		if (UVC_ENTITY_IS_TERM(entity))
-			break;
-
 		/* Backward scan */
-		id = uvc_scan_chain_backward(chain, entity);
-		if (id < 0)
-			return id;
+		prev = entity;
+		if (uvc_scan_chain_backward(chain, &entity) < 0)
+			return -EINVAL;
 	}
 
 	return 0;
 }
 
-static unsigned int uvc_print_terms(struct list_head *terms, char *buffer)
+static unsigned int uvc_print_terms(struct list_head *terms, u16 dir,
+		char *buffer)
 {
 	struct uvc_entity *term;
 	unsigned int nterms = 0;
 	char *p = buffer;
 
 	list_for_each_entry(term, terms, chain) {
-		p += sprintf(p, "%u", term->id);
-		if (term->chain.next != terms) {
+		if (!UVC_ENTITY_IS_TERM(term) ||
+		    UVC_TERM_DIRECTION(term) != dir)
+			continue;
+
+		if (nterms)
 			p += sprintf(p, ",");
-			if (++nterms >= 4) {
-				p += sprintf(p, "...");
-				break;
-			}
+		if (++nterms >= 4) {
+			p += sprintf(p, "...");
+			break;
 		}
+		p += sprintf(p, "%u", term->id);
 	}
 
 	return p - buffer;
@@ -1487,9 +1483,9 @@ static const char *uvc_print_chain(struct uvc_video_chain *chain)
 	static char buffer[43];
 	char *p = buffer;
 
-	p += uvc_print_terms(&chain->iterms, p);
+	p += uvc_print_terms(&chain->entities, UVC_TERM_INPUT, p);
 	p += sprintf(p, " -> ");
-	uvc_print_terms(&chain->oterms, p);
+	uvc_print_terms(&chain->entities, UVC_TERM_OUTPUT, p);
 
 	return buffer;
 }
@@ -1520,9 +1516,7 @@ static int uvc_scan_device(struct uvc_device *dev)
 		if (chain == NULL)
 			return -ENOMEM;
 
-		INIT_LIST_HEAD(&chain->iterms);
-		INIT_LIST_HEAD(&chain->oterms);
-		INIT_LIST_HEAD(&chain->extensions);
+		INIT_LIST_HEAD(&chain->entities);
 		mutex_init(&chain->ctrl_mutex);
 		chain->dev = dev;
 
@@ -1695,13 +1689,13 @@ static int uvc_register_video(struct uvc_device *dev,
  * Register all video devices in all chains.
  */
 static int uvc_register_terms(struct uvc_device *dev,
-	struct uvc_video_chain *chain, struct list_head *terms)
+	struct uvc_video_chain *chain)
 {
 	struct uvc_streaming *stream;
 	struct uvc_entity *term;
 	int ret;
 
-	list_for_each_entry(term, terms, chain) {
+	list_for_each_entry(term, &chain->entities, chain) {
 		if (UVC_ENTITY_TYPE(term) != UVC_TT_STREAMING)
 			continue;
 
@@ -1727,11 +1721,7 @@ static int uvc_register_chains(struct uvc_device *dev)
 	int ret;
 
 	list_for_each_entry(chain, &dev->chains, list) {
-		ret = uvc_register_terms(dev, chain, &chain->iterms);
-		if (ret < 0)
-			return ret;
-
-		ret = uvc_register_terms(dev, chain, &chain->oterms);
+		ret = uvc_register_terms(dev, chain);
 		if (ret < 0)
 			return ret;
 	}
@@ -1922,6 +1912,15 @@ static int uvc_reset_resume(struct usb_interface *intf)
  * though they are compliant.
  */
 static struct usb_device_id uvc_ids[] = {
+	/* Genius eFace 2025 */
+	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
+				| USB_DEVICE_ID_MATCH_INT_INFO,
+	  .idVendor		= 0x0458,
+	  .idProduct		= 0x706e,
+	  .bInterfaceClass	= USB_CLASS_VIDEO,
+	  .bInterfaceSubClass	= 1,
+	  .bInterfaceProtocol	= 0,
+	  .driver_info		= UVC_QUIRK_PROBE_MINMAX },
 	/* Microsoft Lifecam NX-6000 */
 	{ .match_flags		= USB_DEVICE_ID_MATCH_DEVICE
 				| USB_DEVICE_ID_MATCH_INT_INFO,

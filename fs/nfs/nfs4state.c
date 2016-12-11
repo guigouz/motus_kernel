@@ -1032,11 +1032,22 @@ static void nfs4_state_start_reclaim_reboot(struct nfs_client *clp)
 	nfs4_state_mark_reclaim_helper(clp, nfs4_state_mark_reclaim_reboot);
 }
 
+static void nfs4_reclaim_complete(struct nfs_client *clp,
+				 const struct nfs4_state_recovery_ops *ops)
+{
+	/* Notify the server we're done reclaiming our state */
+	if (ops->reclaim_complete)
+		(void)ops->reclaim_complete(clp);
+}
+
 static void nfs4_state_end_reclaim_reboot(struct nfs_client *clp)
 {
 	struct nfs4_state_owner *sp;
 	struct rb_node *pos;
 	struct nfs4_state *state;
+
+	nfs4_reclaim_complete(clp,
+		nfs4_reboot_recovery_ops[clp->cl_minorversion]);
 
 	if (!test_and_clear_bit(NFS4CLNT_RECLAIM_REBOOT, &clp->cl_state))
 		return;

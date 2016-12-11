@@ -110,6 +110,7 @@
 #define EM2820_BOARD_SILVERCREST_WEBCAM           71
 #define EM2861_BOARD_GADMEI_UTV330PLUS           72
 #define EM2870_BOARD_REDDO_DVB_C_USB_BOX          73
+#define EM2800_BOARD_VC211A			  74
 
 /* Limits minimum and default number of buffers */
 #define EM28XX_MIN_BUF 4
@@ -796,7 +797,7 @@ static inline unsigned int norm_maxw(struct em28xx *dev)
 	if (dev->board.is_webcam)
 		return dev->sensor_xres;
 
-	if (dev->board.max_range_640_480)
+	if (dev->board.max_range_640_480 || dev->board.is_em2800)
 		return 640;
 
 	return 720;

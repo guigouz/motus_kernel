@@ -94,8 +94,7 @@ static void cx23885_input_process_raw_rc5(struct cx23885_dev *dev)
 	    RC5_START(ir_input->last_rc5) == 0) {
 		/* This keypress is differnet: not an auto repeat */
 		ir_input_nokey(ir_input->dev, &ir_input->ir);
-		ir_input_keydown(ir_input->dev, &ir_input->ir,
-				 command, ir_input->code);
+		ir_input_keydown(ir_input->dev, &ir_input->ir, command);
 	}
 	ir_input->last_rc5 = rc5;
 
@@ -378,7 +377,10 @@ int cx23885_input_init(struct cx23885_dev *dev)
 		 cx23885_boards[dev->board].name);
 	snprintf(ir->phys, sizeof(ir->phys), "pci-%s/ir0", pci_name(dev->pci));
 
-	ir_input_init(input_dev, &ir->ir, ir_type, ir_codes);
+	ret = ir_input_init(input_dev, &ir->ir, ir_type, ir_codes);
+	if (ret < 0)
+		goto err_out_free;
+
 	input_dev->name = ir->name;
 	input_dev->phys = ir->phys;
 	input_dev->id.bustype = BUS_PCI;
@@ -405,6 +407,7 @@ err_out_stop:
 	cx23885_input_ir_stop(dev);
 	dev->ir_input = NULL;
 err_out_free:
+	ir_input_free(input_dev);
 	input_free_device(input_dev);
 	kfree(ir);
 	return ret;
@@ -417,6 +420,7 @@ void cx23885_input_fini(struct cx23885_dev *dev)
 
 	if (dev->ir_input == NULL)
 		return;
+	ir_input_free(dev->ir_input->dev);
 	input_unregister_device(dev->ir_input->dev);
 	kfree(dev->ir_input);
 	dev->ir_input = NULL;

@@ -102,14 +102,14 @@ static int build_key(struct saa7134_dev *dev)
 		if (data == ir->mask_keycode)
 			ir_input_nokey(ir->dev, &ir->ir);
 		else
-			ir_input_keydown(ir->dev, &ir->ir, data, data);
+			ir_input_keydown(ir->dev, &ir->ir, data);
 		return 0;
 	}
 
 	if (ir->polling) {
 		if ((ir->mask_keydown  &&  (0 != (gpio & ir->mask_keydown))) ||
 		    (ir->mask_keyup    &&  (0 == (gpio & ir->mask_keyup)))) {
-			ir_input_keydown(ir->dev, &ir->ir, data, data);
+			ir_input_keydown(ir->dev, &ir->ir, data);
 		} else {
 			ir_input_nokey(ir->dev, &ir->ir);
 		}
@@ -117,7 +117,7 @@ static int build_key(struct saa7134_dev *dev)
 	else {	/* IRQ driven mode - handle key press and release in one go */
 		if ((ir->mask_keydown  &&  (0 != (gpio & ir->mask_keydown))) ||
 		    (ir->mask_keyup    &&  (0 == (gpio & ir->mask_keyup)))) {
-			ir_input_keydown(ir->dev, &ir->ir, data, data);
+			ir_input_keydown(ir->dev, &ir->ir, data);
 			ir_input_nokey(ir->dev, &ir->ir);
 		}
 	}
@@ -652,7 +652,10 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	snprintf(ir->phys, sizeof(ir->phys), "pci-%s/ir0",
 		 pci_name(dev->pci));
 
-	ir_input_init(input_dev, &ir->ir, ir_type, ir_codes);
+	err = ir_input_init(input_dev, &ir->ir, ir_type, ir_codes);
+	if (err < 0)
+		goto err_out_free;
+
 	input_dev->name = ir->name;
 	input_dev->phys = ir->phys;
 	input_dev->id.bustype = BUS_PCI;
@@ -683,6 +686,7 @@ int saa7134_input_init1(struct saa7134_dev *dev)
 	saa7134_ir_stop(dev);
 	dev->remote = NULL;
  err_out_free:
+	ir_input_free(input_dev);
 	input_free_device(input_dev);
 	kfree(ir);
 	return err;
@@ -694,6 +698,7 @@ void saa7134_input_fini(struct saa7134_dev *dev)
 		return;
 
 	saa7134_ir_stop(dev);
+	ir_input_free(dev->remote->dev);
 	input_unregister_device(dev->remote->dev);
 	kfree(dev->remote);
 	dev->remote = NULL;
@@ -938,7 +943,7 @@ static void nec_task(unsigned long data)
 		dprintk("scancode = 0x%02x (code = 0x%02x, notcode= 0x%02x)\n",
 			 ir->code, ircode, not_code);
 
-		ir_input_keydown(ir->dev, &ir->ir, ir->code, ir->code);
+		ir_input_keydown(ir->dev, &ir->ir, ir->code);
 	} else
 		dprintk("Repeat last key\n");
 
