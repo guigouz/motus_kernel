@@ -96,8 +96,6 @@ static struct pci_device_id ixgbe_pci_tbl[] = {
 	 board_82599 },
 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_XAUI_LOM),
 	 board_82599 },
-	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_KR),
-	 board_82599 },
 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_SFP),
 	 board_82599 },
 	{PCI_VDEVICE(INTEL, IXGBE_DEV_ID_82599_SFP_EM),
@@ -799,7 +797,6 @@ static bool ixgbe_clean_rx_irq(struct ixgbe_q_vector *q_vector,
 			break;
 		(*work_done)++;
 
-		rmb(); /* read descriptor and rx_buffer_info after status DD */
 		if (rx_ring->flags & IXGBE_RING_RX_PS_ENABLED) {
 			hdr_info = le16_to_cpu(ixgbe_get_hdr_info(rx_desc));
 			len = (hdr_info & IXGBE_RXDADV_HDRBUFLEN_MASK) >>
@@ -2144,10 +2141,6 @@ static void ixgbe_configure_rx(struct ixgbe_adapter *adapter)
 
 	/* Decide whether to use packet split mode or not */
 	adapter->flags |= IXGBE_FLAG_RX_PS_ENABLED;
-
-	/* Disable packet split due to 82599 erratum #45 */
-	if (hw->mac.type == ixgbe_mac_82599EB)
-		adapter->flags &= ~IXGBE_FLAG_RX_PS_ENABLED;
 
 	/* Set the RX buffer length according to the mode */
 	if (adapter->flags & IXGBE_FLAG_RX_PS_ENABLED) {
@@ -3965,8 +3958,10 @@ static int __devinit ixgbe_sw_init(struct ixgbe_adapter *adapter)
 		adapter->flags |= IXGBE_FLAG_FCOE_CAPABLE;
 		adapter->flags &= ~IXGBE_FLAG_FCOE_ENABLED;
 		adapter->ring_feature[RING_F_FCOE].indices = 0;
+#ifdef CONFIG_IXGBE_DCB
 		/* Default traffic class to use for FCoE */
 		adapter->fcoe.tc = IXGBE_FCOE_DEFTC;
+#endif
 #endif /* IXGBE_FCOE */
 	}
 
@@ -4899,7 +4894,7 @@ static int ixgbe_tso(struct ixgbe_adapter *adapter,
 			                                         IPPROTO_TCP,
 			                                         0);
 			adapter->hw_tso_ctxt++;
-		} else if (skb_is_gso_v6(skb)) {
+		} else if (skb_shinfo(skb)->gso_type == SKB_GSO_TCPV6) {
 			ipv6_hdr(skb)->payload_len = 0;
 			tcp_hdr(skb)->check =
 			    ~csum_ipv6_magic(&ipv6_hdr(skb)->saddr,
@@ -5293,12 +5288,17 @@ static u16 ixgbe_select_queue(struct net_device *dev, struct sk_buff *skb)
 	struct ixgbe_adapter *adapter = netdev_priv(dev);
 	int txq = smp_processor_id();
 
-	if (adapter->flags & IXGBE_FLAG_FDIR_HASH_CAPABLE) {
-		while (unlikely(txq >= dev->real_num_tx_queues))
-			txq -= dev->real_num_tx_queues;
+	if (adapter->flags & IXGBE_FLAG_FDIR_HASH_CAPABLE)
+		return txq;
+
+#ifdef IXGBE_FCOE
+	if ((adapter->flags & IXGBE_FLAG_FCOE_ENABLED) &&
+	    (skb->protocol == htons(ETH_P_FCOE))) {
+		txq &= (adapter->ring_feature[RING_F_FCOE].indices - 1);
+		txq += adapter->ring_feature[RING_F_FCOE].mask;
 		return txq;
 	}
-
+#endif
 	if (adapter->flags & IXGBE_FLAG_DCB_ENABLED)
 		return (skb->vlan_tci & IXGBE_TX_FLAGS_VLAN_PRIO_MASK) >> 13;
 
@@ -5313,7 +5313,7 @@ static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb,
 	unsigned int first;
 	unsigned int tx_flags = 0;
 	u8 hdr_len = 0;
-	int r_idx = 0, tso;
+	int tso;
 	int count = 0;
 	unsigned int f;
 
@@ -5321,13 +5321,13 @@ static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb,
 		tx_flags |= vlan_tx_tag_get(skb);
 		if (adapter->flags & IXGBE_FLAG_DCB_ENABLED) {
 			tx_flags &= ~IXGBE_TX_FLAGS_VLAN_PRIO_MASK;
-			tx_flags |= (skb->queue_mapping << 13);
+			tx_flags |= ((skb->queue_mapping & 0x7) << 13);
 		}
 		tx_flags <<= IXGBE_TX_FLAGS_VLAN_SHIFT;
 		tx_flags |= IXGBE_TX_FLAGS_VLAN;
 	} else if (adapter->flags & IXGBE_FLAG_DCB_ENABLED) {
 		if (skb->priority != TC_PRIO_CONTROL) {
-			tx_flags |= (skb->queue_mapping << 13);
+			tx_flags |= ((skb->queue_mapping & 0x7) << 13);
 			tx_flags <<= IXGBE_TX_FLAGS_VLAN_SHIFT;
 			tx_flags |= IXGBE_TX_FLAGS_VLAN;
 		} else {
@@ -5336,17 +5336,18 @@ static netdev_tx_t ixgbe_xmit_frame(struct sk_buff *skb,
 		}
 	}
 
-	r_idx = skb->queue_mapping;
-	tx_ring = &adapter->tx_ring[r_idx];
+	tx_ring = &adapter->tx_ring[skb->queue_mapping];
 
 	if ((adapter->flags & IXGBE_FLAG_FCOE_ENABLED) &&
 	    (skb->protocol == htons(ETH_P_FCOE))) {
 		tx_flags |= IXGBE_TX_FLAGS_FCOE;
 #ifdef IXGBE_FCOE
-		r_idx = smp_processor_id();
-		r_idx &= (adapter->ring_feature[RING_F_FCOE].indices - 1);
-		r_idx += adapter->ring_feature[RING_F_FCOE].mask;
-		tx_ring = &adapter->tx_ring[r_idx];
+#ifdef CONFIG_IXGBE_DCB
+		tx_flags &= ~(IXGBE_TX_FLAGS_VLAN_PRIO_MASK
+			      << IXGBE_TX_FLAGS_VLAN_SHIFT);
+		tx_flags |= ((adapter->fcoe.up << 13)
+			      << IXGBE_TX_FLAGS_VLAN_SHIFT);
+#endif
 #endif
 	}
 	/* four things can cause us to need a context descriptor */
