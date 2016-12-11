@@ -142,10 +142,6 @@ cpu_pj4_name:
 
 	.align
 
-cpu_pj4_name:
-	.asciz	"Marvell PJ4 processor"
-	.align
-
 	__INIT
 
 /*

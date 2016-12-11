@@ -41,6 +41,8 @@
 
 #ifdef CONFIG_SMP
 
+#ifndef CONFIG_HAVE_LEGACY_PER_CPU_AREA
+
 /* minimum unit size, also is the maximum supported allocation size */
 #define PCPU_MIN_UNIT_SIZE		PFN_ALIGN(64 << 10)
 
