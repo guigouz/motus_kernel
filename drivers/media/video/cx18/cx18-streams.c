@@ -262,9 +262,11 @@ static int cx18_reg_dev(struct cx18 *cx, int type)
 
 	switch (vfl_type) {
 	case VFL_TYPE_GRABBER:
-		CX18_INFO("Registered device video%d for %s (%d x %d kB)\n",
+		CX18_INFO("Registered device video%d for %s "
+			  "(%d x %d.%02d kB)\n",
 			  num, s->name, cx->stream_buffers[type],
-			  cx->stream_buf_size[type]/1024);
+			  cx->stream_buf_size[type] / 1024,
+			  (cx->stream_buf_size[type] * 100 / 1024) % 100);
 		break;
 
 	case VFL_TYPE_RADIO:
@@ -501,9 +503,39 @@ static void cx18_stream_configure_mdls(struct cx18_stream *s)
 {
 	cx18_unload_queues(s);
 
-	/* For now */
-	s->bufs_per_mdl = 1;
-	s->mdl_size = s->buf_size * s->bufs_per_mdl;
+	switch (s->type) {
+	case CX18_ENC_STREAM_TYPE_YUV:
+		/*
+		 * Height should be a multiple of 32 lines.
+		 * Set the MDL size to the exact size needed for one frame.
+		 * Use enough buffers per MDL to cover the MDL size
+		 */
+		s->mdl_size = 720 * s->cx->params.height * 3 / 2;
+		s->bufs_per_mdl = s->mdl_size / s->buf_size;
+		if (s->mdl_size % s->buf_size)
+			s->bufs_per_mdl++;
+		break;
+	case CX18_ENC_STREAM_TYPE_VBI:
+		s->bufs_per_mdl = 1;
+		if  (cx18_raw_vbi(s->cx)) {
+			s->mdl_size = (s->cx->is_60hz ? 12 : 18)
+						       * 2 * vbi_active_samples;
+		} else {
+			/*
+			 * See comment in cx18_vbi_setup() below about the
+			 * extra lines we capture in sliced VBI mode due to
+			 * the lines on which EAV RP codes toggle.
+			*/
+			s->mdl_size = s->cx->is_60hz
+				   ? (21 - 4 + 1) * 2 * vbi_hblank_samples_60Hz
+				   : (23 - 2 + 1) * 2 * vbi_hblank_samples_50Hz;
+		}
+		break;
+	default:
+		s->bufs_per_mdl = 1;
+		s->mdl_size = s->buf_size * s->bufs_per_mdl;
+		break;
+	}
 
 	cx18_load_queues(s);
 }

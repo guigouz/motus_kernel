@@ -101,7 +101,7 @@ static int sd_setcontrast(struct gspca_dev *gspca_dev, __s32 val);
 static int sd_getcontrast(struct gspca_dev *gspca_dev, __s32 *val);
 
 static struct ctrl sd_ctrls_ov772x[] = {
-    {
+    {							/* 0 */
 	{
 		.id      = V4L2_CID_BRIGHTNESS,
 		.type    = V4L2_CTRL_TYPE_INTEGER,
@@ -115,7 +115,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setbrightness,
 	.get = sd_getbrightness,
     },
-    {
+    {							/* 1 */
 	{
 		.id      = V4L2_CID_CONTRAST,
 		.type    = V4L2_CTRL_TYPE_INTEGER,
@@ -129,7 +129,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setcontrast,
 	.get = sd_getcontrast,
     },
-    {
+    {							/* 2 */
 	{
 	    .id      = V4L2_CID_GAIN,
 	    .type    = V4L2_CTRL_TYPE_INTEGER,
@@ -143,7 +143,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setgain,
 	.get = sd_getgain,
     },
-    {
+    {							/* 3 */
 	{
 	    .id      = V4L2_CID_EXPOSURE,
 	    .type    = V4L2_CTRL_TYPE_INTEGER,
@@ -157,7 +157,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setexposure,
 	.get = sd_getexposure,
     },
-    {
+    {							/* 4 */
 	{
 	    .id      = V4L2_CID_RED_BALANCE,
 	    .type    = V4L2_CTRL_TYPE_INTEGER,
@@ -171,7 +171,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setredblc,
 	.get = sd_getredblc,
     },
-    {
+    {							/* 5 */
 	{
 	    .id      = V4L2_CID_BLUE_BALANCE,
 	    .type    = V4L2_CTRL_TYPE_INTEGER,
@@ -185,7 +185,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setblueblc,
 	.get = sd_getblueblc,
     },
-    {
+    {							/* 6 */
 	{
 		.id      = V4L2_CID_HUE,
 		.type    = V4L2_CTRL_TYPE_INTEGER,
@@ -199,7 +199,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_sethue,
 	.get = sd_gethue,
     },
-    {
+    {							/* 7 */
 	{
 	    .id      = V4L2_CID_AUTOGAIN,
 	    .type    = V4L2_CTRL_TYPE_BOOLEAN,
@@ -213,7 +213,8 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setautogain,
 	.get = sd_getautogain,
     },
-    {
+#define AWB_IDX 8
+    {							/* 8 */
 	{
 		.id      = V4L2_CID_AUTO_WHITE_BALANCE,
 		.type    = V4L2_CTRL_TYPE_BOOLEAN,
@@ -227,7 +228,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setawb,
 	.get = sd_getawb,
     },
-    {
+    {							/* 9 */
 	{
 	    .id      = V4L2_CID_SHARPNESS,
 	    .type    = V4L2_CTRL_TYPE_INTEGER,
@@ -241,7 +242,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_setsharpness,
 	.get = sd_getsharpness,
     },
-    {
+    {							/* 10 */
 	{
 	    .id      = V4L2_CID_HFLIP,
 	    .type    = V4L2_CTRL_TYPE_BOOLEAN,
@@ -255,7 +256,7 @@ static struct ctrl sd_ctrls_ov772x[] = {
 	.set = sd_sethflip,
 	.get = sd_gethflip,
     },
-    {
+    {							/* 11 */
 	{
 	    .id      = V4L2_CID_VFLIP,
 	    .type    = V4L2_CTRL_TYPE_BOOLEAN,
@@ -1237,6 +1238,8 @@ static int sd_config(struct gspca_dev *gspca_dev,
 	sd->hue = HUE_DEF;
 #if AUTOGAIN_DEF != 0
 	sd->autogain = AUTOGAIN_DEF;
+#else
+	gspca_dev->ctrl_inac |= (1 << AWB_IDX);
 #endif
 #if AWB_DEF != 0
 	sd->awb = AWB_DEF
@@ -1400,8 +1403,8 @@ static void sd_stopN_ov965x(struct gspca_dev *gspca_dev)
 #define UVC_STREAM_EOF	(1 << 1)
 #define UVC_STREAM_FID	(1 << 0)
 
-static void sd_pkt_scan(struct gspca_dev *gspca_dev, struct gspca_frame *frame,
-			__u8 *data, int len)
+static void sd_pkt_scan(struct gspca_dev *gspca_dev,
+			u8 *data, int len)
 {
 	struct sd *sd = (struct sd *) gspca_dev;
 	__u32 this_pts;
@@ -1442,23 +1445,22 @@ static void sd_pkt_scan(struct gspca_dev *gspca_dev, struct gspca_frame *frame,
 		/* If PTS or FID has changed, start a new frame. */
 		if (this_pts != sd->last_pts || this_fid != sd->last_fid) {
 			if (gspca_dev->last_packet_type == INTER_PACKET)
-				frame = gspca_frame_add(gspca_dev,
-							LAST_PACKET, frame,
-							NULL, 0);
+				gspca_frame_add(gspca_dev, LAST_PACKET,
+						NULL, 0);
 			sd->last_pts = this_pts;
 			sd->last_fid = this_fid;
-			gspca_frame_add(gspca_dev, FIRST_PACKET, frame,
+			gspca_frame_add(gspca_dev, FIRST_PACKET,
 					data + 12, len - 12);
 		/* If this packet is marked as EOF, end the frame */
 		} else if (data[1] & UVC_STREAM_EOF) {
 			sd->last_pts = 0;
-			frame = gspca_frame_add(gspca_dev, LAST_PACKET, frame,
-						data + 12, len - 12);
+			gspca_frame_add(gspca_dev, LAST_PACKET,
+					data + 12, len - 12);
 		} else {
 
 			/* Add the data from this payload */
-			gspca_frame_add(gspca_dev, INTER_PACKET, frame,
-						data + 12, len - 12);
+			gspca_frame_add(gspca_dev, INTER_PACKET,
+					data + 12, len - 12);
 		}
 
 		/* Done this payload */
@@ -1466,7 +1468,7 @@ static void sd_pkt_scan(struct gspca_dev *gspca_dev, struct gspca_frame *frame,
 
 discard:
 		/* Discard data until a new frame starts. */
-		gspca_frame_add(gspca_dev, DISCARD_PACKET, frame, NULL, 0);
+		gspca_dev->last_packet_type = DISCARD_PACKET;
 
 scan_next:
 		remaining_len -= len;
@@ -1606,6 +1608,13 @@ static int sd_setautogain(struct gspca_dev *gspca_dev, __s32 val)
 	struct sd *sd = (struct sd *) gspca_dev;
 
 	sd->autogain = val;
+
+	/* the auto white balance control works only when auto gain is set */
+	if (val)
+		gspca_dev->ctrl_inac &= ~(1 << AWB_IDX);
+	else
+		gspca_dev->ctrl_inac |= (1 << AWB_IDX);
+
 	if (gspca_dev->streaming)
 		setautogain(gspca_dev);
 	return 0;

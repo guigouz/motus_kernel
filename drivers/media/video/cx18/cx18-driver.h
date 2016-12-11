@@ -50,6 +50,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-device.h>
 #include <media/tuner.h>
+#include <media/ir-kbd-i2c.h>
 #include "cx18-mailbox.h"
 #include "cx18-av-core.h"
 #include "cx23418.h"
@@ -120,12 +121,16 @@
 /* Maximum firmware DMA buffers per stream */
 #define CX18_MAX_FW_MDLS_PER_STREAM 63
 
+/* YUV buffer sizes in bytes to ensure integer # of frames per buffer */
+#define CX18_UNIT_ENC_YUV_BUFSIZE	(720 *  32 * 3 / 2) /* bytes */
+#define CX18_625_LINE_ENC_YUV_BUFSIZE	(CX18_UNIT_ENC_YUV_BUFSIZE * 576/32)
+#define CX18_525_LINE_ENC_YUV_BUFSIZE	(CX18_UNIT_ENC_YUV_BUFSIZE * 480/32)
+
 /* DMA buffer, default size in kB allocated */
 #define CX18_DEFAULT_ENC_TS_BUFSIZE   32
 #define CX18_DEFAULT_ENC_MPG_BUFSIZE  32
 #define CX18_DEFAULT_ENC_IDX_BUFSIZE  32
-#define CX18_DEFAULT_ENC_YUV_BUFSIZE 128
-/* Default VBI bufsize based on standards supported by card tuner for now */
+#define CX18_DEFAULT_ENC_YUV_BUFSIZE  (CX18_UNIT_ENC_YUV_BUFSIZE * 3 / 1024 + 1)
 #define CX18_DEFAULT_ENC_PCM_BUFSIZE   4
 
 /* i2c stuff */
@@ -601,6 +606,8 @@ struct cx18 {
 	struct i2c_adapter i2c_adap[2];
 	struct i2c_algo_bit_data i2c_algo[2];
 	struct cx18_i2c_algo_callback_data i2c_algo_cb_data[2];
+
+	struct IR_i2c_init_data ir_i2c_init_data;
 
 	/* gpio */
 	u32 gpio_dir;
