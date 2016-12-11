@@ -135,10 +135,11 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 		if (urb->status == -ESHUTDOWN)
 			return;		/* disconnection */
 #ifdef CONFIG_PM
-		if (!gspca_dev->frozen)
+		if (gspca_dev->frozen)
+			return;
 #endif
-			PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
-		return;
+		PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
+		goto resubmit;
 	}
 	pkt_scan = gspca_dev->sd_desc->pkt_scan;
 	for (i = 0; i < urb->number_of_packets; i++) {
@@ -174,6 +175,7 @@ static void fill_frame(struct gspca_dev *gspca_dev,
 		pkt_scan(gspca_dev, frame, data, len);
 	}
 
+resubmit:
 	/* resubmit the URB */
 	st = usb_submit_urb(urb, GFP_ATOMIC);
 	if (st < 0)
@@ -217,10 +219,11 @@ static void bulk_irq(struct urb *urb)
 		break;
 	default:
 #ifdef CONFIG_PM
-		if (!gspca_dev->frozen)
+		if (gspca_dev->frozen)
+			return;
 #endif
-			PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
-		return;
+		PDEBUG(D_ERR|D_PACK, "urb status: %d", urb->status);
+		goto resubmit;
 	}
 
 	/* check the availability of the frame buffer */
@@ -235,6 +238,7 @@ static void bulk_irq(struct urb *urb)
 					urb->actual_length);
 	}
 
+resubmit:
 	/* resubmit the URB */
 	if (gspca_dev->cam.bulk_nurbs != 0) {
 		st = usb_submit_urb(urb, GFP_ATOMIC);
@@ -475,10 +479,18 @@ static struct usb_host_endpoint *get_ep(struct gspca_dev *gspca_dev)
 	xfer = gspca_dev->cam.bulk ? USB_ENDPOINT_XFER_BULK
 				   : USB_ENDPOINT_XFER_ISOC;
 	i = gspca_dev->alt;			/* previous alt setting */
-	while (--i >= 0) {
-		ep = alt_xfer(&intf->altsetting[i], xfer);
-		if (ep)
-			break;
+	if (gspca_dev->cam.reverse_alts) {
+		while (++i < gspca_dev->nbalt) {
+			ep = alt_xfer(&intf->altsetting[i], xfer);
+			if (ep)
+				break;
+		}
+	} else {
+		while (--i >= 0) {
+			ep = alt_xfer(&intf->altsetting[i], xfer);
+			if (ep)
+				break;
+		}
 	}
 	if (ep == NULL) {
 		err("no transfer endpoint found");
@@ -599,7 +611,11 @@ static int gspca_init_transfer(struct gspca_dev *gspca_dev)
 
 	/* set the higher alternate setting and
 	 * loop until urb submit succeeds */
-	gspca_dev->alt = gspca_dev->nbalt;
+	if (gspca_dev->cam.reverse_alts)
+		gspca_dev->alt = 0;
+	else
+		gspca_dev->alt = gspca_dev->nbalt;
+
 	if (gspca_dev->sd_desc->isoc_init) {
 		ret = gspca_dev->sd_desc->isoc_init(gspca_dev);
 		if (ret < 0)

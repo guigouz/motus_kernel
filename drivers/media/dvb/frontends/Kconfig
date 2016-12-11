@@ -342,6 +342,13 @@ config DVB_AF9013
 	help
 	  Say Y when you want to support this frontend.
 
+config DVB_EC100
+	tristate "E3C EC100"
+	depends on DVB_CORE && I2C
+	default m if DVB_FE_CUSTOMISE
+	help
+	  Say Y when you want to support this frontend.
+
 comment "DVB-C (cable) frontends"
 	depends on DVB_CORE
 
@@ -552,6 +559,13 @@ config DVB_LGS8GL5
 
 config DVB_LGS8GXX
 	tristate "Legend Silicon LGS8913/LGS8GL5/LGS8GXX DMB-TH demodulator"
+	depends on DVB_CORE && I2C
+	default m if DVB_FE_CUSTOMISE
+	help
+	  A DMB-TH tuner module. Say Y when you want to support this frontend.
+
+config DVB_ATBM8830
+	tristate "AltoBeam ATBM8830/8831 DMB-TH demodulator"
 	depends on DVB_CORE && I2C
 	default m if DVB_FE_CUSTOMISE
 	help

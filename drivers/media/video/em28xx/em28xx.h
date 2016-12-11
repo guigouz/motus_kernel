@@ -143,9 +143,6 @@
  */
 #define EM28XX_NUM_PACKETS 40
 
-/* default alternate; 0 means choose the best */
-#define EM28XX_PINOUT 0
-
 #define EM28XX_INTERLACED_DEFAULT 1
 
 /*
@@ -615,7 +612,6 @@ struct em28xx {
 	struct em28xx_dvb *dvb;
 
 	/* I2C keyboard data */
-	struct i2c_board_info info;
 	struct IR_i2c_init_data init_data;
 };
 
