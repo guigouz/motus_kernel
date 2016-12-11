@@ -200,7 +200,7 @@ int set_irq_data(unsigned int irq, void *data)
 EXPORT_SYMBOL(set_irq_data);
 
 /**
- *	set_irq_msi - set MSI descriptor data for an irq
+ *	set_irq_msi - set irq type data for an irq
  *	@irq:	Interrupt number
  *	@entry:	Pointer to MSI descriptor data
  *
