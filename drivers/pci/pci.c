@@ -1551,6 +1551,16 @@ void pci_enable_ari(struct pci_dev *dev)
 	bridge->ari_enabled = 1;
 }
 
+static int pci_acs_enable;
+
+/**
+ * pci_request_acs - ask for ACS to be enabled if supported
+ */
+void pci_request_acs(void)
+{
+	pci_acs_enable = 1;
+}
+
 /**
  * pci_enable_acs - enable ACS if hardware support it
  * @dev: the PCI device
@@ -1560,6 +1570,9 @@ void pci_enable_acs(struct pci_dev *dev)
 	int pos;
 	u16 cap;
 	u16 ctrl;
+
+	if (!pci_acs_enable)
+		return;
 
 	if (!pci_is_pcie(dev))
 		return;
@@ -2103,6 +2116,7 @@ pci_set_dma_mask(struct pci_dev *dev, u64 mask)
 		return -EIO;
 
 	dev->dma_mask = mask;
+	dev_dbg(&dev->dev, "using %dbit DMA mask\n", fls64(mask));
 
 	return 0;
 }
@@ -2114,6 +2128,7 @@ pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask)
 		return -EIO;
 
 	dev->dev.coherent_dma_mask = mask;
+	dev_dbg(&dev->dev, "using %dbit consistent DMA mask\n", fls64(mask));
 
 	return 0;
 }
@@ -2140,7 +2155,7 @@ static int pcie_flr(struct pci_dev *dev, int probe)
 	int i;
 	int pos;
 	u32 cap;
-	u16 status;
+	u16 status, control;
 
 	pos = pci_pcie_cap(dev);
 	if (!pos)
@@ -2167,8 +2182,10 @@ static int pcie_flr(struct pci_dev *dev, int probe)
 			"proceeding with reset anyway\n");
 
 clear:
-	pci_write_config_word(dev, pos + PCI_EXP_DEVCTL,
-				PCI_EXP_DEVCTL_BCR_FLR);
+	pci_read_config_word(dev, pos + PCI_EXP_DEVCTL, &control);
+	control |= PCI_EXP_DEVCTL_BCR_FLR;
+	pci_write_config_word(dev, pos + PCI_EXP_DEVCTL, control);
+
 	msleep(100);
 
 	return 0;

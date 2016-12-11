@@ -98,30 +98,13 @@ int pci_cleanup_aer_uncorrect_error_status(struct pci_dev *dev)
 }
 EXPORT_SYMBOL_GPL(pci_cleanup_aer_uncorrect_error_status);
 
-#if 0
-int pci_cleanup_aer_correct_error_status(struct pci_dev *dev)
-{
-	int pos;
-	u32 status;
-
-	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
-	if (!pos)
-		return -EIO;
-
-	pci_read_config_dword(dev, pos + PCI_ERR_COR_STATUS, &status);
-	pci_write_config_dword(dev, pos + PCI_ERR_COR_STATUS, status);
-
-	return 0;
-}
-#endif  /*  0  */
-
 static int set_device_error_reporting(struct pci_dev *dev, void *data)
 {
 	bool enable = *((bool *)data);
 
-	if (dev->pcie_type == PCIE_RC_PORT ||
-	    dev->pcie_type == PCIE_SW_UPSTREAM_PORT ||
-	    dev->pcie_type == PCIE_SW_DOWNSTREAM_PORT) {
+	if ((dev->pcie_type == PCI_EXP_TYPE_ROOT_PORT) ||
+	    (dev->pcie_type == PCI_EXP_TYPE_UPSTREAM) ||
+	    (dev->pcie_type == PCI_EXP_TYPE_DOWNSTREAM)) {
 		if (enable)
 			pci_enable_pcie_error_reporting(dev);
 		else
@@ -433,10 +416,9 @@ static int find_aer_service_iter(struct device *device, void *data)
 	result = (struct find_aer_service_data *) data;
 
 	if (device->bus == &pcie_port_bus_type) {
-		struct pcie_port_data *port_data;
+		struct pcie_device *pcie = to_pcie_device(device);
 
-		port_data = pci_get_drvdata(to_pcie_device(device)->port);
-		if (port_data->port_type == PCIE_SW_DOWNSTREAM_PORT)
+		if (pcie->port->pcie_type == PCI_EXP_TYPE_DOWNSTREAM)
 			result->is_downstream = 1;
 
 		driver = device->driver;
