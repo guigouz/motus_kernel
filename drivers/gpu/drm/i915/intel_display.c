@@ -950,7 +950,7 @@ void
 intel_wait_for_vblank(struct drm_device *dev)
 {
 	/* Wait for 20ms, i.e. one cycle at 50hz. */
-	mdelay(20);
+	msleep(20);
 }
 
 /* Parameters have changed, update FBC info */
@@ -4584,15 +4584,20 @@ void intel_modeset_cleanup(struct drm_device *dev)
 	intel_increase_renderclock(dev, false);
 	del_timer_sync(&dev_priv->idle_timer);
 
-	mutex_unlock(&dev->struct_mutex);
-
 	if (dev_priv->display.disable_fbc)
 		dev_priv->display.disable_fbc(dev);
 
 	if (dev_priv->pwrctx) {
+		struct drm_i915_gem_object *obj_priv;
+
+		obj_priv = dev_priv->pwrctx->driver_private;
+		I915_WRITE(PWRCTXA, obj_priv->gtt_offset &~ PWRCTX_EN);
+		I915_READ(PWRCTXA);
 		i915_gem_object_unpin(dev_priv->pwrctx);
 		drm_gem_object_unreference(dev_priv->pwrctx);
 	}
+
+	mutex_unlock(&dev->struct_mutex);
 
 	drm_mode_config_cleanup(dev);
 }
