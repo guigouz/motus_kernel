@@ -59,6 +59,8 @@ static char *dif_op_str[] = {
 };
 static void
 lpfc_release_scsi_buf_s4(struct lpfc_hba *phba, struct lpfc_scsi_buf *psb);
+static void
+lpfc_release_scsi_buf_s3(struct lpfc_hba *phba, struct lpfc_scsi_buf *psb);
 
 static void
 lpfc_debug_save_data(struct lpfc_hba *phba, struct scsi_cmnd *cmnd)
@@ -246,6 +248,36 @@ lpfc_send_sdev_queuedepth_change_event(struct lpfc_hba *phba,
 }
 
 /**
+ * lpfc_change_queue_depth - Alter scsi device queue depth
+ * @sdev: Pointer the scsi device on which to change the queue depth.
+ * @qdepth: New queue depth to set the sdev to.
+ * @reason: The reason for the queue depth change.
+ *
+ * This function is called by the midlayer and the LLD to alter the queue
+ * depth for a scsi device. This function sets the queue depth to the new
+ * value and sends an event out to log the queue depth change.
+ **/
+int
+lpfc_change_queue_depth(struct scsi_device *sdev, int qdepth, int reason)
+{
+	struct lpfc_vport *vport = (struct lpfc_vport *) sdev->host->hostdata;
+	struct lpfc_hba   *phba = vport->phba;
+	struct lpfc_rport_data *rdata;
+	unsigned long new_queue_depth, old_queue_depth;
+
+	old_queue_depth = sdev->queue_depth;
+	scsi_adjust_queue_depth(sdev, scsi_get_tag_type(sdev), qdepth);
+	new_queue_depth = sdev->queue_depth;
+	rdata = sdev->hostdata;
+	if (rdata)
+		lpfc_send_sdev_queuedepth_change_event(phba, vport,
+						       rdata->pnode, sdev->lun,
+						       old_queue_depth,
+						       new_queue_depth);
+	return sdev->queue_depth;
+}
+
+/**
  * lpfc_rampdown_queue_depth - Post RAMP_DOWN_QUEUE event to worker thread
  * @phba: The Hba for which this call is being executed.
  *
@@ -309,8 +341,10 @@ lpfc_rampup_queue_depth(struct lpfc_vport  *vport,
 	if (vport->cfg_lun_queue_depth <= queue_depth)
 		return;
 	spin_lock_irqsave(&phba->hbalock, flags);
-	if (((phba->last_ramp_up_time + QUEUE_RAMP_UP_INTERVAL) > jiffies) ||
-	 ((phba->last_rsrc_error_time + QUEUE_RAMP_UP_INTERVAL ) > jiffies)) {
+	if (time_before(jiffies,
+			phba->last_ramp_up_time + QUEUE_RAMP_UP_INTERVAL) ||
+	    time_before(jiffies,
+			phba->last_rsrc_error_time + QUEUE_RAMP_UP_INTERVAL)) {
 		spin_unlock_irqrestore(&phba->hbalock, flags);
 		return;
 	}
@@ -342,10 +376,9 @@ lpfc_ramp_down_queue_handler(struct lpfc_hba *phba)
 	struct lpfc_vport **vports;
 	struct Scsi_Host  *shost;
 	struct scsi_device *sdev;
-	unsigned long new_queue_depth, old_queue_depth;
+	unsigned long new_queue_depth;
 	unsigned long num_rsrc_err, num_cmd_success;
 	int i;
-	struct lpfc_rport_data *rdata;
 
 	num_rsrc_err = atomic_read(&phba->num_rsrc_err);
 	num_cmd_success = atomic_read(&phba->num_cmd_success);
@@ -363,22 +396,8 @@ lpfc_ramp_down_queue_handler(struct lpfc_hba *phba)
 				else
 					new_queue_depth = sdev->queue_depth -
 								new_queue_depth;
-				old_queue_depth = sdev->queue_depth;
-				if (sdev->ordered_tags)
-					scsi_adjust_queue_depth(sdev,
-							MSG_ORDERED_TAG,
-							new_queue_depth);
-				else
-					scsi_adjust_queue_depth(sdev,
-							MSG_SIMPLE_TAG,
-							new_queue_depth);
-				rdata = sdev->hostdata;
-				if (rdata)
-					lpfc_send_sdev_queuedepth_change_event(
-						phba, vports[i],
-						rdata->pnode,
-						sdev->lun, old_queue_depth,
-						new_queue_depth);
+				lpfc_change_queue_depth(sdev, new_queue_depth,
+							SCSI_QDEPTH_DEFAULT);
 			}
 		}
 	lpfc_destroy_vport_work_array(phba, vports);
@@ -402,7 +421,6 @@ lpfc_ramp_up_queue_handler(struct lpfc_hba *phba)
 	struct Scsi_Host  *shost;
 	struct scsi_device *sdev;
 	int i;
-	struct lpfc_rport_data *rdata;
 
 	vports = lpfc_create_vport_work_array(phba);
 	if (vports != NULL)
@@ -412,22 +430,9 @@ lpfc_ramp_up_queue_handler(struct lpfc_hba *phba)
 				if (vports[i]->cfg_lun_queue_depth <=
 				    sdev->queue_depth)
 					continue;
-				if (sdev->ordered_tags)
-					scsi_adjust_queue_depth(sdev,
-							MSG_ORDERED_TAG,
-							sdev->queue_depth+1);
-				else
-					scsi_adjust_queue_depth(sdev,
-							MSG_SIMPLE_TAG,
-							sdev->queue_depth+1);
-				rdata = sdev->hostdata;
-				if (rdata)
-					lpfc_send_sdev_queuedepth_change_event(
-						phba, vports[i],
-						rdata->pnode,
-						sdev->lun,
-						sdev->queue_depth - 1,
-						sdev->queue_depth);
+				lpfc_change_queue_depth(sdev,
+							sdev->queue_depth+1,
+							SCSI_QDEPTH_RAMP_UP);
 			}
 		}
 	lpfc_destroy_vport_work_array(phba, vports);
@@ -593,7 +598,7 @@ lpfc_new_scsi_buf_s3(struct lpfc_vport *vport, int num_to_alloc)
 		iocb->ulpClass = CLASS3;
 		psb->status = IOSTAT_SUCCESS;
 		/* Put it back into the SCSI buffer list */
-		lpfc_release_scsi_buf_s4(phba, psb);
+		lpfc_release_scsi_buf_s3(phba, psb);
 
 	}
 
@@ -2208,7 +2213,7 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 	struct scsi_cmnd *cmd = lpfc_cmd->pCmd;
 	int result;
 	struct scsi_device *tmp_sdev;
-	int depth = 0;
+	int depth;
 	unsigned long flags;
 	struct lpfc_fast_path_event *fast_path_evt;
 	struct Scsi_Host *shost = cmd->device->host;
@@ -2375,36 +2380,8 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 		return;
 	}
 
-
 	if (!result)
 		lpfc_rampup_queue_depth(vport, queue_depth);
-
-	if (!result && pnode && NLP_CHK_NODE_ACT(pnode) &&
-	   ((jiffies - pnode->last_ramp_up_time) >
-		LPFC_Q_RAMP_UP_INTERVAL * HZ) &&
-	   ((jiffies - pnode->last_q_full_time) >
-		LPFC_Q_RAMP_UP_INTERVAL * HZ) &&
-	   (vport->cfg_lun_queue_depth > queue_depth)) {
-		shost_for_each_device(tmp_sdev, shost) {
-			if (vport->cfg_lun_queue_depth > tmp_sdev->queue_depth){
-				if (tmp_sdev->id != scsi_id)
-					continue;
-				if (tmp_sdev->ordered_tags)
-					scsi_adjust_queue_depth(tmp_sdev,
-						MSG_ORDERED_TAG,
-						tmp_sdev->queue_depth+1);
-				else
-					scsi_adjust_queue_depth(tmp_sdev,
-						MSG_SIMPLE_TAG,
-						tmp_sdev->queue_depth+1);
-
-				pnode->last_ramp_up_time = jiffies;
-			}
-		}
-		lpfc_send_sdev_queuedepth_change_event(phba, vport, pnode,
-			0xFFFFFFFF,
-			queue_depth , queue_depth + 1);
-	}
 
 	/*
 	 * Check for queue full.  If the lun is reporting queue full, then
@@ -2412,30 +2389,20 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
 	 */
 	if (result == SAM_STAT_TASK_SET_FULL && pnode &&
 	    NLP_CHK_NODE_ACT(pnode)) {
-		pnode->last_q_full_time = jiffies;
-
 		shost_for_each_device(tmp_sdev, shost) {
 			if (tmp_sdev->id != scsi_id)
 				continue;
 			depth = scsi_track_queue_full(tmp_sdev,
-					tmp_sdev->queue_depth - 1);
-		}
-		/*
-		 * The queue depth cannot be lowered any more.
-		 * Modify the returned error code to store
-		 * the final depth value set by
-		 * scsi_track_queue_full.
-		 */
-		if (depth == -1)
-			depth = shost->cmd_per_lun;
-
-		if (depth) {
+						      tmp_sdev->queue_depth-1);
+			if (depth <= 0)
+				continue;
 			lpfc_printf_vlog(vport, KERN_WARNING, LOG_FCP,
 					 "0711 detected queue full - lun queue "
 					 "depth adjusted to %d.\n", depth);
 			lpfc_send_sdev_queuedepth_change_event(phba, vport,
-				pnode, 0xFFFFFFFF,
-				depth+1, depth);
+							       pnode,
+							       tmp_sdev->lun,
+							       depth+1, depth);
 		}
 	}
 
@@ -2773,7 +2740,9 @@ void lpfc_poll_timeout(unsigned long ptr)
 	struct lpfc_hba *phba = (struct lpfc_hba *) ptr;
 
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
-		lpfc_sli_poll_fcp_ring (phba);
+		lpfc_sli_handle_fast_ring_event(phba,
+			&phba->sli.ring[LPFC_FCP_RING], HA_R0RE_REQ);
+
 		if (phba->cfg_poll & DISABLE_FCP_RING_INT)
 			lpfc_poll_rearm_timer(phba);
 	}
@@ -2799,7 +2768,7 @@ lpfc_queuecommand(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_hba   *phba = vport->phba;
 	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
-	struct lpfc_nodelist *ndlp = rdata->pnode;
+	struct lpfc_nodelist *ndlp;
 	struct lpfc_scsi_buf *lpfc_cmd;
 	struct fc_rport *rport = starget_to_rport(scsi_target(cmnd->device));
 	int err;
@@ -2809,6 +2778,7 @@ lpfc_queuecommand(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
 		cmnd->result = err;
 		goto out_fail_command;
 	}
+	ndlp = rdata->pnode;
 
 	if (!(phba->sli3_options & LPFC_SLI3_BG_ENABLED) &&
 		scsi_get_prot_op(cmnd) != SCSI_PROT_NORMAL) {
@@ -2932,7 +2902,11 @@ lpfc_queuecommand(struct scsi_cmnd *cmnd, void (*done) (struct scsi_cmnd *))
 		goto out_host_busy_free_buf;
 	}
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
-		lpfc_sli_poll_fcp_ring(phba);
+		spin_unlock(shost->host_lock);
+		lpfc_sli_handle_fast_ring_event(phba,
+			&phba->sli.ring[LPFC_FCP_RING], HA_R0RE_REQ);
+
+		spin_lock(shost->host_lock);
 		if (phba->cfg_poll & DISABLE_FCP_RING_INT)
 			lpfc_poll_rearm_timer(phba);
 	}
@@ -3013,6 +2987,10 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 
 	icmd->ulpLe = 1;
 	icmd->ulpClass = cmd->ulpClass;
+
+	/* ABTS WQE must go to the same WQ as the WQE to be aborted */
+	abtsiocb->fcp_wqidx = iocb->fcp_wqidx;
+
 	if (lpfc_is_link_up(phba))
 		icmd->ulpCommand = CMD_ABORT_XRI_CN;
 	else
@@ -3028,7 +3006,8 @@ lpfc_abort_handler(struct scsi_cmnd *cmnd)
 	}
 
 	if (phba->cfg_poll & DISABLE_FCP_RING_INT)
-		lpfc_sli_poll_fcp_ring (phba);
+		lpfc_sli_handle_fast_ring_event(phba,
+			&phba->sli.ring[LPFC_FCP_RING], HA_R0RE_REQ);
 
 	lpfc_cmd->waitq = &waitq;
 	/* Wait for abort to complete */
@@ -3178,9 +3157,15 @@ static int
 lpfc_chk_tgt_mapped(struct lpfc_vport *vport, struct scsi_cmnd *cmnd)
 {
 	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
-	struct lpfc_nodelist *pnode = rdata->pnode;
+	struct lpfc_nodelist *pnode;
 	unsigned long later;
 
+	if (!rdata) {
+		lpfc_printf_vlog(vport, KERN_INFO, LOG_FCP,
+			"0797 Tgt Map rport failure: rdata x%p\n", rdata);
+		return FAILED;
+	}
+	pnode = rdata->pnode;
 	/*
 	 * If target is not in a MAPPED state, delay until
 	 * target is rediscovered or devloss timeout expires.
@@ -3265,12 +3250,18 @@ lpfc_device_reset_handler(struct scsi_cmnd *cmnd)
 	struct Scsi_Host  *shost = cmnd->device->host;
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
-	struct lpfc_nodelist *pnode = rdata->pnode;
+	struct lpfc_nodelist *pnode;
 	unsigned tgt_id = cmnd->device->id;
 	unsigned int lun_id = cmnd->device->lun;
 	struct lpfc_scsi_event_header scsi_event;
 	int status;
 
+	if (!rdata) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+			"0798 Device Reset rport failure: rdata x%p\n", rdata);
+		return FAILED;
+	}
+	pnode = rdata->pnode;
 	fc_block_scsi_eh(cmnd);
 
 	status = lpfc_chk_tgt_mapped(vport, cmnd);
@@ -3324,12 +3315,18 @@ lpfc_target_reset_handler(struct scsi_cmnd *cmnd)
 	struct Scsi_Host  *shost = cmnd->device->host;
 	struct lpfc_vport *vport = (struct lpfc_vport *) shost->hostdata;
 	struct lpfc_rport_data *rdata = cmnd->device->hostdata;
-	struct lpfc_nodelist *pnode = rdata->pnode;
+	struct lpfc_nodelist *pnode;
 	unsigned tgt_id = cmnd->device->id;
 	unsigned int lun_id = cmnd->device->lun;
 	struct lpfc_scsi_event_header scsi_event;
 	int status;
 
+	if (!rdata) {
+		lpfc_printf_vlog(vport, KERN_ERR, LOG_FCP,
+			"0799 Target Reset rport failure: rdata x%p\n", rdata);
+		return FAILED;
+	}
+	pnode = rdata->pnode;
 	fc_block_scsi_eh(cmnd);
 
 	status = lpfc_chk_tgt_mapped(vport, cmnd);
@@ -3510,6 +3507,8 @@ lpfc_slave_alloc(struct scsi_device *sdev)
 				 "Allocated %d buffers.\n",
 				 num_to_alloc, num_allocated);
 	}
+	if (num_allocated > 0)
+		phba->total_scsi_bufs += num_allocated;
 	return 0;
 }
 
@@ -3546,7 +3545,8 @@ lpfc_slave_configure(struct scsi_device *sdev)
 	rport->dev_loss_tmo = vport->cfg_devloss_tmo;
 
 	if (phba->cfg_poll & ENABLE_FCP_RING_POLLING) {
-		lpfc_sli_poll_fcp_ring(phba);
+		lpfc_sli_handle_fast_ring_event(phba,
+			&phba->sli.ring[LPFC_FCP_RING], HA_R0RE_REQ);
 		if (phba->cfg_poll & DISABLE_FCP_RING_INT)
 			lpfc_poll_rearm_timer(phba);
 	}
@@ -3588,6 +3588,7 @@ struct scsi_host_template lpfc_template = {
 	.shost_attrs		= lpfc_hba_attrs,
 	.max_sectors		= 0xFFFF,
 	.vendor_id		= LPFC_NL_VENDOR_ID,
+	.change_queue_depth	= lpfc_change_queue_depth,
 };
 
 struct scsi_host_template lpfc_vport_template = {
@@ -3609,4 +3610,5 @@ struct scsi_host_template lpfc_vport_template = {
 	.use_clustering		= ENABLE_CLUSTERING,
 	.shost_attrs		= lpfc_vport_attrs,
 	.max_sectors		= 0xFFFF,
+	.change_queue_depth	= lpfc_change_queue_depth,
 };

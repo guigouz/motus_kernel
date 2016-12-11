@@ -49,6 +49,7 @@ struct lpfc_iocbq {
 	struct list_head clist;
 	uint16_t iotag;         /* pre-assigned IO tag */
 	uint16_t sli4_xritag;   /* pre-assigned XRI, (OXID) tag. */
+	struct lpfc_cq_event cq_event;
 
 	IOCB_t iocb;		/* IOCB cmd */
 	uint8_t retry;		/* retry counter for IOCB cmd - if needed */
@@ -59,11 +60,13 @@ struct lpfc_iocbq {
 #define LPFC_DRIVER_ABORTED	8	/* driver aborted this request */
 #define LPFC_IO_FABRIC		0x10	/* Iocb send using fabric scheduler */
 #define LPFC_DELAY_MEM_FREE	0x20    /* Defer free'ing of FC data */
-#define LPFC_FIP_ELS		0x40
+#define LPFC_FIP_ELS_ID_MASK	0xc0	/* ELS_ID range 0-3 */
+#define LPFC_FIP_ELS_ID_SHIFT	6
 
 	uint8_t abort_count;
 	uint8_t rsvd2;
 	uint32_t drvrTimeout;	/* driver timeout in seconds */
+	uint32_t fcp_wqidx;	/* index to FCP work queue */
 	struct lpfc_vport *vport;/* virtual port pointer */
 	void *context1;		/* caller context information */
 	void *context2;		/* caller context information */
@@ -79,7 +82,6 @@ struct lpfc_iocbq {
 			   struct lpfc_iocbq *);
 	void (*iocb_cmpl) (struct lpfc_hba *, struct lpfc_iocbq *,
 			   struct lpfc_iocbq *);
-	struct lpfc_cq_event cq_event;
 };
 
 #define SLI_IOCB_RET_IOCB      1	/* Return IOCB if cmd ring full */

@@ -194,6 +194,26 @@ struct lpfc_sli4_flags {
 #define lpfc_fip_flag_WORD word0
 };
 
+struct sli4_bls_acc {
+	uint32_t word0_rsvd;      /* Word0 must be reserved */
+	uint32_t word1;
+#define lpfc_abts_orig_SHIFT      0
+#define lpfc_abts_orig_MASK       0x00000001
+#define lpfc_abts_orig_WORD       word1
+#define LPFC_ABTS_UNSOL_RSP       1
+#define LPFC_ABTS_UNSOL_INT       0
+	uint32_t word2;
+#define lpfc_abts_rxid_SHIFT      0
+#define lpfc_abts_rxid_MASK       0x0000FFFF
+#define lpfc_abts_rxid_WORD       word2
+#define lpfc_abts_oxid_SHIFT      16
+#define lpfc_abts_oxid_MASK       0x0000FFFF
+#define lpfc_abts_oxid_WORD       word2
+	uint32_t word3;
+	uint32_t word4;
+	uint32_t word5_rsvd;	/* Word5 must be reserved */
+};
+
 /* event queue entry structure */
 struct lpfc_eqe {
 	uint32_t word0;
@@ -453,6 +473,13 @@ struct lpfc_wqe_generic{
 #define lpfc_wqe_gen_wqec_SHIFT		7
 #define lpfc_wqe_gen_wqec_MASK		0x00000001
 #define lpfc_wqe_gen_wqec_WORD		word11
+#define ELS_ID_FLOGI 3
+#define ELS_ID_FDISC 2
+#define ELS_ID_LOGO  1
+#define ELS_ID_DEFAULT 0
+#define lpfc_wqe_gen_els_id_SHIFT	4
+#define lpfc_wqe_gen_els_id_MASK	0x00000003
+#define lpfc_wqe_gen_els_id_WORD	word11
 #define lpfc_wqe_gen_cmd_type_SHIFT	0
 #define lpfc_wqe_gen_cmd_type_MASK	0x0000000F
 #define lpfc_wqe_gen_cmd_type_WORD	word11
@@ -487,8 +514,8 @@ struct lpfc_register {
 
 #define LPFC_UERR_STATUS_HI		0x00A4
 #define LPFC_UERR_STATUS_LO		0x00A0
-#define LPFC_ONLINE0			0x00B0
-#define LPFC_ONLINE1			0x00B4
+#define LPFC_UE_MASK_HI			0x00AC
+#define LPFC_UE_MASK_LO			0x00A8
 #define LPFC_SCRATCHPAD			0x0058
 
 /* BAR0 Registers */
@@ -1395,8 +1422,7 @@ struct lpfc_mbx_reg_vfi {
 #define lpfc_reg_vfi_fcfi_SHIFT		0
 #define lpfc_reg_vfi_fcfi_MASK		0x0000FFFF
 #define lpfc_reg_vfi_fcfi_WORD		word2
-	uint32_t word3_rsvd;
-	uint32_t word4_rsvd;
+	uint32_t wwn[2];
 	struct ulp_bde64 bde;
 	uint32_t word8_rsvd;
 	uint32_t word9_rsvd;
@@ -1601,6 +1627,11 @@ struct lpfc_mbx_read_rev {
 #define lpfc_mbx_rd_rev_fcoe_SHIFT		20
 #define lpfc_mbx_rd_rev_fcoe_MASK		0x00000001
 #define lpfc_mbx_rd_rev_fcoe_WORD		word1
+#define lpfc_mbx_rd_rev_cee_ver_SHIFT		21
+#define lpfc_mbx_rd_rev_cee_ver_MASK		0x00000003
+#define lpfc_mbx_rd_rev_cee_ver_WORD		word1
+#define LPFC_PREDCBX_CEE_MODE	0
+#define LPFC_DCBX_CEE_MODE	1
 #define lpfc_mbx_rd_rev_vpd_SHIFT		29
 #define lpfc_mbx_rd_rev_vpd_MASK		0x00000001
 #define lpfc_mbx_rd_rev_vpd_WORD		word1
@@ -1969,7 +2000,8 @@ struct lpfc_bmbx_create {
 #define SGL_ALIGN_SZ 64
 #define SGL_PAGE_SIZE 4096
 /* align SGL addr on a size boundary - adjust address up */
-#define NO_XRI ((uint16_t)-1)
+#define NO_XRI  ((uint16_t)-1)
+
 struct wqe_common {
 	uint32_t word6;
 #define wqe_xri_tag_SHIFT     0

@@ -173,13 +173,26 @@ lpfc_prep_els_iocb(struct lpfc_vport *vport, uint8_t expectRsp,
 	 * in FIP mode send FLOGI, FDISC and LOGO as FIP frames.
 	 */
 	if ((did == Fabric_DID) &&
-		bf_get(lpfc_fip_flag, &phba->sli4_hba.sli4_flags) &&
+		(phba->hba_flag & HBA_FIP_SUPPORT) &&
 		((elscmd == ELS_CMD_FLOGI) ||
 		 (elscmd == ELS_CMD_FDISC) ||
 		 (elscmd == ELS_CMD_LOGO)))
-		elsiocb->iocb_flag |= LPFC_FIP_ELS;
+		switch (elscmd) {
+		case ELS_CMD_FLOGI:
+		elsiocb->iocb_flag |= ((ELS_ID_FLOGI << LPFC_FIP_ELS_ID_SHIFT)
+					& LPFC_FIP_ELS_ID_MASK);
+		break;
+		case ELS_CMD_FDISC:
+		elsiocb->iocb_flag |= ((ELS_ID_FDISC << LPFC_FIP_ELS_ID_SHIFT)
+					& LPFC_FIP_ELS_ID_MASK);
+		break;
+		case ELS_CMD_LOGO:
+		elsiocb->iocb_flag |= ((ELS_ID_LOGO << LPFC_FIP_ELS_ID_SHIFT)
+					& LPFC_FIP_ELS_ID_MASK);
+		break;
+		}
 	else
-		elsiocb->iocb_flag &= ~LPFC_FIP_ELS;
+		elsiocb->iocb_flag &= ~LPFC_FIP_ELS_ID_MASK;
 
 	icmd = &elsiocb->iocb;
 
@@ -591,7 +604,7 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	} else {
 		ndlp->nlp_type |= NLP_FABRIC;
 		lpfc_nlp_set_state(vport, ndlp, NLP_STE_UNMAPPED_NODE);
-		if (vport->vfi_state & LPFC_VFI_REGISTERED) {
+		if (vport->vpi_state & LPFC_VPI_REGISTERED) {
 			lpfc_start_fdiscs(phba);
 			lpfc_do_scr_ns_plogi(phba, vport);
 		} else
@@ -4508,6 +4521,29 @@ lpfc_els_rcv_lirr(struct lpfc_vport *vport, struct lpfc_iocbq *cmdiocb,
 }
 
 /**
+ * lpfc_els_rcv_rrq - Process an unsolicited rrq iocb
+ * @vport: pointer to a host virtual N_Port data structure.
+ * @cmdiocb: pointer to lpfc command iocb data structure.
+ * @ndlp: pointer to a node-list data structure.
+ *
+ * This routine processes a Reinstate Recovery Qualifier (RRQ) IOCB
+ * received as an ELS unsolicited event. A request to RRQ shall only
+ * be accepted if the Originator Nx_Port N_Port_ID or the Responder
+ * Nx_Port N_Port_ID of the target Exchange is the same as the
+ * N_Port_ID of the Nx_Port that makes the request. If the RRQ is
+ * not accepted, an LS_RJT with reason code "Unable to perform
+ * command request" and reason code explanation "Invalid Originator
+ * S_ID" shall be returned. For now, we just unconditionally accept
+ * RRQ from the target.
+ **/
+static void
+lpfc_els_rcv_rrq(struct lpfc_vport *vport, struct lpfc_iocbq *cmdiocb,
+		 struct lpfc_nodelist *ndlp)
+{
+	lpfc_els_rsp_acc(vport, ELS_CMD_ACC, cmdiocb, ndlp, NULL);
+}
+
+/**
  * lpfc_els_rsp_rps_acc - Completion callbk func for MBX_READ_LNK_STAT mbox cmd
  * @phba: pointer to lpfc hba data structure.
  * @pmb: pointer to the driver internal queue element for mailbox command.
@@ -5401,7 +5437,7 @@ lpfc_els_unsol_buffer(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 	if (lpfc_els_chk_latt(vport))
 		goto dropit;
 
-	/* Ignore traffic recevied during vport shutdown. */
+	/* Ignore traffic received during vport shutdown. */
 	if (vport->load_flag & FC_UNLOADING)
 		goto dropit;
 
@@ -5620,6 +5656,16 @@ lpfc_els_unsol_buffer(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
 
 		phba->fc_stat.elsRcvRNID++;
 		lpfc_els_rcv_rnid(vport, elsiocb, ndlp);
+		if (newnode)
+			lpfc_nlp_put(ndlp);
+		break;
+	case ELS_CMD_RRQ:
+		lpfc_debugfs_disc_trc(vport, LPFC_DISC_TRC_ELS_UNSOL,
+			"RCV RRQ:         did:x%x/ste:x%x flg:x%x",
+			did, vport->port_state, ndlp->nlp_flag);
+
+		phba->fc_stat.elsRcvRRQ++;
+		lpfc_els_rcv_rrq(vport, elsiocb, ndlp);
 		if (newnode)
 			lpfc_nlp_put(ndlp);
 		break;
@@ -6029,11 +6075,6 @@ lpfc_cmpl_els_fdisc(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
 				 irsp->ulpStatus, irsp->un.ulpWord[4]);
 		goto fdisc_failed;
 	}
-		if (vport->fc_vport->vport_state == FC_VPORT_INITIALIZING)
-			lpfc_vport_set_state(vport, FC_VPORT_FAILED);
-		lpfc_nlp_put(ndlp);
-		/* giving up on FDISC. Cancel discovery timer */
-		lpfc_can_disctmo(vport);
 	spin_lock_irq(shost->host_lock);
 	vport->fc_flag |= FC_FABRIC;
 	if (vport->phba->fc_topology == TOPOLOGY_LOOP)
@@ -6112,6 +6153,7 @@ lpfc_issue_els_fdisc(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 	int did = ndlp->nlp_DID;
 	int rc;
 
+	vport->port_state = LPFC_FDISC;
 	cmdsize = (sizeof(uint32_t) + sizeof(struct serv_parm));
 	elsiocb = lpfc_prep_els_iocb(vport, 1, cmdsize, retry, ndlp, did,
 				     ELS_CMD_FDISC);
@@ -6177,7 +6219,6 @@ lpfc_issue_els_fdisc(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
 		return 1;
 	}
 	lpfc_vport_set_state(vport, FC_VPORT_INITIALIZING);
-	vport->port_state = LPFC_FDISC;
 	return 0;
 }
 

@@ -1168,7 +1168,8 @@ typedef struct {
 #define PCI_DEVICE_ID_ZEPHYR_DCSP   0xfe12
 #define PCI_VENDOR_ID_SERVERENGINE  0x19a2
 #define PCI_DEVICE_ID_TIGERSHARK    0x0704
-#define PCI_DEVICE_ID_TS_BE3        0x0714
+#define PCI_DEVICE_ID_TOMCAT        0x0714
+#define PCI_DEVICE_ID_FALCON        0xf180
 
 #define JEDEC_ID_ADDRESS            0x0080001c
 #define FIREFLY_JEDEC_ID            0x1ACC
@@ -2293,8 +2294,7 @@ typedef struct {
 	uint32_t rsvd1;
 	uint32_t rsvd2:8;
 	uint32_t sid:24;
-	uint32_t rsvd3;
-	uint32_t rsvd4;
+	uint32_t wwn[2];
 	uint32_t rsvd5;
 	uint16_t vfi;
 	uint16_t vpi;
@@ -2302,8 +2302,7 @@ typedef struct {
 	uint32_t rsvd1;
 	uint32_t sid:24;
 	uint32_t rsvd2:8;
-	uint32_t rsvd3;
-	uint32_t rsvd4;
+	uint32_t wwn[2];
 	uint32_t rsvd5;
 	uint16_t vpi;
 	uint16_t vfi;
@@ -3540,7 +3539,7 @@ typedef struct _IOCB {	/* IOCB structure */
 		ASYNCSTAT_FIELDS asyncstat; /* async_status iocb */
 		QUE_XRI64_CX_FIELDS quexri64cx; /* que_xri64_cx fields */
 		struct rcv_seq64 rcvseq64;	/* RCV_SEQ64 and RCV_CONT64 */
-
+		struct sli4_bls_acc bls_acc; /* UNSOL ABTS BLS_ACC params */
 		uint32_t ulpWord[IOCB_WORD_SZ - 2];	/* generic 6 'words' */
 	} un;
 	union {

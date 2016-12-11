@@ -568,7 +568,7 @@ lpfc_work_done(struct lpfc_hba *phba)
 	status >>= (4*LPFC_ELS_RING);
 	if ((status & HA_RXMASK) ||
 	    (pring->flag & LPFC_DEFERRED_RING_EVENT) ||
-	    (phba->hba_flag & HBA_RECEIVE_BUFFER)) {
+	    (phba->hba_flag & HBA_SP_QUEUE_EVT)) {
 		if (pring->flag & LPFC_STOP_IOCB_EVENT) {
 			pring->flag |= LPFC_DEFERRED_RING_EVENT;
 			/* Set the lpfc data pending flag */
@@ -706,6 +706,9 @@ lpfc_cleanup_rpis(struct lpfc_vport *vport, int remove)
 void
 lpfc_port_link_failure(struct lpfc_vport *vport)
 {
+	/* Cleanup any outstanding received buffers */
+	lpfc_cleanup_rcv_buffers(vport);
+
 	/* Cleanup any outstanding RSCN activity */
 	lpfc_els_flush_rscn(vport);
 
@@ -1015,13 +1018,12 @@ lpfc_mbx_cmpl_reg_fcfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		mempool_free(mboxq, phba->mbox_mem_pool);
 		return;
 	}
+	spin_lock_irqsave(&phba->hbalock, flags);
 	phba->fcf.fcf_flag |= (FCF_DISCOVERED | FCF_IN_USE);
 	phba->hba_flag &= ~FCF_DISC_INPROGRESS;
-	if (vport->port_state != LPFC_FLOGI) {
-		spin_lock_irqsave(&phba->hbalock, flags);
-		spin_unlock_irqrestore(&phba->hbalock, flags);
+	spin_unlock_irqrestore(&phba->hbalock, flags);
+	if (vport->port_state != LPFC_FLOGI)
 		lpfc_initial_flogi(vport);
-	}
 
 	mempool_free(mboxq, phba->mbox_mem_pool);
 	return;
@@ -1282,7 +1284,7 @@ lpfc_match_fcf_conn_list(struct lpfc_hba *phba,
 		!bf_get(lpfc_fcf_record_fcf_valid, new_fcf_record))
 		return 0;
 
-	if (!phba->cfg_enable_fip) {
+	if (!(phba->hba_flag & HBA_FIP_SUPPORT)) {
 		*boot_flag = 0;
 		*addr_mode = bf_get(lpfc_fcf_record_mac_addr_prov,
 				new_fcf_record);
@@ -1457,12 +1459,15 @@ lpfc_check_pending_fcoe_event(struct lpfc_hba *phba, uint8_t unreg_fcf)
 
 	if (phba->link_state >= LPFC_LINK_UP)
 		lpfc_sli4_read_fcf_record(phba, LPFC_FCOE_FCF_GET_FIRST);
-	else
+	else {
 		/*
 		 * Do not continue FCF discovery and clear FCF_DISC_INPROGRESS
 		 * flag
 		 */
+		spin_lock_irq(&phba->hbalock);
 		phba->hba_flag &= ~FCF_DISC_INPROGRESS;
+		spin_unlock_irq(&phba->hbalock);
+	}
 
 	if (unreg_fcf) {
 		spin_lock_irq(&phba->hbalock);
@@ -1795,8 +1800,8 @@ lpfc_mbx_cmpl_reg_vfi(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
 		lpfc_vport_set_state(vport, FC_VPORT_FAILED);
 		goto fail_free_mem;
 	}
-	/* Mark the vport has registered with its VFI */
-	vport->vfi_state |= LPFC_VFI_REGISTERED;
+	/* The VPI is implicitly registered when the VFI is registered */
+	vport->vpi_state |= LPFC_VPI_REGISTERED;
 
 	if (vport->port_state == LPFC_FABRIC_CFG_LINK) {
 		lpfc_start_fdiscs(phba);
@@ -1997,7 +2002,7 @@ lpfc_mbx_process_link_up(struct lpfc_hba *phba, READ_LA_VAR *la)
 		 * is phase 1 implementation that support FCF index 0 and driver
 		 * defaults.
 		 */
-		if (phba->cfg_enable_fip == 0) {
+		if (!(phba->hba_flag & HBA_FIP_SUPPORT)) {
 			fcf_record = kzalloc(sizeof(struct fcf_record),
 					GFP_KERNEL);
 			if (unlikely(!fcf_record)) {
@@ -2254,13 +2259,14 @@ lpfc_mbx_cmpl_unreg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 				 mb->mbxStatus);
 		break;
 	}
+	vport->vpi_state &= ~LPFC_VPI_REGISTERED;
 	vport->unreg_vpi_cmpl = VPORT_OK;
 	mempool_free(pmb, phba->mbox_mem_pool);
 	/*
 	 * This shost reference might have been taken at the beginning of
 	 * lpfc_vport_delete()
 	 */
-	if (vport->load_flag & FC_UNLOADING)
+	if ((vport->load_flag & FC_UNLOADING) && (vport != phba->pport))
 		scsi_host_put(shost);
 }
 
@@ -2311,6 +2317,7 @@ lpfc_mbx_cmpl_reg_vpi(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
 		goto out;
 	}
 
+	vport->vpi_state |= LPFC_VPI_REGISTERED;
 	vport->num_disc_nodes = 0;
 	/* go thru NPR list and issue ELS PLOGIs */
 	if (vport->fc_npr_cnt)
@@ -4364,6 +4371,14 @@ lpfc_fcf_inuse(struct lpfc_hba *phba)
 				ret = 1;
 				spin_unlock_irq(shost->host_lock);
 				goto out;
+			} else {
+				lpfc_printf_log(phba, KERN_INFO, LOG_ELS,
+					"2624 RPI %x DID %x flg %x still "
+					"logged in\n",
+					ndlp->nlp_rpi, ndlp->nlp_DID,
+					ndlp->nlp_flag);
+				if (ndlp->nlp_flag & NLP_RPI_VALID)
+					ret = 1;
 			}
 		}
 		spin_unlock_irq(shost->host_lock);
@@ -4442,7 +4457,7 @@ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
 	 */
 	if (!(phba->hba_flag & HBA_FCOE_SUPPORT) ||
 		!(phba->fcf.fcf_flag & FCF_REGISTERED) ||
-		(phba->cfg_enable_fip == 0)) {
+		(!(phba->hba_flag & HBA_FIP_SUPPORT))) {
 		spin_unlock_irq(&phba->hbalock);
 		return;
 	}
@@ -4460,8 +4475,8 @@ lpfc_unregister_unused_fcf(struct lpfc_hba *phba)
 		(phba->sli3_options & LPFC_SLI3_NPIV_ENABLED))
 		for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++) {
 			lpfc_mbx_unreg_vpi(vports[i]);
-			vports[i]->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
-			vports[i]->vfi_state &= ~LPFC_VFI_REGISTERED;
+			vports[i]->fc_flag |= FC_VPORT_NEEDS_INIT_VPI;
+			vports[i]->vpi_state &= ~LPFC_VPI_REGISTERED;
 		}
 	lpfc_destroy_vport_work_array(phba, vports);
 
@@ -4614,14 +4629,6 @@ lpfc_read_fcoe_param(struct lpfc_hba *phba,
 	if ((fcoe_param_hdr->parm_version != FIPP_VERSION) ||
 		(fcoe_param_hdr->length != FCOE_PARAM_LENGTH))
 		return;
-
-	if (bf_get(lpfc_fip_param_hdr_fipp_mode, fcoe_param_hdr) ==
-			FIPP_MODE_ON)
-		phba->cfg_enable_fip = 1;
-
-	if (bf_get(lpfc_fip_param_hdr_fipp_mode, fcoe_param_hdr) ==
-		FIPP_MODE_OFF)
-		phba->cfg_enable_fip = 0;
 
 	if (fcoe_param_hdr->parm_flags & FIPP_VLAN_VALID) {
 		phba->valid_vlan = 1;
