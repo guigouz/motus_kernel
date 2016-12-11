@@ -25,7 +25,7 @@ extern int gfs2_quota_check(struct gfs2_inode *ip, u32 uid, u32 gid);
 extern void gfs2_quota_change(struct gfs2_inode *ip, s64 change,
 			      u32 uid, u32 gid);
 
-extern int gfs2_quota_sync(struct gfs2_sbd *sdp);
+extern int gfs2_quota_sync(struct super_block *sb, int type);
 extern int gfs2_quota_refresh(struct gfs2_sbd *sdp, int user, u32 id);
 
 extern int gfs2_quota_init(struct gfs2_sbd *sdp);
@@ -50,5 +50,6 @@ static inline int gfs2_quota_lock_check(struct gfs2_inode *ip)
 }
 
 extern int gfs2_shrink_qd_memory(int nr, gfp_t gfp_mask);
+extern const struct quotactl_ops gfs2_quotactl_ops;
 
 #endif /* __QUOTA_DOT_H__ */
