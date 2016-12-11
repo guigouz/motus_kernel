@@ -46,11 +46,13 @@
 #include <linux/proc_fs.h>
 #include <linux/kdev_t.h>
 #include <linux/sunrpc/clnt.h>
+#include <linux/sunrpc/msg_prot.h>
 #include <linux/nfs.h>
 #include <linux/nfs4.h>
 #include <linux/nfs_fs.h>
 #include <linux/nfs_idmap.h>
 #include "nfs4_fs.h"
+#include "internal.h"
 
 #define NFSDBG_FACILITY		NFSDBG_XDR
 
@@ -134,7 +136,7 @@ static int nfs4_stat_to_errno(int);
 #define decode_lookup_maxsz	(op_decode_hdr_maxsz)
 #define encode_share_access_maxsz \
 				(2)
-#define encode_createmode_maxsz	(1 + encode_attrs_maxsz)
+#define encode_createmode_maxsz	(1 + encode_attrs_maxsz + encode_verifier_maxsz)
 #define encode_opentype_maxsz	(1 + encode_createmode_maxsz)
 #define encode_claim_null_maxsz	(1 + nfs4_name_maxsz)
 #define encode_open_maxsz	(op_encode_hdr_maxsz + \
@@ -676,6 +678,19 @@ static int nfs4_stat_to_errno(int);
 					 decode_sequence_maxsz + \
 					 decode_putrootfh_maxsz + \
 					 decode_fsinfo_maxsz)
+
+const u32 nfs41_maxwrite_overhead = ((RPC_MAX_HEADER_WITH_AUTH +
+				      compound_encode_hdr_maxsz +
+				      encode_sequence_maxsz +
+				      encode_putfh_maxsz +
+				      encode_getattr_maxsz) *
+				     XDR_UNIT);
+
+const u32 nfs41_maxread_overhead = ((RPC_MAX_HEADER_WITH_AUTH +
+				     compound_decode_hdr_maxsz +
+				     decode_sequence_maxsz +
+				     decode_putfh_maxsz) *
+				    XDR_UNIT);
 #endif /* CONFIG_NFS_V4_1 */
 
 static const umode_t nfs_type2fmt[] = {
@@ -1140,6 +1155,7 @@ static inline void encode_openhdr(struct xdr_stream *xdr, const struct nfs_opena
 static inline void encode_createmode(struct xdr_stream *xdr, const struct nfs_openargs *arg)
 {
 	__be32 *p;
+	struct nfs_client *clp;
 
 	p = reserve_space(xdr, 4);
 	switch(arg->open_flags & O_EXCL) {
@@ -1148,8 +1164,23 @@ static inline void encode_createmode(struct xdr_stream *xdr, const struct nfs_op
 		encode_attrs(xdr, arg->u.attrs, arg->server);
 		break;
 	default:
-		*p = cpu_to_be32(NFS4_CREATE_EXCLUSIVE);
-		encode_nfs4_verifier(xdr, &arg->u.verifier);
+		clp = arg->server->nfs_client;
+		if (clp->cl_minorversion > 0) {
+			if (nfs4_has_persistent_session(clp)) {
+				*p = cpu_to_be32(NFS4_CREATE_GUARDED);
+				encode_attrs(xdr, arg->u.attrs, arg->server);
+			} else {
+				struct iattr dummy;
+
+				*p = cpu_to_be32(NFS4_CREATE_EXCLUSIVE4_1);
+				encode_nfs4_verifier(xdr, &arg->u.verifier);
+				dummy.ia_valid = 0;
+				encode_attrs(xdr, &dummy, arg->server);
+			}
+		} else {
+			*p = cpu_to_be32(NFS4_CREATE_EXCLUSIVE);
+			encode_nfs4_verifier(xdr, &arg->u.verifier);
+		}
 	}
 }
 
@@ -4583,8 +4614,8 @@ static int decode_sequence(struct xdr_stream *xdr,
 	dummy = be32_to_cpup(p++);
 	/* target highest slot id - currently not processed */
 	dummy = be32_to_cpup(p++);
-	/* result flags - currently not processed */
-	dummy = be32_to_cpup(p);
+	/* result flags */
+	res->sr_status_flags = be32_to_cpup(p);
 	status = 0;
 out_err:
 	res->sr_status = status;

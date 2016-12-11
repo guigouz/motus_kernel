@@ -30,6 +30,15 @@ static inline int nfs4_has_session(const struct nfs_client *clp)
 	return 0;
 }
 
+static inline int nfs4_has_persistent_session(const struct nfs_client *clp)
+{
+#ifdef CONFIG_NFS_V4_1
+	if (nfs4_has_session(clp))
+		return (clp->cl_session->flags & SESSION4_PERSIST);
+#endif /* CONFIG_NFS_V4_1 */
+	return 0;
+}
+
 struct nfs_clone_mount {
 	const struct super_block *sb;
 	const struct dentry *dentry;
@@ -156,6 +165,7 @@ struct vfsmount *nfs_do_refmount(const struct vfsmount *mnt_parent, struct dentr
 
 /* callback_xdr.c */
 extern struct svc_version nfs4_callback_version1;
+extern struct svc_version nfs4_callback_version4;
 
 /* pagelist.c */
 extern int __init nfs_init_nfspagecache(void);
@@ -180,6 +190,10 @@ extern __be32 *nfs3_decode_dirent(__be32 *, struct nfs_entry *, int);
 /* nfs4xdr.c */
 #ifdef CONFIG_NFS_V4
 extern __be32 *nfs4_decode_dirent(__be32 *p, struct nfs_entry *entry, int plus);
+#endif
+#ifdef CONFIG_NFS_V4_1
+extern const u32 nfs41_maxread_overhead;
+extern const u32 nfs41_maxwrite_overhead;
 #endif
 
 /* nfs4proc.c */

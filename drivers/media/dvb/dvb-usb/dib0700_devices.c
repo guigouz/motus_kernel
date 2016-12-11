@@ -558,8 +558,7 @@ static int dib0700_rc_query_legacy(struct dvb_usb_device *d, u32 *event,
 struct dib0700_rc_response {
 	u8 report_id;
 	u8 data_state;
-	u8 system_msb;
-	u8 system_lsb;
+	u16 system;
 	u8 data;
 	u8 not_data;
 };
@@ -589,37 +588,51 @@ static int dib0700_rc_query_v1_20(struct dvb_usb_device *d, u32 *event,
 		return 0;
 	}
 
-	if (actlen != sizeof(buf)) {
-		/* We didn't get back the 6 byte message we expected */
-		err("Unexpected RC response size [%d]", actlen);
-		return -1;
+	printk("IR raw %2X %2X %2X %2X %2X %2X (len %d)\n", buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], actlen);
+
+	switch (dvb_usb_dib0700_ir_proto) {
+	case 0:
+		poll_reply.report_id  = 0;
+		poll_reply.data_state = 1;
+		poll_reply.system     = buf[2];
+		poll_reply.data       = buf[4];
+		poll_reply.not_data   = buf[5];
+
+		/* NEC protocol sends repeat code as 0 0 0 FF */
+		if ((poll_reply.system == 0x00) && (poll_reply.data == 0x00)
+		    && (poll_reply.not_data == 0xff)) {
+			poll_reply.data_state = 2;
+			break;
+		}
+		break;
+	default:
+		if (actlen != sizeof(buf)) {
+			/* We didn't get back the 6 byte message we expected */
+			err("Unexpected RC response size [%d]", actlen);
+			return -1;
+		}
+
+		poll_reply.report_id  = buf[0];
+		poll_reply.data_state = buf[1];
+		poll_reply.system     = (buf[2] << 8) | buf[3];
+		poll_reply.data       = buf[4];
+		poll_reply.not_data   = buf[5];
+
+		break;
 	}
-
-	poll_reply.report_id  = buf[0];
-	poll_reply.data_state = buf[1];
-	poll_reply.system_msb = buf[2];
-	poll_reply.system_lsb = buf[3];
-	poll_reply.data       = buf[4];
-	poll_reply.not_data   = buf[5];
-
-	/*
-	info("rid=%02x ds=%02x sm=%02x sl=%02x d=%02x nd=%02x\n",
-	     poll_reply.report_id, poll_reply.data_state,
-	     poll_reply.system_msb, poll_reply.system_lsb,
-	     poll_reply.data, poll_reply.not_data);
-	*/
 
 	if ((poll_reply.data + poll_reply.not_data) != 0xff) {
 		/* Key failed integrity check */
-		err("key failed integrity check: %02x %02x %02x %02x",
-		    poll_reply.system_msb, poll_reply.system_lsb,
+		err("key failed integrity check: %04x %02x %02x",
+		    poll_reply.system,
 		    poll_reply.data, poll_reply.not_data);
 		return -1;
 	}
 
+
 	/* Find the key in the map */
 	for (i = 0; i < d->props.rc_key_map_size; i++) {
-		if (rc5_custom(&keymap[i]) == poll_reply.system_lsb &&
+		if (rc5_custom(&keymap[i]) == (poll_reply.system & 0xff) &&
 		    rc5_data(&keymap[i]) == poll_reply.data) {
 			*event = keymap[i].event;
 			found = 1;
@@ -628,8 +641,8 @@ static int dib0700_rc_query_v1_20(struct dvb_usb_device *d, u32 *event,
 	}
 
 	if (found == 0) {
-		err("Unknown remote controller key: %02x %02x %02x %02x",
-		    poll_reply.system_msb, poll_reply.system_lsb,
+		err("Unknown remote controller key: %04x %02x %02x",
+		    poll_reply.system,
 		    poll_reply.data, poll_reply.not_data);
 		d->last_event = 0;
 		return 0;
@@ -875,42 +888,36 @@ static struct dvb_usb_rc_key dib0700_rc_keys[] = {
 	{ 0x1d3b, KEY_GOTO },
 	{ 0x1d3d, KEY_POWER },
 
-	/* Key codes for the Elgato EyeTV Diversity silver remote,
-	   set dvb_usb_dib0700_ir_proto=0 */
-	{ 0x4501, KEY_POWER },
-	{ 0x4502, KEY_MUTE },
-	{ 0x4503, KEY_1 },
-	{ 0x4504, KEY_2 },
-	{ 0x4505, KEY_3 },
-	{ 0x4506, KEY_4 },
-	{ 0x4507, KEY_5 },
-	{ 0x4508, KEY_6 },
-	{ 0x4509, KEY_7 },
-	{ 0x450a, KEY_8 },
-	{ 0x450b, KEY_9 },
-	{ 0x450c, KEY_LAST },
-	{ 0x450d, KEY_0 },
-	{ 0x450e, KEY_ENTER },
-	{ 0x450f, KEY_RED },
-	{ 0x4510, KEY_CHANNELUP },
-	{ 0x4511, KEY_GREEN },
-	{ 0x4512, KEY_VOLUMEDOWN },
-	{ 0x4513, KEY_OK },
-	{ 0x4514, KEY_VOLUMEUP },
-	{ 0x4515, KEY_YELLOW },
-	{ 0x4516, KEY_CHANNELDOWN },
-	{ 0x4517, KEY_BLUE },
-	{ 0x4518, KEY_LEFT }, /* Skip backwards */
-	{ 0x4519, KEY_PLAYPAUSE },
-	{ 0x451a, KEY_RIGHT }, /* Skip forward */
-	{ 0x451b, KEY_REWIND },
-	{ 0x451c, KEY_L }, /* Live */
-	{ 0x451d, KEY_FASTFORWARD },
-	{ 0x451e, KEY_STOP }, /* 'Reveal' for Teletext */
-	{ 0x451f, KEY_MENU }, /* KEY_TEXT for Teletext */
-	{ 0x4540, KEY_RECORD }, /* Font 'Size' for Teletext */
-	{ 0x4541, KEY_SCREEN }, /*  Full screen toggle, 'Hold' for Teletext */
-	{ 0x4542, KEY_SELECT }, /* Select video input, 'Select' for Teletext */
+	/* Key codes for the Pixelview SBTVD remote (proto NEC) */
+	{ 0x8613, KEY_MUTE },
+	{ 0x8612, KEY_POWER },
+	{ 0x8601, KEY_1 },
+	{ 0x8602, KEY_2 },
+	{ 0x8603, KEY_3 },
+	{ 0x8604, KEY_4 },
+	{ 0x8605, KEY_5 },
+	{ 0x8606, KEY_6 },
+	{ 0x8607, KEY_7 },
+	{ 0x8608, KEY_8 },
+	{ 0x8609, KEY_9 },
+	{ 0x8600, KEY_0 },
+	{ 0x860d, KEY_CHANNELUP },
+	{ 0x8619, KEY_CHANNELDOWN },
+	{ 0x8610, KEY_VOLUMEUP },
+	{ 0x860c, KEY_VOLUMEDOWN },
+
+	{ 0x860a, KEY_CAMERA },
+	{ 0x860b, KEY_ZOOM },
+	{ 0x861b, KEY_BACKSPACE },
+	{ 0x8615, KEY_ENTER },
+
+	{ 0x861d, KEY_UP },
+	{ 0x861e, KEY_DOWN },
+	{ 0x860e, KEY_LEFT },
+	{ 0x860f, KEY_RIGHT },
+
+	{ 0x8618, KEY_RECORD },
+	{ 0x861a, KEY_STOP },
 };
 
 /* STK7700P: Hauppauge Nova-T Stick, AVerMedia Volar */
@@ -1898,7 +1905,6 @@ struct usb_device_id dib0700_usb_id_table[] = {
 	{ USB_DEVICE(USB_VID_DIBCOM,    USB_PID_DIBCOM_STK807XPVR) },
 	{ USB_DEVICE(USB_VID_DIBCOM,    USB_PID_DIBCOM_STK807XP) },
 	{ USB_DEVICE(USB_VID_PIXELVIEW, USB_PID_PIXELVIEW_SBTVD) },
-	{ USB_DEVICE(USB_VID_ELGATO,    USB_PID_ELGATO_EYETV_DIVERSITY) },
 	{ 0 }		/* Terminating entry */
 };
 MODULE_DEVICE_TABLE(usb, dib0700_usb_id_table);
@@ -2211,7 +2217,7 @@ struct dvb_usb_device_properties dib0700_devices[] = {
 			}
 		},
 
-		.num_device_descs = 7,
+		.num_device_descs = 6,
 		.devices = {
 			{   "DiBcom STK7070PD reference design",
 				{ &dib0700_usb_id_table[17], NULL },
@@ -2237,11 +2243,7 @@ struct dvb_usb_device_properties dib0700_devices[] = {
 			{  "Sony PlayTV",
 				{ &dib0700_usb_id_table[44], NULL },
 				{ NULL },
-			},
-			{   "Elgato EyeTV Diversity",
-				{ &dib0700_usb_id_table[64], NULL },
-				{ NULL },
-			},
+			}
 		},
 		.rc_interval      = DEFAULT_RC_INTERVAL,
 		.rc_key_map       = dib0700_rc_keys,

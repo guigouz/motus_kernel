@@ -405,6 +405,8 @@ static void nfs41_sequence_done(struct nfs_client *clp,
 		if (time_before(clp->cl_last_renewal, timestamp))
 			clp->cl_last_renewal = timestamp;
 		spin_unlock(&clp->cl_lock);
+		/* Check sequence flags */
+		nfs41_handle_sequence_flag_errors(clp, res->sr_status_flags);
 		return;
 	}
 out:
@@ -726,9 +728,15 @@ static struct nfs4_opendata *nfs4_opendata_alloc(struct path *path,
 	p->o_arg.bitmask = server->attr_bitmask;
 	p->o_arg.claim = NFS4_OPEN_CLAIM_NULL;
 	if (flags & O_EXCL) {
-		u32 *s = (u32 *) p->o_arg.u.verifier.data;
-		s[0] = jiffies;
-		s[1] = current->pid;
+		if (nfs4_has_persistent_session(server->nfs_client)) {
+			/* GUARDED */
+			p->o_arg.u.attrs = &p->attrs;
+			memcpy(&p->attrs, attrs, sizeof(p->attrs));
+		} else { /* EXCLUSIVE4_1 */
+			u32 *s = (u32 *) p->o_arg.u.verifier.data;
+			s[0] = jiffies;
+			s[1] = current->pid;
+		}
 	} else if (flags & O_CREAT) {
 		p->o_arg.u.attrs = &p->attrs;
 		memcpy(&p->attrs, attrs, sizeof(p->attrs));
@@ -4412,6 +4420,9 @@ int nfs4_proc_exchange_id(struct nfs_client *clp, struct rpc_cred *cred)
 	dprintk("--> %s\n", __func__);
 	BUG_ON(clp == NULL);
 
+	/* Remove server-only flags */
+	args.flags &= ~EXCHGID4_FLAG_CONFIRMED_R;
+
 	p = (u32 *)verifier.data;
 	*p++ = htonl((u32)clp->cl_boot_time.tv_sec);
 	*p = htonl((u32)clp->cl_boot_time.tv_nsec);
@@ -4922,13 +4933,16 @@ int nfs4_proc_destroy_session(struct nfs4_session *session)
 int nfs4_init_session(struct nfs_server *server)
 {
 	struct nfs_client *clp = server->nfs_client;
+	struct nfs4_session *session;
 	int ret;
 
 	if (!nfs4_has_session(clp))
 		return 0;
 
-	clp->cl_session->fc_attrs.max_rqst_sz = server->wsize;
-	clp->cl_session->fc_attrs.max_resp_sz = server->rsize;
+	session = clp->cl_session;
+	session->fc_attrs.max_rqst_sz = server->wsize + nfs41_maxwrite_overhead;
+	session->fc_attrs.max_resp_sz = server->rsize + nfs41_maxread_overhead;
+
 	ret = nfs4_recover_expired_lease(server);
 	if (!ret)
 		ret = nfs4_check_client_ready(clp);

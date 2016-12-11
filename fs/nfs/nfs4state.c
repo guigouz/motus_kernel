@@ -1173,6 +1173,28 @@ static int nfs4_reclaim_lease(struct nfs_client *clp)
 }
 
 #ifdef CONFIG_NFS_V4_1
+void nfs41_handle_sequence_flag_errors(struct nfs_client *clp, u32 flags)
+{
+	if (!flags)
+		return;
+	else if (flags & SEQ4_STATUS_RESTART_RECLAIM_NEEDED) {
+		set_bit(NFS4CLNT_LEASE_EXPIRED, &clp->cl_state);
+		nfs4_state_start_reclaim_reboot(clp);
+		nfs4_schedule_state_recovery(clp);
+	} else if (flags & (SEQ4_STATUS_EXPIRED_ALL_STATE_REVOKED |
+			    SEQ4_STATUS_EXPIRED_SOME_STATE_REVOKED |
+			    SEQ4_STATUS_ADMIN_STATE_REVOKED |
+			    SEQ4_STATUS_RECALLABLE_STATE_REVOKED |
+			    SEQ4_STATUS_LEASE_MOVED)) {
+		set_bit(NFS4CLNT_LEASE_EXPIRED, &clp->cl_state);
+		nfs4_state_start_reclaim_nograce(clp);
+		nfs4_schedule_state_recovery(clp);
+	} else if (flags & (SEQ4_STATUS_CB_PATH_DOWN |
+			    SEQ4_STATUS_BACKCHANNEL_FAULT |
+			    SEQ4_STATUS_CB_PATH_DOWN_SESSION))
+		nfs_expire_all_delegations(clp);
+}
+
 static void nfs4_session_recovery_handle_error(struct nfs_client *clp, int err)
 {
 	switch (err) {
@@ -1189,8 +1211,8 @@ static int nfs4_reset_session(struct nfs_client *clp)
 
 	INIT_COMPLETION(ses->complete);
 	spin_lock(&tbl->slot_tbl_lock);
+	set_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state);
 	if (tbl->highest_used_slotid != -1) {
-		set_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state);
 		spin_unlock(&tbl->slot_tbl_lock);
 		status = wait_for_completion_interruptible(&ses->complete);
 		if (status) /* -ERESTARTSYS */
