@@ -292,6 +292,9 @@ typedef int drm_ioctl_t(struct drm_device *dev, void *data,
 typedef int drm_ioctl_compat_t(struct file *filp, unsigned int cmd,
 			       unsigned long arg);
 
+#define DRM_IOCTL_NR(n)                _IOC_NR(n)
+#define DRM_MAJOR       226
+
 #define DRM_AUTH	0x1
 #define	DRM_MASTER	0x2
 #define DRM_ROOT_ONLY	0x4
@@ -777,6 +780,15 @@ struct drm_driver {
 	/* Master routines */
 	int (*master_create)(struct drm_device *dev, struct drm_master *master);
 	void (*master_destroy)(struct drm_device *dev, struct drm_master *master);
+	/**
+	 * master_set is called whenever the minor master is set.
+	 * master_drop is called whenever the minor master is dropped.
+	 */
+
+	int (*master_set)(struct drm_device *dev, struct drm_file *file_priv,
+			  bool from_open);
+	void (*master_drop)(struct drm_device *dev, struct drm_file *file_priv,
+			    bool from_release);
 
 	int (*proc_init)(struct drm_minor *minor);
 	void (*proc_cleanup)(struct drm_minor *minor);

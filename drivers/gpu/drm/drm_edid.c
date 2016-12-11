@@ -493,16 +493,17 @@ static struct drm_display_mode drm_dmt_modes[] = {
 		   3048, 3536, 0, 1600, 1603, 1609, 1682, 0,
 		   DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_PVSYNC) },
 };
+static const int drm_num_dmt_modes =
+	sizeof(drm_dmt_modes) / sizeof(struct drm_display_mode);
 
 static struct drm_display_mode *drm_find_dmt(struct drm_device *dev,
 			int hsize, int vsize, int fresh)
 {
-	int i, count;
+	int i;
 	struct drm_display_mode *ptr, *mode;
 
-	count = sizeof(drm_dmt_modes) / sizeof(struct drm_display_mode);
 	mode = NULL;
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < drm_num_dmt_modes; i++) {
 		ptr = &drm_dmt_modes[i];
 		if (hsize == ptr->hdisplay &&
 			vsize == ptr->vdisplay &&
@@ -837,6 +838,109 @@ static int add_standard_modes(struct drm_connector *connector, struct edid *edid
 	return modes;
 }
 
+/*
+ * XXX fix this for:
+ * - GTF secondary curve formula
+ * - EDID 1.4 range offsets
+ * - CVT extended bits
+ */
+static bool
+mode_in_range(struct drm_display_mode *mode, struct detailed_timing *timing)
+{
+	struct detailed_data_monitor_range *range;
+	int hsync, vrefresh;
+
+	range = &timing->data.other_data.data.range;
+
+	hsync = drm_mode_hsync(mode);
+	vrefresh = drm_mode_vrefresh(mode);
+
+	if (hsync < range->min_hfreq_khz || hsync > range->max_hfreq_khz)
+		return false;
+
+	if (vrefresh < range->min_vfreq || vrefresh > range->max_vfreq)
+		return false;
+
+	if (range->pixel_clock_mhz && range->pixel_clock_mhz != 0xff) {
+		/* be forgiving since it's in units of 10MHz */
+		int max_clock = range->pixel_clock_mhz * 10 + 9;
+		max_clock *= 1000;
+		if (mode->clock > max_clock)
+			return false;
+	}
+
+	return true;
+}
+
+/*
+ * XXX If drm_dmt_modes ever regrows the CVT-R modes (and it will) this will
+ * need to account for them.
+ */
+static int drm_gtf_modes_for_range(struct drm_connector *connector,
+				   struct detailed_timing *timing)
+{
+	int i, modes = 0;
+	struct drm_display_mode *newmode;
+	struct drm_device *dev = connector->dev;
+
+	for (i = 0; i < drm_num_dmt_modes; i++) {
+		if (mode_in_range(drm_dmt_modes + i, timing)) {
+			newmode = drm_mode_duplicate(dev, &drm_dmt_modes[i]);
+			if (newmode) {
+				drm_mode_probed_add(connector, newmode);
+				modes++;
+			}
+		}
+	}
+
+	return modes;
+}
+
+static int drm_cvt_modes(struct drm_connector *connector,
+			 struct detailed_timing *timing)
+{
+	int i, j, modes = 0;
+	struct drm_display_mode *newmode;
+	struct drm_device *dev = connector->dev;
+	struct cvt_timing *cvt;
+	const int rates[] = { 60, 85, 75, 60, 50 };
+
+	for (i = 0; i < 4; i++) {
+		int width, height;
+		cvt = &(timing->data.other_data.data.cvt[i]);
+
+		height = (cvt->code[0] + ((cvt->code[1] & 0xf0) << 8) + 1) * 2;
+		switch (cvt->code[1] & 0xc0) {
+		case 0x00:
+			width = height * 4 / 3;
+			break;
+		case 0x40:
+			width = height * 16 / 9;
+			break;
+		case 0x80:
+			width = height * 16 / 10;
+			break;
+		case 0xc0:
+			width = height * 15 / 9;
+			break;
+		}
+
+		for (j = 1; j < 5; j++) {
+			if (cvt->code[2] & (1 << j)) {
+				newmode = drm_cvt_mode(dev, width, height,
+						       rates[j], j == 0,
+						       false, false);
+				if (newmode) {
+					drm_mode_probed_add(connector, newmode);
+					modes++;
+				}
+			}
+		}
+	}
+
+	return modes;
+}
+
 static int add_detailed_modes(struct drm_connector *connector,
 			      struct detailed_timing *timing,
 			      struct edid *edid, u32 quirks, int preferred)
@@ -844,6 +948,7 @@ static int add_detailed_modes(struct drm_connector *connector,
 	int i, modes = 0;
 	struct detailed_non_pixel *data = &timing->data.other_data;
 	int timing_level = standard_timing_level(edid);
+	int gtf = (edid->features & DRM_EDID_FEATURE_DEFAULT_GTF);
 	struct drm_display_mode *newmode;
 	struct drm_device *dev = connector->dev;
 
@@ -862,7 +967,8 @@ static int add_detailed_modes(struct drm_connector *connector,
 	/* other timing types */
 	switch (data->type) {
 	case EDID_DETAIL_MONITOR_RANGE:
-		/* Get monitor range data */
+		if (gtf)
+			modes += drm_gtf_modes_for_range(connector, timing);
 		break;
 	case EDID_DETAIL_STD_MODES:
 		/* Six modes per detailed section */
@@ -878,6 +984,9 @@ static int add_detailed_modes(struct drm_connector *connector,
 				modes++;
 			}
 		}
+		break;
+	case EDID_DETAIL_CVT_3BYTE:
+		modes += drm_cvt_modes(connector, timing);
 		break;
 	default:
 		break;
