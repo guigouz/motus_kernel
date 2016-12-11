@@ -507,7 +507,7 @@ int ip_fragment(struct sk_buff *skb, int (*output)(struct sk_buff *))
 				frag->sk = skb->sk;
 				frag->destructor = sock_wfree;
 			}
-			skb->truesize -= frag->truesize;
+			truesizes += frag->truesize;
 		}
 
 		/* Everything is OK. Generate! */
