@@ -316,74 +316,80 @@ static void svm_hardware_disable(void *garbage)
 	cpu_svm_disable();
 }
 
-static void svm_hardware_enable(void *garbage)
+static int svm_hardware_enable(void *garbage)
 {
 
-	struct svm_cpu_data *sd;
+	struct svm_cpu_data *svm_data;
 	uint64_t efer;
 	struct descriptor_table gdt_descr;
 	struct desc_struct *gdt;
 	int me = raw_smp_processor_id();
 
+	rdmsrl(MSR_EFER, efer);
+	if (efer & EFER_SVME)
+		return -EBUSY;
+
 	if (!has_svm()) {
 		printk(KERN_ERR "svm_cpu_init: err EOPNOTSUPP on %d\n", me);
-		return;
+		return -EINVAL;
 	}
-	sd = per_cpu(svm_data, me);
+	svm_data = per_cpu(svm_data, me);
 
-	if (!sd) {
+	if (!svm_data) {
 		printk(KERN_ERR "svm_cpu_init: svm_data is NULL on %d\n",
 		       me);
-		return;
+		return -EINVAL;
 	}
 
-	sd->asid_generation = 1;
-	sd->max_asid = cpuid_ebx(SVM_CPUID_FUNC) - 1;
-	sd->next_asid = sd->max_asid + 1;
+	svm_data->asid_generation = 1;
+	svm_data->max_asid = cpuid_ebx(SVM_CPUID_FUNC) - 1;
+	svm_data->next_asid = svm_data->max_asid + 1;
 
 	kvm_get_gdt(&gdt_descr);
 	gdt = (struct desc_struct *)gdt_descr.base;
-	sd->tss_desc = (struct kvm_ldttss_desc *)(gdt + GDT_ENTRY_TSS);
+	svm_data->tss_desc = (struct kvm_ldttss_desc *)(gdt + GDT_ENTRY_TSS);
 
-	rdmsrl(MSR_EFER, efer);
 	wrmsrl(MSR_EFER, efer | EFER_SVME);
 
 	wrmsrl(MSR_VM_HSAVE_PA,
-	       page_to_pfn(sd->save_area) << PAGE_SHIFT);
+	       page_to_pfn(svm_data->save_area) << PAGE_SHIFT);
+
+	return 0;
 }
 
 static void svm_cpu_uninit(int cpu)
 {
-	struct svm_cpu_data *sd = per_cpu(svm_data, raw_smp_processor_id());
+	struct svm_cpu_data *svm_data
+		= per_cpu(svm_data, raw_smp_processor_id());
 
-	if (!sd)
+	if (!svm_data)
 		return;
 
 	per_cpu(svm_data, raw_smp_processor_id()) = NULL;
-	__free_page(sd->save_area);
-	kfree(sd);
+	__free_page(svm_data->save_area);
+	kfree(svm_data);
 }
 
 static int svm_cpu_init(int cpu)
 {
-	struct svm_cpu_data *sd;
+	struct svm_cpu_data *svm_data;
 	int r;
 
-	sd = kzalloc(sizeof(struct svm_cpu_data), GFP_KERNEL);
-	if (!sd)
+	svm_data = kzalloc(sizeof(struct svm_cpu_data), GFP_KERNEL);
+	if (!svm_data)
 		return -ENOMEM;
-	sd->cpu = cpu;
-	sd->save_area = alloc_page(GFP_KERNEL);
+	svm_data->cpu = cpu;
+	svm_data->save_area = alloc_page(GFP_KERNEL);
 	r = -ENOMEM;
-	if (!sd->save_area)
+	if (!svm_data->save_area)
 		goto err_1;
 
-	per_cpu(svm_data, cpu) = sd;
+	per_cpu(svm_data, cpu) = svm_data;
 
 	return 0;
 
 err_1:
-	kfree(sd);
+	kfree(svm_data);
 	return r;
 
 }
@@ -766,6 +772,8 @@ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		rdtscll(tsc_this);
 		delta = vcpu->arch.host_tsc - tsc_this;
 		svm->vmcb->control.tsc_offset += delta;
+		if (is_nested(svm))
+			svm->nested.hsave->control.tsc_offset += delta;
 		vcpu->cpu = cpu;
 		kvm_migrate_timers(vcpu);
 		svm->asid_generation = 0;
@@ -1093,16 +1101,16 @@ static void save_host_msrs(struct kvm_vcpu *vcpu)
 #endif
 }
 
-static void new_asid(struct vcpu_svm *svm, struct svm_cpu_data *sd)
+static void new_asid(struct vcpu_svm *svm, struct svm_cpu_data *svm_data)
 {
-	if (sd->next_asid > sd->max_asid) {
-		++sd->asid_generation;
-		sd->next_asid = 1;
+	if (svm_data->next_asid > svm_data->max_asid) {
+		++svm_data->asid_generation;
+		svm_data->next_asid = 1;
 		svm->vmcb->control.tlb_ctl = TLB_CONTROL_FLUSH_ALL_ASID;
 	}
 
-	svm->asid_generation = sd->asid_generation;
-	svm->vmcb->control.asid = sd->next_asid++;
+	svm->asid_generation = svm_data->asid_generation;
+	svm->vmcb->control.asid = svm_data->next_asid++;
 }
 
 static unsigned long svm_get_dr(struct kvm_vcpu *vcpu, int dr)
@@ -1393,10 +1401,7 @@ static void *nested_svm_map(struct vcpu_svm *svm, u64 gpa, enum km_type idx)
 {
 	struct page *page;
 
-	down_read(&current->mm->mmap_sem);
 	page = gfn_to_page(svm->vcpu.kvm, gpa >> PAGE_SHIFT);
-	up_read(&current->mm->mmap_sem);
-
 	if (is_error_page(page))
 		goto error;
 
@@ -2061,10 +2066,14 @@ static int svm_get_msr(struct kvm_vcpu *vcpu, unsigned ecx, u64 *data)
 
 	switch (ecx) {
 	case MSR_IA32_TSC: {
-		u64 tsc;
+		u64 tsc_offset;
 
-		rdtscll(tsc);
-		*data = svm->vmcb->control.tsc_offset + tsc;
+		if (is_nested(svm))
+			tsc_offset = svm->nested.hsave->control.tsc_offset;
+		else
+			tsc_offset = svm->vmcb->control.tsc_offset;
+
+		*data = tsc_offset + native_read_tsc();
 		break;
 	}
 	case MSR_K6_STAR:
@@ -2150,10 +2159,17 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, unsigned ecx, u64 data)
 
 	switch (ecx) {
 	case MSR_IA32_TSC: {
-		u64 tsc;
+		u64 tsc_offset = data - native_read_tsc();
+		u64 g_tsc_offset = 0;
 
-		rdtscll(tsc);
-		svm->vmcb->control.tsc_offset = data - tsc;
+		if (is_nested(svm)) {
+			g_tsc_offset = svm->vmcb->control.tsc_offset -
+				       svm->nested.hsave->control.tsc_offset;
+			svm->nested.hsave->control.tsc_offset = tsc_offset;
+		}
+
+		svm->vmcb->control.tsc_offset = tsc_offset + g_tsc_offset;
+
 		break;
 	}
 	case MSR_K6_STAR:
@@ -2382,8 +2398,8 @@ static void reload_tss(struct kvm_vcpu *vcpu)
 {
 	int cpu = raw_smp_processor_id();
 
-	struct svm_cpu_data *sd = per_cpu(svm_data, cpu);
-	sd->tss_desc->type = 9; /* available 32/64-bit TSS */
+	struct svm_cpu_data *svm_data = per_cpu(svm_data, cpu);
+	svm_data->tss_desc->type = 9; /* available 32/64-bit TSS */
 	load_TR_desc();
 }
 
@@ -2391,12 +2407,12 @@ static void pre_svm_run(struct vcpu_svm *svm)
 {
 	int cpu = raw_smp_processor_id();
 
-	struct svm_cpu_data *sd = per_cpu(svm_data, cpu);
+	struct svm_cpu_data *svm_data = per_cpu(svm_data, cpu);
 
 	svm->vmcb->control.tlb_ctl = TLB_CONTROL_DO_NOTHING;
 	/* FIXME: handle wraparound of asid_generation */
-	if (svm->asid_generation != sd->asid_generation)
-		new_asid(svm, sd);
+	if (svm->asid_generation != svm_data->asid_generation)
+		new_asid(svm, svm_data);
 }
 
 static void svm_inject_nmi(struct kvm_vcpu *vcpu)
