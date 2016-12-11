@@ -547,6 +547,17 @@ void unregister_pernet_device(struct pernet_operations *ops)
 }
 EXPORT_SYMBOL_GPL(unregister_pernet_device);
 
+void unregister_pernet_gen_device(int id, struct pernet_operations *ops)
+{
+	mutex_lock(&net_mutex);
+	if (&ops->list == first_device)
+		first_device = first_device->next;
+	unregister_pernet_operations(ops);
+	ida_remove(&net_generic_ids, id);
+	mutex_unlock(&net_mutex);
+}
+EXPORT_SYMBOL_GPL(unregister_pernet_gen_device);
+
 static void net_generic_release(struct rcu_head *rcu)
 {
 	struct net_generic *ng;
