@@ -727,17 +727,23 @@ unsigned int ata_sff_data_xfer(struct ata_device *dev, unsigned char *buf,
 	else
 		iowrite16_rep(data_addr, buf, words);
 
-	/* Transfer trailing 1 byte, if any. */
+	/* Transfer trailing byte, if any. */
 	if (unlikely(buflen & 0x01)) {
-		__le16 align_buf[1] = { 0 };
-		unsigned char *trailing_buf = buf + buflen - 1;
+		unsigned char pad[2];
 
+		/* Point buf to the tail of buffer */
+		buf += buflen - 1;
+
+		/*
+		 * Use io*16_rep() accessors here as well to avoid pointlessly
+		 * swapping bytes to and from on the big endian machines...
+		 */
 		if (rw == READ) {
-			align_buf[0] = cpu_to_le16(ioread16(data_addr));
-			memcpy(trailing_buf, align_buf, 1);
+			ioread16_rep(data_addr, pad, 1);
+			*buf = pad[0];
 		} else {
-			memcpy(align_buf, trailing_buf, 1);
-			iowrite16(le16_to_cpu(align_buf[0]), data_addr);
+			pad[0] = *buf;
+			iowrite16_rep(data_addr, pad, 1);
 		}
 		words++;
 	}
@@ -770,7 +776,7 @@ unsigned int ata_sff_data_xfer32(struct ata_device *dev, unsigned char *buf,
 	void __iomem *data_addr = ap->ioaddr.data_addr;
 	unsigned int words = buflen >> 2;
 	int slop = buflen & 3;
-	
+
 	if (!(ap->pflags & ATA_PFLAG_PIO32))
 		return ata_sff_data_xfer(dev, buf, buflen, rw);
 
@@ -789,7 +795,7 @@ unsigned int ata_sff_data_xfer32(struct ata_device *dev, unsigned char *buf,
 
 		/*
 		 * Use io*_rep() accessors here as well to avoid pointlessly
-		 * swapping bytes to and fro on the big endian machines...
+		 * swapping bytes to and from on the big endian machines...
 		 */
 		if (rw == READ) {
 			if (slop < 3)
@@ -886,9 +892,6 @@ static void ata_pio_sector(struct ata_queued_cmd *qc)
 		ap->ops->sff_data_xfer(qc->dev, buf + offset, qc->sect_size,
 				       do_write);
 	}
-
-	if (!do_write && !PageSlab(page))
-		flush_dcache_page(page);
 
 	qc->curbytes += qc->sect_size;
 	qc->cursg_ofs += qc->sect_size;
@@ -2381,7 +2384,7 @@ void ata_sff_post_internal_cmd(struct ata_queued_cmd *qc)
 	ap->hsm_task_state = HSM_ST_IDLE;
 
 	if (ap->ioaddr.bmdma_addr)
-		ap->ops->bmdma_stop(qc);
+		ata_bmdma_stop(qc);
 
 	spin_unlock_irqrestore(ap->lock, flags);
 }
