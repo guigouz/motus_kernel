@@ -244,6 +244,10 @@ static const struct v4l2_pix_format vga_mode[] = {
 		.priv = 0},
 };
 
+#define LOAD_PAGE3		255
+#define LOAD_PAGE4		254
+#define END_OF_SEQUENCE		0
+
 /* pac 7302 */
 static const __u8 init_7302[] = {
 /*	index,value */
@@ -302,7 +306,7 @@ static const __u8 start_7302[] = {
 	0xff, 1,	0x02,		/* page 2 */
 	0x22, 1,	0x00,
 	0xff, 1,	0x03,		/* page 3 */
-	0x00, 255,			/* load the page 3 */
+	0, LOAD_PAGE3,			/* load the page 3 */
 	0x11, 1,	0x01,
 	0xff, 1,	0x02,		/* page 2 */
 	0x13, 1,	0x00,
@@ -313,10 +317,11 @@ static const __u8 start_7302[] = {
 	0x6e, 1,	0x08,
 	0xff, 1,	0x01,		/* page 1 */
 	0x78, 1,	0x00,
-	0, 0				/* end of sequence */
+	0, END_OF_SEQUENCE		/* end of sequence */
 };
 
-/* page 3 - the value 0xaa says skip the index - see reg_w_page() */
+#define SKIP		0xaa
+/* page 3 - the value SKIP says skip the index - see reg_w_page() */
 static const __u8 page3_7302[] = {
 	0x90, 0x40, 0x03, 0x50, 0xc2, 0x01, 0x14, 0x16,
 	0x14, 0x12, 0x00, 0x00, 0x00, 0x02, 0x33, 0x00,
@@ -378,18 +383,18 @@ static const __u8 start_7311[] = {
 	0xf0, 13,	0x01, 0x00, 0x00, 0x00, 0x22, 0x00, 0x20, 0x00,
 			0x3f, 0x00, 0x0a, 0x01, 0x00,
 	0xff, 1,	0x04,		/* page 4 */
-	0x00, 254,			/* load the page 4 */
+	0, LOAD_PAGE4,			/* load the page 4 */
 	0x11, 1,	0x01,
-	0, 0				/* end of sequence */
+	0, END_OF_SEQUENCE		/* end of sequence */
 };
 
-/* page 4 - the value 0xaa says skip the index - see reg_w_page() */
+/* page 4 - the value SKIP says skip the index - see reg_w_page() */
 static const __u8 page4_7311[] = {
-	0xaa, 0xaa, 0x04, 0x54, 0x07, 0x2b, 0x09, 0x0f,
-	0x09, 0x00, 0xaa, 0xaa, 0x07, 0x00, 0x00, 0x62,
-	0x08, 0xaa, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x03, 0xa0, 0x01, 0xf4, 0xaa,
-	0xaa, 0x00, 0x08, 0xaa, 0x03, 0xaa, 0x00, 0x68,
+	SKIP, SKIP, 0x04, 0x54, 0x07, 0x2b, 0x09, 0x0f,
+	0x09, 0x00, SKIP, SKIP, 0x07, 0x00, 0x00, 0x62,
+	0x08, SKIP, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x03, 0xa0, 0x01, 0xf4, SKIP,
+	SKIP, 0x00, 0x08, SKIP, 0x03, SKIP, 0x00, 0x68,
 	0xca, 0x10, 0x06, 0x78, 0x00, 0x00, 0x00, 0x00,
 	0x23, 0x28, 0x04, 0x11, 0x00, 0x00
 };
@@ -438,7 +443,7 @@ static void reg_w_page(struct gspca_dev *gspca_dev,
 	int index;
 
 	for (index = 0; index < len; index++) {
-		if (page[index] == 0xaa)		/* skip this index */
+		if (page[index] == SKIP)		/* skip this index */
 			continue;
 		gspca_dev->usb_buf[0] = page[index];
 		usb_control_msg(gspca_dev->dev,
@@ -460,16 +465,16 @@ static void reg_w_var(struct gspca_dev *gspca_dev,
 		index = *seq++;
 		len = *seq++;
 		switch (len) {
-		case 0:
+		case END_OF_SEQUENCE:
 			return;
-		case 254:
+		case LOAD_PAGE4:
 			reg_w_page(gspca_dev, page4_7311, sizeof page4_7311);
 			break;
-		case 255:
+		case LOAD_PAGE3:
 			reg_w_page(gspca_dev, page3_7302, sizeof page3_7302);
 			break;
 		default:
-			if (len > 64) {
+			if (len > USB_BUF_SZ) {
 				PDEBUG(D_ERR|D_STREAM,
 					"Incorrect variable sequence");
 				return;
@@ -573,7 +578,6 @@ static void setcolors(struct gspca_dev *gspca_dev)
 
 	reg_w(gspca_dev, 0xff, 0x03);	/* page 3 */
 	reg_w(gspca_dev, 0x11, 0x01);
-	reg_w(gspca_dev, 0xff, 0x00);	/* page 0 */
 	reg_w(gspca_dev, 0xff, 0x00);	/* page 0 */
 	for (i = 0; i < 9; i++) {
 		v = a[i] * sd->colors / COLOR_MAX + b[i];
@@ -797,13 +801,32 @@ static void do_autogain(struct gspca_dev *gspca_dev)
 		sd->autogain_ignore_frames = PAC_AUTOGAIN_IGNORE_FRAMES;
 }
 
+/* JPEG header, part 1 */
 static const unsigned char pac7311_jpeg_header1[] = {
-  0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08
+  0xff, 0xd8,		/* SOI: Start of Image */
+
+  0xff, 0xc0,		/* SOF0: Start of Frame (Baseline DCT) */
+  0x00, 0x11,		/* length = 17 bytes (including this length field) */
+  0x08			/* Precision: 8 */
+  /* 2 bytes is placed here: number of image lines */
+  /* 2 bytes is placed here: samples per line */
 };
 
+/* JPEG header, continued */
 static const unsigned char pac7311_jpeg_header2[] = {
-  0x03, 0x01, 0x21, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xff, 0xda,
-  0x00, 0x0c, 0x03, 0x01, 0x00, 0x02, 0x11, 0x03, 0x11, 0x00, 0x3f, 0x00
+  0x03,			/* Number of image components: 3 */
+  0x01, 0x21, 0x00,	/* ID=1, Subsampling 1x1, Quantization table: 0 */
+  0x02, 0x11, 0x01,	/* ID=2, Subsampling 2x1, Quantization table: 1 */
+  0x03, 0x11, 0x01,	/* ID=3, Subsampling 2x1, Quantization table: 1 */
+
+  0xff, 0xda,		/* SOS: Start Of Scan */
+  0x00, 0x0c,		/* length = 12 bytes (including this length field) */
+  0x03,			/* number of components: 3 */
+  0x01, 0x00,		/* selector 1, table 0x00 */
+  0x02, 0x11,		/* selector 2, table 0x11 */
+  0x03, 0x11,		/* selector 3, table 0x11 */
+  0x00, 0x3f,		/* Spectral selection: 0 .. 63 */
+  0x00			/* Successive approximation: 0 */
 };
 
 /* this function is run at interrupt level */

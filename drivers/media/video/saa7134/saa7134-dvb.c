@@ -40,6 +40,7 @@
 #include "tda1004x.h"
 #include "nxt200x.h"
 #include "tuner-xc2028.h"
+#include "xc5000.h"
 
 #include "tda10086.h"
 #include "tda826x.h"
@@ -871,6 +872,20 @@ static struct zl10353_config behold_h6_config = {
 	.disable_i2c_gate_ctrl = 1,
 };
 
+static struct xc5000_config behold_x7_tunerconfig = {
+	.i2c_address      = 0xc2>>1,
+	.if_khz           = 4560,
+	.radio_input      = XC5000_RADIO_FM1,
+};
+
+static struct zl10353_config behold_x7_config = {
+	.demod_address = 0x1e>>1,
+	.if2           = 45600,
+	.no_tuner      = 1,
+	.parallel_ts   = 1,
+	.disable_i2c_gate_ctrl = 1,
+};
+
 /* ==================================================================
  * tda10086 based DVB-S cards, helper functions
  */
@@ -1483,6 +1498,15 @@ static int dvb_init(struct saa7134_dev *dev)
 				   TUNER_PHILIPS_FMD1216MEX_MK3);
 		}
 		break;
+	case SAA7134_BOARD_BEHOLD_X7:
+		fe0->dvb.frontend = dvb_attach(zl10353_attach,
+						&behold_x7_config,
+						&dev->i2c_adap);
+		if (fe0->dvb.frontend) {
+			dvb_attach(xc5000_attach, fe0->dvb.frontend,
+				   &dev->i2c_adap, &behold_x7_tunerconfig);
+		}
+		break;
 	case SAA7134_BOARD_AVERMEDIA_A700_PRO:
 	case SAA7134_BOARD_AVERMEDIA_A700_HYBRID:
 		/* Zarlink ZL10313 */
@@ -1551,7 +1575,7 @@ static int dvb_init(struct saa7134_dev *dev)
 
 	/* register everything else */
 	ret = videobuf_dvb_register_bus(&dev->frontends, THIS_MODULE, dev,
-		&dev->pci->dev, adapter_nr, 0);
+					&dev->pci->dev, adapter_nr, 0, NULL);
 
 	/* this sequence is necessary to make the tda1004x load its firmware
 	 * and to enter analog mode of hybrid boards

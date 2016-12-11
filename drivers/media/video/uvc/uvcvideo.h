@@ -153,7 +153,7 @@ struct uvc_xu_control {
 #define UVC_MAX_STATUS_SIZE	16
 
 #define UVC_CTRL_CONTROL_TIMEOUT	300
-#define UVC_CTRL_STREAMING_TIMEOUT	1000
+#define UVC_CTRL_STREAMING_TIMEOUT	3000
 
 /* Devices quirks */
 #define UVC_QUIRK_STATUS_INTERVAL	0x00000001
@@ -480,7 +480,6 @@ struct uvc_device {
 	char name[32];
 
 	enum uvc_device_state state;
-	struct kref kref;
 	struct list_head list;
 	atomic_t users;
 
@@ -493,6 +492,7 @@ struct uvc_device {
 
 	/* Video Streaming interfaces */
 	struct list_head streams;
+	atomic_t nstreams;
 
 	/* Status Interrupt Endpoint */
 	struct usb_host_endpoint *int_ep;
@@ -516,8 +516,6 @@ struct uvc_fh {
 struct uvc_driver {
 	struct usb_driver driver;
 
-	struct mutex open_mutex;	/* protects from open/disconnect race */
-
 	struct list_head devices;	/* struct uvc_device list */
 	struct list_head controls;	/* struct uvc_control_info list */
 	struct mutex ctrl_mutex;	/* protects controls and devices
@@ -538,12 +536,14 @@ struct uvc_driver {
 #define UVC_TRACE_FRAME		(1 << 7)
 #define UVC_TRACE_SUSPEND	(1 << 8)
 #define UVC_TRACE_STATUS	(1 << 9)
+#define UVC_TRACE_VIDEO		(1 << 10)
 
 #define UVC_WARN_MINMAX		0
 #define UVC_WARN_PROBE_DEF	1
 
 extern unsigned int uvc_no_drop_param;
 extern unsigned int uvc_trace_param;
+extern unsigned int uvc_timeout_param;
 
 #define uvc_trace(flag, msg...) \
 	do { \
@@ -576,7 +576,6 @@ extern unsigned int uvc_trace_param;
 
 /* Core driver */
 extern struct uvc_driver uvc_driver;
-extern void uvc_delete(struct kref *kref);
 
 /* Video buffers queue management. */
 extern void uvc_queue_init(struct uvc_video_queue *queue,

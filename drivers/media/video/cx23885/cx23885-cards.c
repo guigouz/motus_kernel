@@ -28,6 +28,7 @@
 #include "cx23885.h"
 #include "tuner-xc2028.h"
 #include "netup-init.h"
+#include "cx23888-ir.h"
 
 /* ------------------------------------------------------------------ */
 /* board config info                                                  */
@@ -801,6 +802,7 @@ void cx23885_gpio_setup(struct cx23885_dev *dev)
 
 int cx23885_ir_init(struct cx23885_dev *dev)
 {
+	int ret = 0;
 	switch (dev->board) {
 	case CX23885_BOARD_HAUPPAUGE_HVR1250:
 	case CX23885_BOARD_HAUPPAUGE_HVR1500:
@@ -812,15 +814,43 @@ int cx23885_ir_init(struct cx23885_dev *dev)
 	case CX23885_BOARD_HAUPPAUGE_HVR1275:
 	case CX23885_BOARD_HAUPPAUGE_HVR1255:
 	case CX23885_BOARD_HAUPPAUGE_HVR1210:
-	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 		/* FIXME: Implement me */
+		break;
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		ret = cx23888_ir_probe(dev);
+		if (ret)
+			break;
+		dev->sd_ir = cx23885_find_hw(dev, CX23885_HW_888_IR);
+		dev->pci_irqmask |= PCI_MSK_IR;
 		break;
 	case CX23885_BOARD_DVICO_FUSIONHDTV_DVB_T_DUAL_EXP:
 		request_module("ir-kbd-i2c");
 		break;
 	}
 
-	return 0;
+	return ret;
+}
+
+void cx23885_ir_fini(struct cx23885_dev *dev)
+{
+	switch (dev->board) {
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		dev->pci_irqmask &= ~PCI_MSK_IR;
+		cx_clear(PCI_INT_MSK, PCI_MSK_IR);
+		cx23888_ir_remove(dev);
+		dev->sd_ir = NULL;
+		break;
+	}
+}
+
+void cx23885_ir_pci_int_enable(struct cx23885_dev *dev)
+{
+	switch (dev->board) {
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
+		if (dev->sd_ir && (dev->pci_irqmask & PCI_MSK_IR))
+			cx_set(PCI_INT_MSK, PCI_MSK_IR);
+		break;
+	}
 }
 
 void cx23885_card_setup(struct cx23885_dev *dev)
@@ -939,6 +969,7 @@ void cx23885_card_setup(struct cx23885_dev *dev)
 	case CX23885_BOARD_COMPRO_VIDEOMATE_E650F:
 	case CX23885_BOARD_NETUP_DUAL_DVBS2_CI:
 	case CX23885_BOARD_COMPRO_VIDEOMATE_E800:
+	case CX23885_BOARD_HAUPPAUGE_HVR1850:
 		dev->sd_cx25840 = v4l2_i2c_new_subdev(&dev->v4l2_dev,
 				&dev->i2c_bus[2].i2c_adap,
 				"cx25840", "cx25840", 0x88 >> 1, NULL);

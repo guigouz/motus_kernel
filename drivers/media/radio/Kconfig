@@ -429,4 +429,17 @@ config RADIO_TAVARUA
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called radio-tavarua.
+
+config RADIO_TEF6862
+	tristate "TEF6862 Car Radio Enhanced Selectivity Tuner"
+	depends on I2C && VIDEO_V4L2
+	---help---
+	  Say Y here if you want to use the TEF6862 Car Radio Enhanced
+	  Selectivity Tuner, found for instance on the Russellville development
+	  board. On the russellville the device is connected to internal
+	  timberdale I2C bus.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called TEF6862.
+
 endif # RADIO_ADAPTERS

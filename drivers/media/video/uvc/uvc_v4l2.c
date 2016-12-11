@@ -364,37 +364,30 @@ static int uvc_v4l2_set_streamparm(struct uvc_streaming *stream,
  * unprivileged state. Only a single instance can be in a privileged state at
  * a given time. Trying to perform an operation that requires privileges will
  * automatically acquire the required privileges if possible, or return -EBUSY
- * otherwise. Privileges are dismissed when closing the instance.
+ * otherwise. Privileges are dismissed when closing the instance or when
+ * freeing the video buffers using VIDIOC_REQBUFS.
  *
  * Operations that require privileges are:
  *
  * - VIDIOC_S_INPUT
  * - VIDIOC_S_PARM
  * - VIDIOC_S_FMT
- * - VIDIOC_TRY_FMT
  * - VIDIOC_REQBUFS
  */
 static int uvc_acquire_privileges(struct uvc_fh *handle)
 {
-	int ret = 0;
-
 	/* Always succeed if the handle is already privileged. */
 	if (handle->state == UVC_HANDLE_ACTIVE)
 		return 0;
 
 	/* Check if the device already has a privileged handle. */
-	mutex_lock(&uvc_driver.open_mutex);
 	if (atomic_inc_return(&handle->stream->active) != 1) {
 		atomic_dec(&handle->stream->active);
-		ret = -EBUSY;
-		goto done;
+		return -EBUSY;
 	}
 
 	handle->state = UVC_HANDLE_ACTIVE;
-
-done:
-	mutex_unlock(&uvc_driver.open_mutex);
-	return ret;
+	return 0;
 }
 
 static void uvc_dismiss_privileges(struct uvc_fh *handle)
@@ -421,24 +414,20 @@ static int uvc_v4l2_open(struct file *file)
 	int ret = 0;
 
 	uvc_trace(UVC_TRACE_CALLS, "uvc_v4l2_open\n");
-	mutex_lock(&uvc_driver.open_mutex);
 	stream = video_drvdata(file);
 
-	if (stream->dev->state & UVC_DEV_DISCONNECTED) {
-		ret = -ENODEV;
-		goto done;
-	}
+	if (stream->dev->state & UVC_DEV_DISCONNECTED)
+		return -ENODEV;
 
 	ret = usb_autopm_get_interface(stream->dev->intf);
 	if (ret < 0)
-		goto done;
+		return ret;
 
 	/* Create the device handle. */
 	handle = kzalloc(sizeof *handle, GFP_KERNEL);
 	if (handle == NULL) {
 		usb_autopm_put_interface(stream->dev->intf);
-		ret = -ENOMEM;
-		goto done;
+		return -ENOMEM;
 	}
 
 	if (atomic_inc_return(&stream->dev->users) == 1) {
@@ -447,7 +436,7 @@ static int uvc_v4l2_open(struct file *file)
 			usb_autopm_put_interface(stream->dev->intf);
 			atomic_dec(&stream->dev->users);
 			kfree(handle);
-			goto done;
+			return ret;
 		}
 	}
 
@@ -456,11 +445,7 @@ static int uvc_v4l2_open(struct file *file)
 	handle->state = UVC_HANDLE_PASSIVE;
 	file->private_data = handle;
 
-	kref_get(&stream->dev->kref);
-
-done:
-	mutex_unlock(&uvc_driver.open_mutex);
-	return ret;
+	return 0;
 }
 
 static int uvc_v4l2_release(struct file *file)
@@ -490,7 +475,6 @@ static int uvc_v4l2_release(struct file *file)
 		uvc_status_stop(stream->dev);
 
 	usb_autopm_put_interface(stream->dev->intf);
-	kref_put(&stream->dev->kref, uvc_delete);
 	return 0;
 }
 
@@ -731,9 +715,6 @@ static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	{
 		struct uvc_streaming_control probe;
 
-		if ((ret = uvc_acquire_privileges(handle)) < 0)
-			return ret;
-
 		return uvc_v4l2_try_format(stream, arg, &probe, NULL, NULL);
 	}
 
@@ -887,6 +868,9 @@ static long uvc_v4l2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		ret = uvc_alloc_buffers(&stream->queue, rb->count, bufsize);
 		if (ret < 0)
 			return ret;
+
+		if (ret == 0)
+			uvc_dismiss_privileges(handle);
 
 		rb->count = ret;
 		ret = 0;

@@ -111,6 +111,7 @@ u32  ir_extract_bits(u32 data, u32 mask);
 int  ir_dump_samples(u32 *samples, int count);
 int  ir_decode_biphase(u32 *samples, int count, int low, int high);
 int  ir_decode_pulsedistance(u32 *samples, int count, int low, int high);
+u32  ir_rc5_decode(unsigned int code);
 
 void ir_rc5_timer_end(unsigned long data);
 void ir_rc5_timer_keyup(unsigned long data);
@@ -172,6 +173,8 @@ extern struct ir_scancode_table ir_codes_ati_tv_wonder_hd_600_table;
 extern struct ir_scancode_table ir_codes_kworld_plus_tv_analog_table;
 extern struct ir_scancode_table ir_codes_kaiomy_table;
 extern struct ir_scancode_table ir_codes_dm1105_nec_table;
+extern struct ir_scancode_table ir_codes_tevii_nec_table;
+extern struct ir_scancode_table ir_codes_tbs_nec_table;
 extern struct ir_scancode_table ir_codes_evga_indtube_table;
 extern struct ir_scancode_table ir_codes_terratec_cinergy_xs_table;
 extern struct ir_scancode_table ir_codes_videomate_s350_table;
