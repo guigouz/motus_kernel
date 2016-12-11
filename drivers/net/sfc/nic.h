@@ -1,19 +1,20 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2006-2008 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
  * by the Free Software Foundation, incorporated herein by reference.
  */
 
-#ifndef EFX_FALCON_H
-#define EFX_FALCON_H
+#ifndef EFX_NIC_H
+#define EFX_NIC_H
 
 #include <linux/i2c-algo-bit.h>
 #include "net_driver.h"
 #include "efx.h"
+#include "mcdi.h"
 
 /*
  * Falcon hardware control
@@ -23,6 +24,7 @@ enum {
 	EFX_REV_FALCON_A0 = 0,
 	EFX_REV_FALCON_A1 = 1,
 	EFX_REV_FALCON_B0 = 2,
+	EFX_REV_SIENA_A0 = 3,
 };
 
 static inline int efx_nic_rev(struct efx_nic *efx)
@@ -32,11 +34,35 @@ static inline int efx_nic_rev(struct efx_nic *efx)
 
 extern u32 efx_nic_fpga_ver(struct efx_nic *efx);
 
+static inline bool efx_nic_has_mc(struct efx_nic *efx)
+{
+	return efx_nic_rev(efx) >= EFX_REV_SIENA_A0;
+}
 /* NIC has two interlinked PCI functions for the same port. */
 static inline bool efx_nic_is_dual_func(struct efx_nic *efx)
 {
 	return efx_nic_rev(efx) < EFX_REV_FALCON_B0;
 }
+
+enum {
+	PHY_TYPE_NONE = 0,
+	PHY_TYPE_TXC43128 = 1,
+	PHY_TYPE_88E1111 = 2,
+	PHY_TYPE_SFX7101 = 3,
+	PHY_TYPE_QT2022C2 = 4,
+	PHY_TYPE_PM8358 = 6,
+	PHY_TYPE_SFT9001A = 8,
+	PHY_TYPE_QT2025C = 9,
+	PHY_TYPE_SFT9001B = 10,
+};
+
+#define FALCON_XMAC_LOOPBACKS			\
+	((1 << LOOPBACK_XGMII) |		\
+	 (1 << LOOPBACK_XGXS) |			\
+	 (1 << LOOPBACK_XAUI))
+
+#define FALCON_GMAC_LOOPBACKS			\
+	(1 << LOOPBACK_GMAC)
 
 /**
  * struct falcon_board_type - board operations and type information
@@ -103,8 +129,25 @@ static inline struct falcon_board *falcon_board(struct efx_nic *efx)
 	return &data->board;
 }
 
+/**
+ * struct siena_nic_data - Siena NIC state
+ * @fw_version: Management controller firmware version
+ * @fw_build: Firmware build number
+ * @mcdi: Management-Controller-to-Driver Interface
+ * @wol_filter_id: Wake-on-LAN packet filter id
+ */
+struct siena_nic_data {
+	u64 fw_version;
+	u32 fw_build;
+	struct efx_mcdi_iface mcdi;
+	int wol_filter_id;
+};
+
+extern void siena_print_fwver(struct efx_nic *efx, char *buf, size_t len);
+
 extern struct efx_nic_type falcon_a1_nic_type;
 extern struct efx_nic_type falcon_b0_nic_type;
+extern struct efx_nic_type siena_a0_nic_type;
 
 /**************************************************************************
  *
@@ -215,4 +258,4 @@ extern void efx_nic_generate_event(struct efx_channel *channel,
 
 extern void falcon_poll_xmac(struct efx_nic *efx);
 
-#endif /* EFX_FALCON_H */
+#endif /* EFX_NIC_H */

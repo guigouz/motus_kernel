@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2006-2008 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -15,6 +15,7 @@
 #include "net_driver.h"
 #include "mdio_10g.h"
 #include "workarounds.h"
+#include "nic.h"
 
 unsigned efx_mdio_id_oui(u32 id)
 {
@@ -173,7 +174,7 @@ bool efx_mdio_links_ok(struct efx_nic *efx, unsigned int mmd_mask)
 	 * of mmd's */
 	if (LOOPBACK_INTERNAL(efx))
 		return true;
-	else if (efx->loopback_mode == LOOPBACK_NETWORK)
+	else if (LOOPBACK_MASK(efx) & LOOPBACKS_WS)
 		return false;
 	else if (efx_phy_mode_disabled(efx->phy_mode))
 		return false;
@@ -210,7 +211,7 @@ void efx_mdio_phy_reconfigure(struct efx_nic *efx)
 			  efx->loopback_mode == LOOPBACK_PCS);
 	efx_mdio_set_flag(efx, MDIO_MMD_PHYXS,
 			  MDIO_CTRL1, MDIO_PHYXS_CTRL1_LOOPBACK,
-			  efx->loopback_mode == LOOPBACK_NETWORK);
+			  efx->loopback_mode == LOOPBACK_PHYXS_WS);
 }
 
 static void efx_mdio_set_mmd_lpower(struct efx_nic *efx,
@@ -312,8 +313,7 @@ void efx_mdio_an_reconfigure(struct efx_nic *efx)
 	/* Enable and restart AN */
 	reg = efx_mdio_read(efx, MDIO_MMD_AN, MDIO_CTRL1);
 	reg |= MDIO_AN_CTRL1_ENABLE;
-	if (!(EFX_WORKAROUND_15195(efx) &&
-	      LOOPBACK_MASK(efx) & efx->phy_op->loopbacks))
+	if (!(EFX_WORKAROUND_15195(efx) && LOOPBACK_EXTERNAL(efx)))
 		reg |= MDIO_AN_CTRL1_RESTART;
 	if (xnp)
 		reg |= MDIO_AN_CTRL1_XNP;

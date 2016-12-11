@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2007-2008 Solarflare Communications Inc.
+ * Copyright 2007-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -12,7 +12,7 @@
 #include <linux/seq_file.h>
 #include "efx.h"
 #include "mdio_10g.h"
-#include "falcon.h"
+#include "nic.h"
 #include "phy.h"
 #include "regs.h"
 #include "workarounds.h"
@@ -30,13 +30,13 @@
 #define SFX7101_LOOPBACKS ((1 << LOOPBACK_PHYXS) |	\
 			   (1 << LOOPBACK_PCS) |	\
 			   (1 << LOOPBACK_PMAPMD) |	\
-			   (1 << LOOPBACK_NETWORK))
+			   (1 << LOOPBACK_PHYXS_WS))
 
 #define SFT9001_LOOPBACKS ((1 << LOOPBACK_GPHY) |	\
 			   (1 << LOOPBACK_PHYXS) |	\
 			   (1 << LOOPBACK_PCS) |	\
 			   (1 << LOOPBACK_PMAPMD) |	\
-			   (1 << LOOPBACK_NETWORK))
+			   (1 << LOOPBACK_PHYXS_WS))
 
 /* We complain if we fail to see the link partner as 10G capable this many
  * times in a row (must be > 1 as sampling the autoneg. registers is racy)
@@ -298,6 +298,23 @@ static int tenxpress_init(struct efx_nic *efx)
 	return 0;
 }
 
+static int sfx7101_phy_probe(struct efx_nic *efx)
+{
+	efx->mdio.mmds = TENXPRESS_REQUIRED_DEVS;
+	efx->mdio.mode_support = MDIO_SUPPORTS_C45 | MDIO_EMULATE_C22;
+	efx->loopback_modes = SFX7101_LOOPBACKS | FALCON_XMAC_LOOPBACKS;
+	return 0;
+}
+
+static int sft9001_phy_probe(struct efx_nic *efx)
+{
+	efx->mdio.mmds = TENXPRESS_REQUIRED_DEVS;
+	efx->mdio.mode_support = MDIO_SUPPORTS_C45 | MDIO_EMULATE_C22;
+	efx->loopback_modes = (SFT9001_LOOPBACKS | FALCON_XMAC_LOOPBACKS |
+			       FALCON_GMAC_LOOPBACKS);
+	return 0;
+}
+
 static int tenxpress_phy_init(struct efx_nic *efx)
 {
 	struct tenxpress_phy_data *phy_data;
@@ -512,7 +529,7 @@ static int tenxpress_phy_reconfigure(struct efx_nic *efx)
 
 	phy_mode_change = (efx->phy_mode == PHY_MODE_NORMAL &&
 			   phy_data->phy_mode != PHY_MODE_NORMAL);
-	loop_reset = (LOOPBACK_OUT_OF(phy_data, efx, efx->phy_op->loopbacks) ||
+	loop_reset = (LOOPBACK_OUT_OF(phy_data, efx, LOOPBACKS_EXTERNAL(efx)) ||
 		      LOOPBACK_CHANGED(phy_data, efx, 1 << LOOPBACK_GPHY));
 
 	if (loop_reset || phy_mode_change) {
@@ -627,6 +644,13 @@ static const char *const sfx7101_test_names[] = {
 	"bist"
 };
 
+static const char *sfx7101_test_name(struct efx_nic *efx, unsigned int index)
+{
+	if (index < ARRAY_SIZE(sfx7101_test_names))
+		return sfx7101_test_names[index];
+	return NULL;
+}
+
 static int
 sfx7101_run_tests(struct efx_nic *efx, int *results, unsigned flags)
 {
@@ -655,6 +679,13 @@ static const char *const sft9001_test_names[] = {
 	"cable.pairC.length",
 	"cable.pairD.length",
 };
+
+static const char *sft9001_test_name(struct efx_nic *efx, unsigned int index)
+{
+	if (index < ARRAY_SIZE(sft9001_test_names))
+		return sft9001_test_names[index];
+	return NULL;
+}
 
 static int sft9001_run_tests(struct efx_nic *efx, int *results, unsigned flags)
 {
@@ -758,7 +789,7 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
 	 * but doesn't advertise the correct speed. So override it */
 	if (efx->loopback_mode == LOOPBACK_GPHY)
 		ecmd->speed = SPEED_1000;
-	else if (LOOPBACK_MASK(efx) & efx->phy_op->loopbacks)
+	else if (LOOPBACK_EXTERNAL(efx))
 		ecmd->speed = SPEED_10000;
 }
 
@@ -788,7 +819,7 @@ static void sft9001_set_npage_adv(struct efx_nic *efx, u32 advertising)
 }
 
 struct efx_phy_operations falcon_sfx7101_phy_ops = {
-	.macs		  = EFX_XMAC,
+	.probe		  = sfx7101_phy_probe,
 	.init             = tenxpress_phy_init,
 	.reconfigure      = tenxpress_phy_reconfigure,
 	.poll             = tenxpress_phy_poll,
@@ -796,15 +827,12 @@ struct efx_phy_operations falcon_sfx7101_phy_ops = {
 	.get_settings	  = tenxpress_get_settings,
 	.set_settings	  = tenxpress_set_settings,
 	.set_npage_adv    = sfx7101_set_npage_adv,
-	.num_tests	  = ARRAY_SIZE(sfx7101_test_names),
-	.test_names	  = sfx7101_test_names,
+	.test_name	  = sfx7101_test_name,
 	.run_tests	  = sfx7101_run_tests,
-	.mmds             = TENXPRESS_REQUIRED_DEVS,
-	.loopbacks        = SFX7101_LOOPBACKS,
 };
 
 struct efx_phy_operations falcon_sft9001_phy_ops = {
-	.macs		  = EFX_GMAC | EFX_XMAC,
+	.probe		  = sft9001_phy_probe,
 	.init             = tenxpress_phy_init,
 	.reconfigure      = tenxpress_phy_reconfigure,
 	.poll             = tenxpress_phy_poll,
@@ -812,9 +840,6 @@ struct efx_phy_operations falcon_sft9001_phy_ops = {
 	.get_settings	  = tenxpress_get_settings,
 	.set_settings	  = tenxpress_set_settings,
 	.set_npage_adv    = sft9001_set_npage_adv,
-	.num_tests	  = ARRAY_SIZE(sft9001_test_names),
-	.test_names	  = sft9001_test_names,
+	.test_name	  = sft9001_test_name,
 	.run_tests	  = sft9001_run_tests,
-	.mmds             = TENXPRESS_REQUIRED_DEVS,
-	.loopbacks        = SFT9001_LOOPBACKS,
 };

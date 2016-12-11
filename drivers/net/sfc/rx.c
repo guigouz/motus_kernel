@@ -1,7 +1,7 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2005-2008 Solarflare Communications Inc.
+ * Copyright 2005-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -17,7 +17,7 @@
 #include <net/checksum.h>
 #include "net_driver.h"
 #include "efx.h"
-#include "falcon.h"
+#include "nic.h"
 #include "selftest.h"
 #include "workarounds.h"
 

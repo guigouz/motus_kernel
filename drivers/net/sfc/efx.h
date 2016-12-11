@@ -1,7 +1,7 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2006-2008 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -18,6 +18,8 @@
 #define FALCON_A_P_DEVID	0x0703
 #define FALCON_A_S_DEVID        0x6703
 #define FALCON_B_P_DEVID        0x0710
+#define BETHPAGE_A_P_DEVID      0x0803
+#define SIENA_A_P_DEVID         0x0813
 
 /* Solarstorm controllers use BAR 0 for I/O space and BAR 2(&3) for memory */
 #define EFX_MEM_BAR 2

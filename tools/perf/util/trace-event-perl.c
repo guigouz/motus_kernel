@@ -242,7 +242,7 @@ static inline struct event *find_cache_event(int type)
 	return event;
 }
 
-int get_common_pc(struct scripting_context *context)
+int common_pc(struct scripting_context *context)
 {
 	int pc;
 
@@ -251,7 +251,7 @@ int get_common_pc(struct scripting_context *context)
 	return pc;
 }
 
-int get_common_flags(struct scripting_context *context)
+int common_flags(struct scripting_context *context)
 {
 	int flags;
 
@@ -260,7 +260,7 @@ int get_common_flags(struct scripting_context *context)
 	return flags;
 }
 
-int get_common_lock_depth(struct scripting_context *context)
+int common_lock_depth(struct scripting_context *context)
 {
 	int lock_depth;
 
@@ -577,7 +577,9 @@ struct scripting_ops perl_scripting_ops = {
 void setup_perl_scripting(void)
 {
 	fprintf(stderr, "Perl scripting not supported."
-		"  Install libperl-dev[el] and rebuild perf to get it.\n");
+		"  Install libperl and rebuild perf to enable it.  e.g. "
+		"apt-get install libperl-dev (ubuntu), yum install "
+		"perl-ExtUtils-Embed (Fedora), etc.\n");
 }
 #else
 void setup_perl_scripting(void)

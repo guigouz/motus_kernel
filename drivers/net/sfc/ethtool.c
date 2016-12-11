@@ -1,7 +1,7 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2006-2008 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -15,7 +15,7 @@
 #include "workarounds.h"
 #include "selftest.h"
 #include "efx.h"
-#include "falcon.h"
+#include "nic.h"
 #include "spi.h"
 #include "mdio_10g.h"
 
@@ -236,6 +236,9 @@ static void efx_ethtool_get_drvinfo(struct net_device *net_dev,
 
 	strlcpy(info->driver, EFX_DRIVER_NAME, sizeof(info->driver));
 	strlcpy(info->version, EFX_DRIVER_VERSION, sizeof(info->version));
+	if (efx_nic_rev(efx) >= EFX_REV_SIENA_A0)
+		siena_print_fwver(efx, info->fw_version,
+				  sizeof(info->fw_version));
 	strlcpy(info->bus_info, pci_name(efx->pci_dev), sizeof(info->bus_info));
 }
 
@@ -365,9 +368,21 @@ static int efx_ethtool_fill_self_tests(struct efx_nic *efx,
 	efx_fill_test(n++, strings, data, &tests->registers,
 		      "core", 0, "registers", NULL);
 
-	for (i = 0; i < efx->phy_op->num_tests; i++)
-		efx_fill_test(n++, strings, data, &tests->phy[i],
-			      "phy", 0, efx->phy_op->test_names[i], NULL);
+	if (efx->phy_op->run_tests != NULL) {
+		EFX_BUG_ON_PARANOID(efx->phy_op->test_name == NULL);
+
+		for (i = 0; true; ++i) {
+			const char *name;
+
+			EFX_BUG_ON_PARANOID(i >= EFX_MAX_PHY_TESTS);
+			name = efx->phy_op->test_name(efx, i);
+			if (name == NULL)
+				break;
+
+			efx_fill_test(n++, strings, data, &tests->phy[i],
+				      "phy", 0, name, NULL);
+		}
+	}
 
 	/* Loopback tests */
 	for (mode = LOOPBACK_NONE; mode <= LOOPBACK_TEST_MAX; mode++) {
@@ -454,6 +469,36 @@ static void efx_ethtool_get_stats(struct net_device *net_dev,
 			break;
 		}
 	}
+}
+
+static int efx_ethtool_set_tso(struct net_device *net_dev, u32 enable)
+{
+	struct efx_nic *efx __attribute__ ((unused)) = netdev_priv(net_dev);
+	unsigned long features;
+
+	features = NETIF_F_TSO;
+	if (efx->type->offload_features & NETIF_F_V6_CSUM)
+		features |= NETIF_F_TSO6;
+
+	if (enable)
+		net_dev->features |= features;
+	else
+		net_dev->features &= ~features;
+
+	return 0;
+}
+
+static int efx_ethtool_set_tx_csum(struct net_device *net_dev, u32 enable)
+{
+	struct efx_nic *efx = netdev_priv(net_dev);
+	unsigned long features = efx->type->offload_features & NETIF_F_ALL_CSUM;
+
+	if (enable)
+		net_dev->features |= features;
+	else
+		net_dev->features &= ~features;
+
+	return 0;
 }
 
 static int efx_ethtool_set_rx_csum(struct net_device *net_dev, u32 enable)
@@ -555,7 +600,8 @@ static int efx_ethtool_get_eeprom(struct net_device *net_dev,
 	rc = mutex_lock_interruptible(&efx->spi_lock);
 	if (rc)
 		return rc;
-	rc = falcon_spi_read(spi, eeprom->offset + EFX_EEPROM_BOOTCONFIG_START,
+	rc = falcon_spi_read(efx, spi,
+			     eeprom->offset + EFX_EEPROM_BOOTCONFIG_START,
 			     eeprom->len, &len, buf);
 	mutex_unlock(&efx->spi_lock);
 
@@ -578,7 +624,8 @@ static int efx_ethtool_set_eeprom(struct net_device *net_dev,
 	rc = mutex_lock_interruptible(&efx->spi_lock);
 	if (rc)
 		return rc;
-	rc = falcon_spi_write(spi, eeprom->offset + EFX_EEPROM_BOOTCONFIG_START,
+	rc = falcon_spi_write(efx, spi,
+			      eeprom->offset + EFX_EEPROM_BOOTCONFIG_START,
 			      eeprom->len, &len, buf);
 	mutex_unlock(&efx->spi_lock);
 
@@ -799,11 +846,13 @@ const struct ethtool_ops efx_ethtool_ops = {
 	.get_rx_csum		= efx_ethtool_get_rx_csum,
 	.set_rx_csum		= efx_ethtool_set_rx_csum,
 	.get_tx_csum		= ethtool_op_get_tx_csum,
-	.set_tx_csum		= ethtool_op_set_tx_csum,
+	/* Need to enable/disable IPv6 too */
+	.set_tx_csum		= efx_ethtool_set_tx_csum,
 	.get_sg			= ethtool_op_get_sg,
 	.set_sg			= ethtool_op_set_sg,
 	.get_tso		= ethtool_op_get_tso,
-	.set_tso		= ethtool_op_set_tso,
+	/* Need to enable/disable TSO-IPv6 too */
+	.set_tso		= efx_ethtool_set_tso,
 	.get_flags		= ethtool_op_get_flags,
 	.set_flags		= ethtool_op_set_flags,
 	.get_sset_count		= efx_ethtool_get_sset_count,

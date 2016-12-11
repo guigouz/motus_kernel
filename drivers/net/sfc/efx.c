@@ -1,7 +1,7 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
  * Copyright 2005-2006 Fen Systems Ltd.
- * Copyright 2005-2008 Solarflare Communications Inc.
+ * Copyright 2005-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -23,7 +23,9 @@
 #include "net_driver.h"
 #include "efx.h"
 #include "mdio_10g.h"
-#include "falcon.h"
+#include "nic.h"
+
+#include "mcdi.h"
 
 /**************************************************************************
  *
@@ -36,15 +38,32 @@
 const unsigned int efx_loopback_mode_max = LOOPBACK_MAX;
 const char *efx_loopback_mode_names[] = {
 	[LOOPBACK_NONE]		= "NONE",
+	[LOOPBACK_DATA]		= "DATAPATH",
 	[LOOPBACK_GMAC]		= "GMAC",
 	[LOOPBACK_XGMII]	= "XGMII",
 	[LOOPBACK_XGXS]		= "XGXS",
 	[LOOPBACK_XAUI]  	= "XAUI",
+	[LOOPBACK_GMII] 	= "GMII",
+	[LOOPBACK_SGMII] 	= "SGMII",
+	[LOOPBACK_XGBR]		= "XGBR",
+	[LOOPBACK_XFI]		= "XFI",
+	[LOOPBACK_XAUI_FAR]	= "XAUI_FAR",
+	[LOOPBACK_GMII_FAR]	= "GMII_FAR",
+	[LOOPBACK_SGMII_FAR]	= "SGMII_FAR",
+	[LOOPBACK_XFI_FAR]	= "XFI_FAR",
 	[LOOPBACK_GPHY]		= "GPHY",
 	[LOOPBACK_PHYXS]	= "PHYXS",
 	[LOOPBACK_PCS]	 	= "PCS",
 	[LOOPBACK_PMAPMD] 	= "PMA/PMD",
-	[LOOPBACK_NETWORK]	= "NETWORK",
+	[LOOPBACK_XPORT]	= "XPORT",
+	[LOOPBACK_XGMII_WS]	= "XGMII_WS",
+	[LOOPBACK_XAUI_WS]  	= "XAUI_WS",
+	[LOOPBACK_XAUI_WS_FAR]  = "XAUI_WS_FAR",
+	[LOOPBACK_XAUI_WS_NEAR] = "XAUI_WS_NEAR",
+	[LOOPBACK_GMII_WS] 	= "GMII_WS",
+	[LOOPBACK_XFI_WS]	= "XFI_WS",
+	[LOOPBACK_XFI_WS_FAR]	= "XFI_WS_FAR",
+	[LOOPBACK_PHYXS_WS]  	= "PHYXS_WS",
 };
 
 /* Interrupt mode names (see INT_MODE())) */
@@ -67,6 +86,7 @@ const char *efx_reset_type_names[] = {
 	[RESET_TYPE_RX_DESC_FETCH] = "RX_DESC_FETCH",
 	[RESET_TYPE_TX_DESC_FETCH] = "TX_DESC_FETCH",
 	[RESET_TYPE_TX_SKIP]       = "TX_SKIP",
+	[RESET_TYPE_MC_FAILURE]    = "MC_FAILURE",
 };
 
 #define EFX_MAX_MTU (9 * 1024)
@@ -1174,6 +1194,15 @@ static void efx_start_all(struct efx_nic *efx)
 
 	efx_nic_enable_interrupts(efx);
 
+	/* Switch to event based MCDI completions after enabling interrupts.
+	 * If a reset has been scheduled, then we need to stay in polled mode.
+	 * Rather than serialising efx_mcdi_mode_event() [which sleeps] and
+	 * reset_pending [modified from an atomic context], we instead guarantee
+	 * that efx_mcdi_mode_poll() isn't reverted erroneously */
+	efx_mcdi_mode_event(efx);
+	if (efx->reset_pending != RESET_TYPE_NONE)
+		efx_mcdi_mode_poll(efx);
+
 	/* Start the hardware monitor if there is one. Otherwise (we're link
 	 * event driven), we have to poll the PHY because after an event queue
 	 * flush, we could have a missed a link state change */
@@ -1224,6 +1253,9 @@ static void efx_stop_all(struct efx_nic *efx)
 		return;
 
 	efx->type->stop_stats(efx);
+
+	/* Switch to MCDI polling on Siena before disabling interrupts */
+	efx_mcdi_mode_poll(efx);
 
 	/* Disable interrupts and wait for ISR to complete */
 	efx_nic_disable_interrupts(efx);
@@ -1432,6 +1464,8 @@ static int efx_net_open(struct net_device *net_dev)
 		return -EIO;
 	if (efx->phy_mode & PHY_MODE_SPECIAL)
 		return -EBUSY;
+	if (efx_mcdi_poll_reboot(efx) && efx_reset(efx, RESET_TYPE_ALL))
+		return -EIO;
 
 	/* Notify the kernel of the link state polled during driver load,
 	 * before the monitor starts running */
@@ -1882,6 +1916,7 @@ void efx_schedule_reset(struct efx_nic *efx, enum reset_type type)
 	case RESET_TYPE_TX_SKIP:
 		method = RESET_TYPE_INVISIBLE;
 		break;
+	case RESET_TYPE_MC_FAILURE:
 	default:
 		method = RESET_TYPE_ALL;
 		break;
@@ -1894,6 +1929,10 @@ void efx_schedule_reset(struct efx_nic *efx, enum reset_type type)
 		EFX_LOG(efx, "scheduling %s reset\n", RESET_TYPE(method));
 
 	efx->reset_pending = method;
+
+	/* efx_process_channel() will no longer read events once a
+	 * reset is scheduled. So switch back to poll'd MCDI completions. */
+	efx_mcdi_mode_poll(efx);
 
 	queue_work(reset_workqueue, &efx->reset_work);
 }
@@ -1910,6 +1949,10 @@ static struct pci_device_id efx_pci_table[] __devinitdata = {
 	 .driver_data = (unsigned long) &falcon_a1_nic_type},
 	{PCI_DEVICE(EFX_VENDID_SFC, FALCON_B_P_DEVID),
 	 .driver_data = (unsigned long) &falcon_b0_nic_type},
+	{PCI_DEVICE(EFX_VENDID_SFC, BETHPAGE_A_P_DEVID),
+	 .driver_data = (unsigned long) &siena_a0_nic_type},
+	{PCI_DEVICE(EFX_VENDID_SFC, SIENA_A_P_DEVID),
+	 .driver_data = (unsigned long) &siena_a0_nic_type},
 	{0}			/* end of list */
 };
 
@@ -1964,6 +2007,9 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
 	spin_lock_init(&efx->biu_lock);
 	mutex_init(&efx->mdio_lock);
 	mutex_init(&efx->spi_lock);
+#ifdef CONFIG_SFC_MTD
+	INIT_LIST_HEAD(&efx->mtd_list);
+#endif
 	INIT_WORK(&efx->reset_work, efx_reset_work);
 	INIT_DELAYED_WORK(&efx->monitor_work, efx_monitor);
 	efx->pci_dev = pci_dev;
@@ -2163,9 +2209,11 @@ static int __devinit efx_pci_probe(struct pci_dev *pci_dev,
 	net_dev = alloc_etherdev(sizeof(*efx));
 	if (!net_dev)
 		return -ENOMEM;
-	net_dev->features |= (NETIF_F_IP_CSUM | NETIF_F_SG |
+	net_dev->features |= (type->offload_features | NETIF_F_SG |
 			      NETIF_F_HIGHDMA | NETIF_F_TSO |
 			      NETIF_F_GRO);
+	if (type->offload_features & NETIF_F_V6_CSUM)
+		net_dev->features |= NETIF_F_TSO6;
 	/* Mask for features that also apply to VLAN devices */
 	net_dev->vlan_features |= (NETIF_F_ALL_CSUM | NETIF_F_SG |
 				   NETIF_F_HIGHDMA | NETIF_F_TSO);
@@ -2409,8 +2457,8 @@ static void __exit efx_exit_module(void)
 module_init(efx_init_module);
 module_exit(efx_exit_module);
 
-MODULE_AUTHOR("Michael Brown <mbrown@fensystems.co.uk> and "
-	      "Solarflare Communications");
+MODULE_AUTHOR("Solarflare Communications and "
+	      "Michael Brown <mbrown@fensystems.co.uk>");
 MODULE_DESCRIPTION("Solarflare Communications network driver");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, efx_pci_table);

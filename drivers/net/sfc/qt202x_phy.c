@@ -1,6 +1,6 @@
 /****************************************************************************
  * Driver for Solarflare Solarstorm network controllers and boards
- * Copyright 2006-2008 Solarflare Communications Inc.
+ * Copyright 2006-2009 Solarflare Communications Inc.
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 as published
@@ -15,7 +15,7 @@
 #include "efx.h"
 #include "mdio_10g.h"
 #include "phy.h"
-#include "falcon.h"
+#include "nic.h"
 
 #define QT202X_REQUIRED_DEVS (MDIO_DEVS_PCS |		\
 			      MDIO_DEVS_PMAPMD |	\
@@ -23,7 +23,7 @@
 
 #define QT202X_LOOPBACKS ((1 << LOOPBACK_PCS) |		\
 			  (1 << LOOPBACK_PMAPMD) |	\
-			  (1 << LOOPBACK_NETWORK))
+			  (1 << LOOPBACK_PHYXS_WS))
 
 /****************************************************************************/
 /* Quake-specific MDIO registers */
@@ -135,6 +135,14 @@ static int qt202x_reset_phy(struct efx_nic *efx)
 	return rc;
 }
 
+static int qt202x_phy_probe(struct efx_nic *efx)
+{
+	efx->mdio.mmds = QT202X_REQUIRED_DEVS;
+	efx->mdio.mode_support = MDIO_SUPPORTS_C45 | MDIO_EMULATE_C22;
+	efx->loopback_modes = QT202X_LOOPBACKS | FALCON_XMAC_LOOPBACKS;
+	return 0;
+}
+
 static int qt202x_phy_init(struct efx_nic *efx)
 {
 	struct qt202x_phy_data *phy_data;
@@ -224,13 +232,11 @@ static void qt202x_phy_fini(struct efx_nic *efx)
 }
 
 struct efx_phy_operations falcon_qt202x_phy_ops = {
-	.macs		 = EFX_XMAC,
+	.probe		 = qt202x_phy_probe,
 	.init		 = qt202x_phy_init,
 	.reconfigure	 = qt202x_phy_reconfigure,
 	.poll	     	 = qt202x_phy_poll,
 	.fini	  	 = qt202x_phy_fini,
 	.get_settings	 = qt202x_phy_get_settings,
 	.set_settings	 = efx_mdio_set_settings,
-	.mmds            = QT202X_REQUIRED_DEVS,
-	.loopbacks       = QT202X_LOOPBACKS,
 };
