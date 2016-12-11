@@ -234,6 +234,7 @@ extern int sysctl_tcp_base_mss;
 extern int sysctl_tcp_workaround_signed_windows;
 extern int sysctl_tcp_slow_start_after_idle;
 extern int sysctl_tcp_max_ssthresh;
+extern int sysctl_tcp_cookie_size;
 
 extern atomic_t tcp_memory_allocated;
 extern struct percpu_counter tcp_sockets_allocated;
@@ -350,11 +351,6 @@ static inline void tcp_dec_quickack_mode(struct sock *sk,
 
 extern void tcp_enter_quickack_mode(struct sock *sk);
 
-static inline void tcp_clear_options(struct tcp_options_received *rx_opt)
-{
- 	rx_opt->tstamp_ok = rx_opt->sack_ok = rx_opt->wscale_ok = rx_opt->snd_wscale = 0;
-}
-
 #define	TCP_ECN_OK		1
 #define	TCP_ECN_QUEUE_CWR	2
 #define	TCP_ECN_DEMAND_CWR	4
@@ -450,7 +446,8 @@ extern int			tcp_connect(struct sock *sk);
 
 extern struct sk_buff *		tcp_make_synack(struct sock *sk,
 						struct dst_entry *dst,
-						struct request_sock *req);
+						struct request_sock *req,
+						struct request_values *rvp);
 
 extern int			tcp_disconnect(struct sock *sk, int flags);
 
@@ -1508,6 +1505,14 @@ struct tcp_request_sock_ops {
 						  struct sk_buff *skb);
 #endif
 };
+
+/* Using SHA1 for now, define some constants.
+ */
+#define COOKIE_DIGEST_WORDS (SHA_DIGEST_WORDS)
+#define COOKIE_MESSAGE_WORDS (SHA_MESSAGE_BYTES / 4)
+#define COOKIE_WORKSPACE_WORDS (COOKIE_DIGEST_WORDS + COOKIE_MESSAGE_WORDS)
+
+extern int tcp_cookie_generator(u32 *bakery);
 
 extern void tcp_v4_init(void);
 extern void tcp_init(void);
