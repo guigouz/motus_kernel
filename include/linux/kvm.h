@@ -116,11 +116,6 @@ struct kvm_run {
 	__u64 cr8;
 	__u64 apic_base;
 
-#ifdef __KVM_S390
-	/* the processor status word for s390 */
-	__u64 psw_mask; /* psw upper half */
-	__u64 psw_addr; /* psw lower half */
-#endif
 	union {
 		/* KVM_EXIT_UNKNOWN */
 		struct {
@@ -136,7 +131,7 @@ struct kvm_run {
 			__u32 error_code;
 		} ex;
 		/* KVM_EXIT_IO */
-		struct kvm_io {
+		struct {
 #define KVM_EXIT_IO_IN  0
 #define KVM_EXIT_IO_OUT 1
 			__u8 direction;
@@ -172,6 +167,8 @@ struct kvm_run {
 		/* KVM_EXIT_S390_SIEIC */
 		struct {
 			__u8 icptcode;
+			__u64 mask; /* psw upper half */
+			__u64 addr; /* psw lower half */
 			__u16 ipa;
 			__u32 ipb;
 		} s390_sieic;
@@ -242,10 +239,10 @@ struct kvm_interrupt {
 /* for KVM_GET_DIRTY_LOG */
 struct kvm_dirty_log {
 	__u32 slot;
-	__u32 padding;
+	__u32 padding1;
 	union {
 		void __user *dirty_bitmap; /* one bit per page */
-		__u64 padding;
+		__u64 padding2;
 	};
 };
 
@@ -420,6 +417,10 @@ struct kvm_ioeventfd {
 #ifdef __KVM_HAVE_DEVICE_ASSIGNMENT
 #define KVM_CAP_DEVICE_DEASSIGNMENT 27
 #endif
+#ifdef __KVM_HAVE_MSIX
+#define KVM_CAP_DEVICE_MSIX 28
+#endif
+#define KVM_CAP_ASSIGN_DEV_IRQ 29
 /* Another bug in KVM_SET_USER_MEMORY_REGION fixed: */
 #define KVM_CAP_JOIN_MEMORY_REGIONS_WORKS 30
 #ifdef __KVM_HAVE_MCE
@@ -435,7 +436,9 @@ struct kvm_ioeventfd {
 #endif
 #define KVM_CAP_IOEVENTFD 36
 #define KVM_CAP_SET_IDENTITY_MAP_ADDR 37
-#define KVM_CAP_ADJUST_CLOCK 39
+#ifdef __KVM_HAVE_XEN_HVM
+#define KVM_CAP_XEN_HVM 38
+#endif
 
 #ifdef KVM_CAP_IRQ_ROUTING
 
@@ -474,7 +477,6 @@ struct kvm_irq_routing {
 };
 
 #endif
-#define KVM_CAP_S390_PSW 42
 
 #ifdef KVM_CAP_MCE
 /* x86 MCE */
@@ -489,6 +491,18 @@ struct kvm_x86_mce {
 };
 #endif
 
+#ifdef KVM_CAP_XEN_HVM
+struct kvm_xen_hvm_config {
+	__u32 flags;
+	__u32 msr;
+	__u64 blob_addr_32;
+	__u64 blob_addr_64;
+	__u8 blob_size_32;
+	__u8 blob_size_64;
+	__u8 pad2[30];
+};
+#endif
+
 #define KVM_IRQFD_FLAG_DEASSIGN (1 << 0)
 
 struct kvm_irqfd {
@@ -496,12 +510,6 @@ struct kvm_irqfd {
 	__u32 gsi;
 	__u32 flags;
 	__u8  pad[20];
-};
-
-struct kvm_clock_data {
-	__u64 clock;
-	__u32 flags;
-	__u32 pad[9];
 };
 
 /*
@@ -537,8 +545,10 @@ struct kvm_clock_data {
 #define KVM_ASSIGN_PCI_DEVICE _IOR(KVMIO, 0x69, \
 				   struct kvm_assigned_pci_dev)
 #define KVM_SET_GSI_ROUTING       _IOW(KVMIO, 0x6a, struct kvm_irq_routing)
+/* deprecated, replaced by KVM_ASSIGN_DEV_IRQ */
 #define KVM_ASSIGN_IRQ _IOR(KVMIO, 0x70, \
 			    struct kvm_assigned_irq)
+#define KVM_ASSIGN_DEV_IRQ        _IOW(KVMIO, 0x70, struct kvm_assigned_irq)
 #define KVM_REINJECT_CONTROL      _IO(KVMIO, 0x71)
 #define KVM_DEASSIGN_PCI_DEVICE _IOW(KVMIO, 0x72, \
 				     struct kvm_assigned_pci_dev)
@@ -551,8 +561,7 @@ struct kvm_clock_data {
 #define KVM_CREATE_PIT2		   _IOW(KVMIO, 0x77, struct kvm_pit_config)
 #define KVM_SET_BOOT_CPU_ID        _IO(KVMIO, 0x78)
 #define KVM_IOEVENTFD             _IOW(KVMIO, 0x79, struct kvm_ioeventfd)
-#define KVM_SET_CLOCK             _IOW(KVMIO, 0x7b, struct kvm_clock_data)
-#define KVM_GET_CLOCK             _IOR(KVMIO, 0x7c, struct kvm_clock_data)
+#define KVM_XEN_HVM_CONFIG        _IOW(KVMIO, 0x7a, struct kvm_xen_hvm_config)
 
 /*
  * ioctls for vcpu fds
@@ -650,6 +659,8 @@ struct kvm_debug_guest {
 #define KVM_TRC_STLB_INVAL       (KVM_TRC_HANDLER + 0x18)
 #define KVM_TRC_PPC_INSTR        (KVM_TRC_HANDLER + 0x19)
 
+#define KVM_DEV_ASSIGN_ENABLE_IOMMU	(1 << 0)
+
 struct kvm_assigned_pci_dev {
 	__u32 assigned_dev_id;
 	__u32 busnr;
@@ -659,6 +670,17 @@ struct kvm_assigned_pci_dev {
 		__u32 reserved[12];
 	};
 };
+
+#define KVM_DEV_IRQ_HOST_INTX    (1 << 0)
+#define KVM_DEV_IRQ_HOST_MSI     (1 << 1)
+#define KVM_DEV_IRQ_HOST_MSIX    (1 << 2)
+
+#define KVM_DEV_IRQ_GUEST_INTX   (1 << 8)
+#define KVM_DEV_IRQ_GUEST_MSI    (1 << 9)
+#define KVM_DEV_IRQ_GUEST_MSIX   (1 << 10)
+
+#define KVM_DEV_IRQ_HOST_MASK	 0x00ff
+#define KVM_DEV_IRQ_GUEST_MASK   0xff00
 
 struct kvm_assigned_irq {
 	__u32 assigned_dev_id;
@@ -675,7 +697,6 @@ struct kvm_assigned_irq {
 	};
 };
 
-#define KVM_DEV_ASSIGN_ENABLE_IOMMU	(1 << 0)
 
 struct kvm_assigned_msix_nr {
 	__u32 assigned_dev_id;

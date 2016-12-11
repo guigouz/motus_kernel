@@ -593,40 +593,28 @@ struct kvm_irqchip {
 	} chip;
 };
 
-4.27 KVM_GET_CLOCK
+4.27 KVM_XEN_HVM_CONFIG
 
-Capability: KVM_CAP_ADJUST_CLOCK
+Capability: KVM_CAP_XEN_HVM
 Architectures: x86
 Type: vm ioctl
-Parameters: struct kvm_clock_data (out)
+Parameters: struct kvm_xen_hvm_config (in)
 Returns: 0 on success, -1 on error
 
-Gets the current timestamp of kvmclock as seen by the current guest. In
-conjunction with KVM_SET_CLOCK, it is used to ensure monotonicity on scenarios
-such as migration.
+Sets the MSR that the Xen HVM guest uses to initialize its hypercall
+page, and provides the starting address and size of the hypercall
+blobs in userspace.  When the guest writes the MSR, kvm copies one
+page of a blob (32- or 64-bit, depending on the vcpu mode) to guest
+memory.
 
-struct kvm_clock_data {
-	__u64 clock;  /* kvmclock current value */
+struct kvm_xen_hvm_config {
 	__u32 flags;
-	__u32 pad[9];
-};
-
-4.28 KVM_SET_CLOCK
-
-Capability: KVM_CAP_ADJUST_CLOCK
-Architectures: x86
-Type: vm ioctl
-Parameters: struct kvm_clock_data (in)
-Returns: 0 on success, -1 on error
-
-Sets the current timestamp of kvmclock to the valued specific in its parameter.
-In conjunction with KVM_GET_CLOCK, it is used to ensure monotonicity on scenarios
-such as migration.
-
-struct kvm_clock_data {
-	__u64 clock;  /* kvmclock current value */
-	__u32 flags;
-	__u32 pad[9];
+	__u32 msr;
+	__u64 blob_addr_32;
+	__u64 blob_addr_64;
+	__u8 blob_size_32;
+	__u8 blob_size_64;
+	__u8 pad2[30];
 };
 
 5. The kvm_run structure
