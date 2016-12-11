@@ -154,8 +154,8 @@ static void prof_sysexit_disable_##sname(void)				       \
 #define __SC_STR_TDECL6(t, a, ...)	#t, __SC_STR_TDECL5(__VA_ARGS__)
 
 #define SYSCALL_TRACE_ENTER_EVENT(sname)				\
-	static struct ftrace_event_call					\
-	__attribute__((__aligned__(4))) event_enter_##sname;		\
+	static const struct syscall_metadata __syscall_meta_##sname;	\
+	static struct ftrace_event_call event_enter_##sname;		\
 	struct trace_event enter_syscall_print_##sname = {		\
 		.trace                  = print_syscall_enter,		\
 	};								\
@@ -180,19 +180,19 @@ static void prof_sysexit_disable_##sname(void)				       \
 	  event_enter_##sname = {					\
 		.name                   = "sys_enter"#sname,		\
 		.system                 = "syscalls",			\
-		.event                  = &event_syscall_enter,		\
+		.event                  = &enter_syscall_print_##sname,	\
 		.raw_init		= init_enter_##sname,		\
 		.show_format		= syscall_enter_format,		\
 		.define_fields		= syscall_enter_define_fields,	\
 		.regfunc		= reg_event_syscall_enter,	\
 		.unregfunc		= unreg_event_syscall_enter,	\
-		.data			= "sys"#sname,			\
+		.data			= (void *)&__syscall_meta_##sname,\
 		TRACE_SYS_ENTER_PROFILE_INIT(sname)			\
 	}
 
 #define SYSCALL_TRACE_EXIT_EVENT(sname)					\
-	static struct ftrace_event_call					\
-	__attribute__((__aligned__(4))) event_exit_##sname;		\
+	static const struct syscall_metadata __syscall_meta_##sname;	\
+	static struct ftrace_event_call event_exit_##sname;		\
 	struct trace_event exit_syscall_print_##sname = {		\
 		.trace                  = print_syscall_exit,		\
 	};								\
@@ -217,13 +217,13 @@ static void prof_sysexit_disable_##sname(void)				       \
 	  event_exit_##sname = {					\
 		.name                   = "sys_exit"#sname,		\
 		.system                 = "syscalls",			\
-		.event                  = &event_syscall_exit,		\
+		.event                  = &exit_syscall_print_##sname,	\
 		.raw_init		= init_exit_##sname,		\
 		.show_format		= syscall_exit_format,		\
 		.define_fields		= syscall_exit_define_fields,	\
 		.regfunc		= reg_event_syscall_exit,	\
 		.unregfunc		= unreg_event_syscall_exit,	\
-		.data			= "sys"#sname,			\
+		.data			= (void *)&__syscall_meta_##sname,\
 		TRACE_SYS_EXIT_PROFILE_INIT(sname)			\
 	}
 
