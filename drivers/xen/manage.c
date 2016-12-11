@@ -79,12 +79,6 @@ static void do_suspend(void)
 
 	shutting_down = SHUTDOWN_SUSPEND;
 
-	err = stop_machine_create();
-	if (err) {
-		printk(KERN_ERR "xen suspend: failed to setup stop_machine %d\n", err);
-		goto out;
-	}
-
 #ifdef CONFIG_PREEMPT
 	/* If the kernel is preemptible, we need to freeze all the processes
 	   to prevent them from being in the middle of a pagetable update
@@ -92,24 +86,23 @@ static void do_suspend(void)
 	err = freeze_processes();
 	if (err) {
 		printk(KERN_ERR "xen suspend: freeze failed %d\n", err);
-		goto out_destroy_sm;
+		return;
 	}
 #endif
 
 	err = dpm_suspend_start(PMSG_SUSPEND);
 	if (err) {
 		printk(KERN_ERR "xen suspend: dpm_suspend_start %d\n", err);
-		goto out_thaw;
+		goto out;
 	}
 
-	printk("suspending xenbus...\n");
-	/* XXX use normal device tree? */
-	xenbus_suspend();
+	printk(KERN_DEBUG "suspending xenstore...\n");
+	xs_suspend();
 
 	err = dpm_suspend_noirq(PMSG_SUSPEND);
 	if (err) {
 		printk(KERN_ERR "dpm_suspend_noirq failed: %d\n", err);
-		goto out_resume;
+		goto resume_devices;
 	}
 
 	err = stop_machine(xen_suspend, &cancelled, cpumask_of(0));
@@ -118,30 +111,24 @@ static void do_suspend(void)
 
 	if (err) {
 		printk(KERN_ERR "failed to start xen_suspend: %d\n", err);
-		cancelled = 1;
+		goto out;
 	}
 
-out_resume:
 	if (!cancelled) {
 		xen_arch_resume();
-		xenbus_resume();
+		xs_resume();
 	} else
-		xenbus_suspend_cancel();
+		xs_suspend_cancel();
 
+resume_devices:
 	dpm_resume_end(PMSG_RESUME);
 
 	/* Make sure timer events get retriggered on all CPUs */
 	clock_was_set();
-
-out_thaw:
+out:
 #ifdef CONFIG_PREEMPT
 	thaw_processes();
-
-out_destroy_sm:
 #endif
-	stop_machine_destroy();
-
-out:
 	shutting_down = SHUTDOWN_INVALID;
 }
 #endif	/* CONFIG_PM_SLEEP */
