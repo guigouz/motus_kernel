@@ -399,12 +399,14 @@ int radeon_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 	struct radeon_crtc *radeon_crtc = to_radeon_crtc(crtc);
 	struct radeon_framebuffer *radeon_fb;
 	struct drm_gem_object *obj;
+	struct radeon_bo *rbo;
 	uint64_t base;
 	uint32_t crtc_offset, crtc_offset_cntl, crtc_tile_x0_y0 = 0;
 	uint32_t crtc_pitch, pitch_pixels;
 	uint32_t tiling_flags;
 	int format;
 	uint32_t gen_cntl_reg, gen_cntl_val;
+	int r;
 
 	DRM_DEBUG("\n");
 	/* no fb bound */
@@ -435,10 +437,22 @@ int radeon_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 		return false;
 	}
 
+	/* Pin framebuffer & get tilling informations */
 	obj = radeon_fb->obj;
-	if (radeon_gem_object_pin(obj, RADEON_GEM_DOMAIN_VRAM, &base)) {
+	rbo = obj->driver_private;
+	r = radeon_bo_reserve(rbo, false);
+	if (unlikely(r != 0))
+		return r;
+	r = radeon_bo_pin(rbo, RADEON_GEM_DOMAIN_VRAM, &base);
+	if (unlikely(r != 0)) {
+		radeon_bo_unreserve(rbo);
 		return -EINVAL;
 	}
+	radeon_bo_get_tiling_flags(rbo, &tiling_flags, NULL);
+	radeon_bo_unreserve(rbo);
+	if (tiling_flags & RADEON_TILING_MICRO)
+		DRM_ERROR("trying to scanout microtiled buffer\n");
+
 	/* if scanout was in GTT this really wouldn't work */
 	/* crtc offset is from display base addr not FB location */
 	radeon_crtc->legacy_display_base_addr = rdev->mc.vram_location;
@@ -453,10 +467,6 @@ int radeon_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 		       (crtc->fb->bits_per_pixel * 8));
 	crtc_pitch |= crtc_pitch << 16;
 
-	radeon_object_get_tiling_flags(obj->driver_private,
-				       &tiling_flags, NULL);
-	if (tiling_flags & RADEON_TILING_MICRO)
-		DRM_ERROR("trying to scanout microtiled buffer\n");
 
 	if (tiling_flags & RADEON_TILING_MACRO) {
 		if (ASIC_IS_R300(rdev))
@@ -534,7 +544,12 @@ int radeon_crtc_set_base(struct drm_crtc *crtc, int x, int y,
 
 	if (old_fb && old_fb != crtc->fb) {
 		radeon_fb = to_radeon_framebuffer(old_fb);
-		radeon_gem_object_unpin(radeon_fb->obj);
+		rbo = radeon_fb->obj->driver_private;
+		r = radeon_bo_reserve(rbo, false);
+		if (unlikely(r != 0))
+			return r;
+		radeon_bo_unpin(rbo);
+		radeon_bo_unreserve(rbo);
 	}
 
 	/* Bytes per pixel may have changed */
@@ -646,12 +661,8 @@ static bool radeon_set_crtc_timing(struct drm_crtc *crtc, struct drm_display_mod
 		uint32_t crtc2_gen_cntl;
 		uint32_t disp2_merge_cntl;
 
-		/* check to see if TV DAC is enabled for another crtc and keep it enabled */
-		if (RREG32(RADEON_CRTC2_GEN_CNTL) & RADEON_CRTC2_CRT2_ON)
-			crtc2_gen_cntl = RADEON_CRTC2_CRT2_ON;
-		else
-			crtc2_gen_cntl = 0;
-
+		/* if TV DAC is enabled for another crtc and keep it enabled */
+		crtc2_gen_cntl = RREG32(RADEON_CRTC2_GEN_CNTL) & 0x00718080;
 		crtc2_gen_cntl |= ((format << 8)
 				   | RADEON_CRTC2_VSYNC_DIS
 				   | RADEON_CRTC2_HSYNC_DIS
@@ -680,7 +691,8 @@ static bool radeon_set_crtc_timing(struct drm_crtc *crtc, struct drm_display_mod
 		uint32_t crtc_ext_cntl;
 		uint32_t disp_merge_cntl;
 
-		crtc_gen_cntl = (RADEON_CRTC_EXT_DISP_EN
+		crtc_gen_cntl = RREG32(RADEON_CRTC_GEN_CNTL) & 0x00718000;
+		crtc_gen_cntl |= (RADEON_CRTC_EXT_DISP_EN
 				 | (format << 8)
 				 | RADEON_CRTC_DISP_REQ_EN_B
 				 | ((mode->flags & DRM_MODE_FLAG_DBLSCAN)
@@ -1046,12 +1058,29 @@ static int radeon_crtc_mode_set(struct drm_crtc *crtc,
 
 static void radeon_crtc_prepare(struct drm_crtc *crtc)
 {
-	radeon_crtc_dpms(crtc, DRM_MODE_DPMS_OFF);
+	struct drm_device *dev = crtc->dev;
+	struct drm_crtc *crtci;
+
+	/*
+	* The hardware wedges sometimes if you reconfigure one CRTC
+	* whilst another is running (see fdo bug #24611).
+	*/
+	list_for_each_entry(crtci, &dev->mode_config.crtc_list, head)
+		radeon_crtc_dpms(crtci, DRM_MODE_DPMS_OFF);
 }
 
 static void radeon_crtc_commit(struct drm_crtc *crtc)
 {
-	radeon_crtc_dpms(crtc, DRM_MODE_DPMS_ON);
+	struct drm_device *dev = crtc->dev;
+	struct drm_crtc *crtci;
+
+	/*
+	* Reenable the CRTCs that should be running.
+	*/
+	list_for_each_entry(crtci, &dev->mode_config.crtc_list, head) {
+		if (crtci->enabled)
+			radeon_crtc_dpms(crtci, DRM_MODE_DPMS_ON);
+	}
 }
 
 static const struct drm_crtc_helper_funcs legacy_helper_funcs = {
