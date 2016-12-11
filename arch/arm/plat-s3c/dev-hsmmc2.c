@@ -1,6 +1,9 @@
 /* linux/arch/arm/plat-s3c/dev-hsmmc2.c
  *
- * Copyright (c) 2009 Samsung Electronics
+ * Copyright (c) 2009 Maurus Cuelenaere
+ *
+ * Based on arch/arm/plat-s3c/dev-hsmmc1.c
+ * original file Copyright (c) 2008 Simtec Electronics
  *
  * S3C series device definition for hsmmc device 2
  *
@@ -16,6 +19,7 @@
 #include <mach/map.h>
 #include <plat/sdhci.h>
 #include <plat/devs.h>
+#include <plat/cpu.h>
 
 #define S3C_SZ_HSMMC	(0x1000)
 
