@@ -8,10 +8,8 @@
 #include <linux/idr.h>
 #include <linux/rculist.h>
 #include <linux/nsproxy.h>
-#include <linux/netdevice.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
-#include <net/rtnetlink.h>
 
 /*
  *	Our network namespace constructor/destructor lists
@@ -28,20 +26,6 @@ struct net init_net;
 EXPORT_SYMBOL(init_net);
 
 #define INITIAL_NET_GEN_PTRS	13 /* +1 for len +2 for rcu_head */
-
-static void unregister_netdevices(struct net *net, struct list_head *list)
-{
-	struct net_device *dev;
-	/* At exit all network devices most be removed from a network
-	 * namespace.  Do this in the reverse order of registeration.
-	 */
-	for_each_netdev_reverse(net, dev) {
-		if (dev->rtnl_link_ops)
-			dev->rtnl_link_ops->dellink(dev, list);
-		else
-			unregister_netdevice_queue(dev, list);
-	}
-}
 
 static int ops_init(const struct pernet_operations *ops, struct net *net)
 {
@@ -70,6 +54,28 @@ static void ops_free(const struct pernet_operations *ops, struct net *net)
 	}
 }
 
+static void ops_exit_list(const struct pernet_operations *ops,
+			  struct list_head *net_exit_list)
+{
+	struct net *net;
+	if (ops->exit) {
+		list_for_each_entry(net, net_exit_list, exit_list)
+			ops->exit(net);
+	}
+	if (ops->exit_batch)
+		ops->exit_batch(net_exit_list);
+}
+
+static void ops_free_list(const struct pernet_operations *ops,
+			  struct list_head *net_exit_list)
+{
+	struct net *net;
+	if (ops->size && ops->id) {
+		list_for_each_entry(net, net_exit_list, exit_list)
+			ops_free(ops, net);
+	}
+}
+
 /*
  * setup_net runs the initializers for the network namespace object.
  */
@@ -78,6 +84,7 @@ static __net_init int setup_net(struct net *net)
 	/* Must be called with net_mutex held */
 	const struct pernet_operations *ops, *saved_ops;
 	int error = 0;
+	LIST_HEAD(net_exit_list);
 
 	atomic_set(&net->count, 1);
 
@@ -97,21 +104,14 @@ out_undo:
 	/* Walk through the list backwards calling the exit functions
 	 * for the pernet modules whose init functions did not fail.
 	 */
+	list_add(&net->exit_list, &net_exit_list);
 	saved_ops = ops;
-	list_for_each_entry_continue_reverse(ops, &pernet_list, list) {
-		if (ops->exit)
-			ops->exit(net);
-		if (&ops->list == first_device) {
-			LIST_HEAD(dev_kill_list);
-			rtnl_lock();
-			unregister_netdevices(net, &dev_kill_list);
-			unregister_netdevice_many(&dev_kill_list);
-			rtnl_unlock();
-		}
-	}
+	list_for_each_entry_continue_reverse(ops, &pernet_list, list)
+		ops_exit_list(ops, &net_exit_list);
+
 	ops = saved_ops;
 	list_for_each_entry_continue_reverse(ops, &pernet_list, list)
-		ops_free(ops, net);
+		ops_free_list(ops, &net_exit_list);
 
 	rcu_barrier();
 	goto out;
@@ -207,6 +207,7 @@ static void cleanup_net(struct work_struct *work)
 	const struct pernet_operations *ops;
 	struct net *net, *tmp;
 	LIST_HEAD(net_kill_list);
+	LIST_HEAD(net_exit_list);
 
 	/* Atomically snapshot the list of namespaces to cleanup */
 	spin_lock_irq(&cleanup_list_lock);
@@ -217,8 +218,10 @@ static void cleanup_net(struct work_struct *work)
 
 	/* Don't let anyone else find us. */
 	rtnl_lock();
-	list_for_each_entry(net, &net_kill_list, cleanup_list)
+	list_for_each_entry(net, &net_kill_list, cleanup_list) {
 		list_del_rcu(&net->list);
+		list_add_tail(&net->exit_list, &net_exit_list);
+	}
 	rtnl_unlock();
 
 	/*
@@ -229,27 +232,12 @@ static void cleanup_net(struct work_struct *work)
 	synchronize_rcu();
 
 	/* Run all of the network namespace exit methods */
-	list_for_each_entry_reverse(ops, &pernet_list, list) {
-		if (ops->exit) {
-			list_for_each_entry(net, &net_kill_list, cleanup_list)
-				ops->exit(net);
-		}
-		if (&ops->list == first_device) {
-			LIST_HEAD(dev_kill_list);
-			rtnl_lock();
-			list_for_each_entry(net, &net_kill_list, cleanup_list)
-				unregister_netdevices(net, &dev_kill_list);
-			unregister_netdevice_many(&dev_kill_list);
-			rtnl_unlock();
-		}
-	}
+	list_for_each_entry_reverse(ops, &pernet_list, list)
+		ops_exit_list(ops, &net_exit_list);
+
 	/* Free the net generic variables */
-	list_for_each_entry_reverse(ops, &pernet_list, list) {
-		if (ops->size && ops->id) {
-			list_for_each_entry(net, &net_kill_list, cleanup_list)
-				ops_free(ops, net);
-		}
-	}
+	list_for_each_entry_reverse(ops, &pernet_list, list)
+		ops_free_list(ops, &net_exit_list);
 
 	mutex_unlock(&net_mutex);
 
@@ -259,8 +247,8 @@ static void cleanup_net(struct work_struct *work)
 	rcu_barrier();
 
 	/* Finally it is safe to free my network namespace structure */
-	list_for_each_entry_safe(net, tmp, &net_kill_list, cleanup_list) {
-		list_del_init(&net->cleanup_list);
+	list_for_each_entry_safe(net, tmp, &net_exit_list, exit_list) {
+		list_del_init(&net->exit_list);
 		net_free(net);
 	}
 }
@@ -348,8 +336,9 @@ pure_initcall(net_ns_init);
 static int __register_pernet_operations(struct list_head *list,
 					struct pernet_operations *ops)
 {
-	struct net *net, *undo_net;
+	struct net *net;
 	int error;
+	LIST_HEAD(net_exit_list);
 
 	list_add_tail(&ops->list, list);
 	if (ops->init || (ops->id && ops->size)) {
@@ -357,6 +346,7 @@ static int __register_pernet_operations(struct list_head *list,
 			error = ops_init(ops, net);
 			if (error)
 				goto out_undo;
+			list_add_tail(&net->exit_list, &net_exit_list);
 		}
 	}
 	return 0;
@@ -364,36 +354,21 @@ static int __register_pernet_operations(struct list_head *list,
 out_undo:
 	/* If I have an error cleanup all namespaces I initialized */
 	list_del(&ops->list);
-	if (ops->exit) {
-		for_each_net(undo_net) {
-			if (net_eq(undo_net, net))
-				goto undone;
-			ops->exit(undo_net);
-		}
-	}
-undone:
-	if (ops->size && ops->id) {
-		for_each_net(undo_net) {
-			if (net_eq(undo_net, net))
-				goto freed;
-			ops_free(ops, undo_net);
-		}
-	}
-freed:
+	ops_exit_list(ops, &net_exit_list);
+	ops_free_list(ops, &net_exit_list);
 	return error;
 }
 
 static void __unregister_pernet_operations(struct pernet_operations *ops)
 {
 	struct net *net;
+	LIST_HEAD(net_exit_list);
 
 	list_del(&ops->list);
-	if (ops->exit)
-		for_each_net(net)
-			ops->exit(net);
-	if (ops->id && ops->size)
-		for_each_net(net)
-			ops_free(ops, net);
+	for_each_net(net)
+		list_add_tail(&net->exit_list, &net_exit_list);
+	ops_exit_list(ops, &net_exit_list);
+	ops_free_list(ops, &net_exit_list);
 }
 
 #else
@@ -411,9 +386,10 @@ static int __register_pernet_operations(struct list_head *list,
 
 static void __unregister_pernet_operations(struct pernet_operations *ops)
 {
-	if (ops->exit)
-		ops->exit(&init_net);
-	ops_free(ops, &init_net);
+	LIST_HEAD(net_exit_list);
+	list_add(&init_net.exit_list, &net_exit_list);
+	ops_exit_list(ops, &net_exit_list);
+	ops_free_list(ops, &net_exit_list);
 }
 
 #endif /* CONFIG_NET_NS */
@@ -437,8 +413,11 @@ again:
 		}
 	}
 	error = __register_pernet_operations(list, ops);
-	if (error && ops->id)
-		ida_remove(&net_generic_ids, *ops->id);
+	if (error) {
+		rcu_barrier();
+		if (ops->id)
+			ida_remove(&net_generic_ids, *ops->id);
+	}
 
 	return error;
 }
@@ -447,6 +426,7 @@ static void unregister_pernet_operations(struct pernet_operations *ops)
 {
 	
 	__unregister_pernet_operations(ops);
+	rcu_barrier();
 	if (ops->id)
 		ida_remove(&net_generic_ids, *ops->id);
 }
