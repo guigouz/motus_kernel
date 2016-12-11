@@ -107,6 +107,8 @@ struct vcpu_svm {
 	u32 *msrpm;
 
 	struct nested_state nested;
+
+	bool nmi_singlestep;
 };
 
 /* enable NPT for AMD64 and X86 with PAE */
@@ -626,11 +628,12 @@ static void init_vmcb(struct vcpu_svm *svm)
 	save->rip = 0x0000fff0;
 	svm->vcpu.arch.regs[VCPU_REGS_RIP] = save->rip;
 
-	/*
-	 * cr0 val on cpu init should be 0x60000010, we enable cpu
-	 * cache by default. the orderly way is to enable cache in bios.
+	/* This is the guest-visible cr0 value.
+	 * svm_set_cr0() sets PG and WP and clears NW and CD on save->cr0.
 	 */
-	save->cr0 = 0x00000010 | X86_CR0_PG | X86_CR0_WP;
+	svm->vcpu.arch.cr0 = X86_CR0_NW | X86_CR0_CD | X86_CR0_ET;
+	kvm_set_cr0(&svm->vcpu, svm->vcpu.arch.cr0);
+
 	save->cr4 = X86_CR4_PAE;
 	/* rdx = ?? */
 
@@ -645,8 +648,6 @@ static void init_vmcb(struct vcpu_svm *svm)
 		control->intercept_cr_write &= ~(INTERCEPT_CR0_MASK|
 						 INTERCEPT_CR3_MASK);
 		save->g_pat = 0x0007040600070406ULL;
-		/* enable caching because the QEMU Bios doesn't enable it */
-		save->cr0 = X86_CR0_ET;
 		save->cr3 = 0;
 		save->cr4 = 0;
 	}
@@ -1050,7 +1051,7 @@ static void update_db_intercept(struct kvm_vcpu *vcpu)
 	svm->vmcb->control.intercept_exceptions &=
 		~((1 << DB_VECTOR) | (1 << BP_VECTOR));
 
-	if (vcpu->arch.singlestep)
+	if (svm->nmi_singlestep)
 		svm->vmcb->control.intercept_exceptions |= (1 << DB_VECTOR);
 
 	if (vcpu->guest_debug & KVM_GUESTDBG_ENABLE) {
@@ -1195,13 +1196,13 @@ static int db_interception(struct vcpu_svm *svm)
 
 	if (!(svm->vcpu.guest_debug &
 	      (KVM_GUESTDBG_SINGLESTEP | KVM_GUESTDBG_USE_HW_BP)) &&
-		!svm->vcpu.arch.singlestep) {
+		!svm->nmi_singlestep) {
 		kvm_queue_exception(&svm->vcpu, DB_VECTOR);
 		return 1;
 	}
 
-	if (svm->vcpu.arch.singlestep) {
-		svm->vcpu.arch.singlestep = false;
+	if (svm->nmi_singlestep) {
+		svm->nmi_singlestep = false;
 		if (!(svm->vcpu.guest_debug & KVM_GUESTDBG_SINGLESTEP))
 			svm->vmcb->save.rflags &=
 				~(X86_EFLAGS_TF | X86_EFLAGS_RF);
@@ -2498,6 +2499,26 @@ static int svm_nmi_allowed(struct kvm_vcpu *vcpu)
 		!(svm->vcpu.arch.hflags & HF_NMI_MASK);
 }
 
+static bool svm_get_nmi_mask(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	return !!(svm->vcpu.arch.hflags & HF_NMI_MASK);
+}
+
+static void svm_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
+{
+	struct vcpu_svm *svm = to_svm(vcpu);
+
+	if (masked) {
+		svm->vcpu.arch.hflags |= HF_NMI_MASK;
+		svm->vmcb->control.intercept |= (1UL << INTERCEPT_IRET);
+	} else {
+		svm->vcpu.arch.hflags &= ~HF_NMI_MASK;
+		svm->vmcb->control.intercept &= ~(1UL << INTERCEPT_IRET);
+	}
+}
+
 static int svm_interrupt_allowed(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
@@ -2543,7 +2564,7 @@ static void enable_nmi_window(struct kvm_vcpu *vcpu)
 	/* Something prevents NMI from been injected. Single step over
 	   possible problem (IRET or exception injection or interrupt
 	   shadow) */
-	vcpu->arch.singlestep = true;
+	svm->nmi_singlestep = true;
 	svm->vmcb->save.rflags |= (X86_EFLAGS_TF | X86_EFLAGS_RF);
 	update_db_intercept(vcpu);
 }
@@ -2945,6 +2966,8 @@ static struct kvm_x86_ops svm_x86_ops = {
 	.queue_exception = svm_queue_exception,
 	.interrupt_allowed = svm_interrupt_allowed,
 	.nmi_allowed = svm_nmi_allowed,
+	.get_nmi_mask = svm_get_nmi_mask,
+	.set_nmi_mask = svm_set_nmi_mask,
 	.enable_nmi_window = enable_nmi_window,
 	.enable_irq_window = enable_irq_window,
 	.update_cr8_intercept = update_cr8_intercept,

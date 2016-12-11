@@ -354,7 +354,6 @@ struct kvm_vcpu_arch {
 	unsigned int time_offset;
 	struct page *time_page;
 
-	bool singlestep; /* guest is single stepped by KVM */
 	bool nmi_pending;
 	bool nmi_injected;
 
@@ -371,6 +370,10 @@ struct kvm_vcpu_arch {
 	u64 mcg_status;
 	u64 mcg_ctl;
 	u64 *mce_banks;
+
+	/* used for guest single stepping over the given code position */
+	u16 singlestep_cs;
+	unsigned long singlestep_rip;
 };
 
 struct kvm_mem_alias {
@@ -410,6 +413,7 @@ struct kvm_arch{
 
 	unsigned long irq_sources_bitmap;
 	u64 vm_init_tsc;
+	s64 kvmclock_offset;
 
 	struct kvm_xen_hvm_config xen_hvm_config;
 };
@@ -519,6 +523,8 @@ struct kvm_x86_ops {
 				bool has_error_code, u32 error_code);
 	int (*interrupt_allowed)(struct kvm_vcpu *vcpu);
 	int (*nmi_allowed)(struct kvm_vcpu *vcpu);
+	bool (*get_nmi_mask)(struct kvm_vcpu *vcpu);
+	void (*set_nmi_mask)(struct kvm_vcpu *vcpu, bool masked);
 	void (*enable_nmi_window)(struct kvm_vcpu *vcpu);
 	void (*enable_irq_window)(struct kvm_vcpu *vcpu);
 	void (*update_cr8_intercept)(struct kvm_vcpu *vcpu, int tpr, int irr);
@@ -804,5 +810,8 @@ int cpuid_maxphyaddr(struct kvm_vcpu *vcpu);
 int kvm_cpu_has_interrupt(struct kvm_vcpu *vcpu);
 int kvm_arch_interrupt_allowed(struct kvm_vcpu *vcpu);
 int kvm_cpu_get_interrupt(struct kvm_vcpu *v);
+
+void kvm_define_shared_msr(unsigned index, u32 msr);
+void kvm_set_shared_msr(unsigned index, u64 val, u64 mask);
 
 #endif /* _ASM_X86_KVM_HOST_H */
