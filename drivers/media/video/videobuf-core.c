@@ -110,7 +110,7 @@ EXPORT_SYMBOL_GPL(videobuf_queue_to_vmalloc);
 
 
 void videobuf_queue_core_init(struct videobuf_queue *q,
-			 struct videobuf_queue_ops *ops,
+			 const struct videobuf_queue_ops *ops,
 			 struct device *dev,
 			 spinlock_t *irqlock,
 			 enum v4l2_buf_type type,
@@ -430,8 +430,9 @@ int videobuf_reqbufs(struct videobuf_queue *q,
 		count = VIDEO_MAX_FRAME;
 	size = 0;
 	q->ops->buf_setup(q, &count, &size);
-	dprintk(1, "reqbufs: bufs=%d, size=0x%x [%d pages total]\n",
-		count, size, (count*PAGE_ALIGN(size))>>PAGE_SHIFT);
+	dprintk(1, "reqbufs: bufs=%d, size=0x%x [%u pages total]\n",
+		count, size,
+		(unsigned int)((count*PAGE_ALIGN(size))>>PAGE_SHIFT) );
 
 	retval = __videobuf_mmap_setup(q, count, size, req->memory);
 	if (retval < 0) {
