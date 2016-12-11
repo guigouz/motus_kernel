@@ -11,7 +11,12 @@
  * 	              Nauman Rafique <nauman@google.com>
  */
 #include <linux/ioprio.h>
+#include <linux/seq_file.h>
+#include <linux/kdev_t.h>
 #include "blk-cgroup.h"
+
+extern void cfq_unlink_blkio_group(void *, struct blkio_group *);
+extern void cfq_update_blkio_group_weight(struct blkio_group *, unsigned int);
 
 struct blkio_cgroup blkio_root_cgroup = { .weight = 2*BLKIO_WEIGHT_DEFAULT };
 
@@ -21,21 +26,62 @@ struct blkio_cgroup *cgroup_to_blkio_cgroup(struct cgroup *cgroup)
 			    struct blkio_cgroup, css);
 }
 
+void blkiocg_update_blkio_group_stats(struct blkio_group *blkg,
+			unsigned long time, unsigned long sectors)
+{
+	blkg->time += time;
+	blkg->sectors += sectors;
+}
+
 void blkiocg_add_blkio_group(struct blkio_cgroup *blkcg,
-				struct blkio_group *blkg, void *key)
+			struct blkio_group *blkg, void *key, dev_t dev)
 {
 	unsigned long flags;
 
 	spin_lock_irqsave(&blkcg->lock, flags);
 	rcu_assign_pointer(blkg->key, key);
+	blkg->blkcg_id = css_id(&blkcg->css);
 	hlist_add_head_rcu(&blkg->blkcg_node, &blkcg->blkg_list);
 	spin_unlock_irqrestore(&blkcg->lock, flags);
+#ifdef CONFIG_DEBUG_BLK_CGROUP
+	/* Need to take css reference ? */
+	cgroup_path(blkcg->css.cgroup, blkg->path, sizeof(blkg->path));
+#endif
+	blkg->dev = dev;
 }
 
+static void __blkiocg_del_blkio_group(struct blkio_group *blkg)
+{
+	hlist_del_init_rcu(&blkg->blkcg_node);
+	blkg->blkcg_id = 0;
+}
+
+/*
+ * returns 0 if blkio_group was still on cgroup list. Otherwise returns 1
+ * indicating that blk_group was unhashed by the time we got to it.
+ */
 int blkiocg_del_blkio_group(struct blkio_group *blkg)
 {
-	/* Implemented later */
-	return 0;
+	struct blkio_cgroup *blkcg;
+	unsigned long flags;
+	struct cgroup_subsys_state *css;
+	int ret = 1;
+
+	rcu_read_lock();
+	css = css_lookup(&blkio_subsys, blkg->blkcg_id);
+	if (!css)
+		goto out;
+
+	blkcg = container_of(css, struct blkio_cgroup, css);
+	spin_lock_irqsave(&blkcg->lock, flags);
+	if (!hlist_unhashed(&blkg->blkcg_node)) {
+		__blkiocg_del_blkio_group(blkg);
+		ret = 0;
+	}
+	spin_unlock_irqrestore(&blkcg->lock, flags);
+out:
+	rcu_read_unlock();
+	return ret;
 }
 
 /* called under rcu_read_lock(). */
@@ -71,14 +117,58 @@ static int
 blkiocg_weight_write(struct cgroup *cgroup, struct cftype *cftype, u64 val)
 {
 	struct blkio_cgroup *blkcg;
+	struct blkio_group *blkg;
+	struct hlist_node *n;
 
 	if (val < BLKIO_WEIGHT_MIN || val > BLKIO_WEIGHT_MAX)
 		return -EINVAL;
 
 	blkcg = cgroup_to_blkio_cgroup(cgroup);
+	spin_lock_irq(&blkcg->lock);
 	blkcg->weight = (unsigned int)val;
+	hlist_for_each_entry(blkg, n, &blkcg->blkg_list, blkcg_node)
+		cfq_update_blkio_group_weight(blkg, blkcg->weight);
+	spin_unlock_irq(&blkcg->lock);
 	return 0;
 }
+
+#define SHOW_FUNCTION_PER_GROUP(__VAR)					\
+static int blkiocg_##__VAR##_read(struct cgroup *cgroup,		\
+			struct cftype *cftype, struct seq_file *m)	\
+{									\
+	struct blkio_cgroup *blkcg;					\
+	struct blkio_group *blkg;					\
+	struct hlist_node *n;						\
+									\
+	if (!cgroup_lock_live_group(cgroup))				\
+		return -ENODEV;						\
+									\
+	blkcg = cgroup_to_blkio_cgroup(cgroup);				\
+	rcu_read_lock();						\
+	hlist_for_each_entry_rcu(blkg, n, &blkcg->blkg_list, blkcg_node) {\
+		if (blkg->dev)						\
+			seq_printf(m, "%u:%u %lu\n", MAJOR(blkg->dev),	\
+				 MINOR(blkg->dev), blkg->__VAR);	\
+	}								\
+	rcu_read_unlock();						\
+	cgroup_unlock();						\
+	return 0;							\
+}
+
+SHOW_FUNCTION_PER_GROUP(time);
+SHOW_FUNCTION_PER_GROUP(sectors);
+#ifdef CONFIG_DEBUG_BLK_CGROUP
+SHOW_FUNCTION_PER_GROUP(dequeue);
+#endif
+#undef SHOW_FUNCTION_PER_GROUP
+
+#ifdef CONFIG_DEBUG_BLK_CGROUP
+void blkiocg_update_blkio_group_dequeue_stats(struct blkio_group *blkg,
+			unsigned long dequeue)
+{
+	blkg->dequeue += dequeue;
+}
+#endif
 
 struct cftype blkio_files[] = {
 	{
@@ -86,6 +176,20 @@ struct cftype blkio_files[] = {
 		.read_u64 = blkiocg_weight_read,
 		.write_u64 = blkiocg_weight_write,
 	},
+	{
+		.name = "time",
+		.read_seq_string = blkiocg_time_read,
+	},
+	{
+		.name = "sectors",
+		.read_seq_string = blkiocg_sectors_read,
+	},
+#ifdef CONFIG_DEBUG_BLK_CGROUP
+       {
+		.name = "dequeue",
+		.read_seq_string = blkiocg_dequeue_read,
+       },
+#endif
 };
 
 static int blkiocg_populate(struct cgroup_subsys *subsys, struct cgroup *cgroup)
@@ -97,8 +201,39 @@ static int blkiocg_populate(struct cgroup_subsys *subsys, struct cgroup *cgroup)
 static void blkiocg_destroy(struct cgroup_subsys *subsys, struct cgroup *cgroup)
 {
 	struct blkio_cgroup *blkcg = cgroup_to_blkio_cgroup(cgroup);
+	unsigned long flags;
+	struct blkio_group *blkg;
+	void *key;
 
+	rcu_read_lock();
+remove_entry:
+	spin_lock_irqsave(&blkcg->lock, flags);
+
+	if (hlist_empty(&blkcg->blkg_list)) {
+		spin_unlock_irqrestore(&blkcg->lock, flags);
+		goto done;
+	}
+
+	blkg = hlist_entry(blkcg->blkg_list.first, struct blkio_group,
+				blkcg_node);
+	key = rcu_dereference(blkg->key);
+	__blkiocg_del_blkio_group(blkg);
+
+	spin_unlock_irqrestore(&blkcg->lock, flags);
+
+	/*
+	 * This blkio_group is being unlinked as associated cgroup is going
+	 * away. Let all the IO controlling policies know about this event.
+	 *
+	 * Currently this is static call to one io controlling policy. Once
+	 * we have more policies in place, we need some dynamic registration
+	 * of callback function.
+	 */
+	cfq_unlink_blkio_group(key, blkg);
+	goto remove_entry;
+done:
 	free_css_id(&blkio_subsys, &blkcg->css);
+	rcu_read_unlock();
 	kfree(blkcg);
 }
 
