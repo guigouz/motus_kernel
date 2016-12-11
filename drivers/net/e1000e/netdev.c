@@ -2031,11 +2031,14 @@ static void e1000_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
 	     E1000_MNG_DHCP_COOKIE_STATUS_VLAN) &&
 	    (vid == adapter->mng_vlan_id))
 		return;
+
 	/* add VID to filter table */
-	index = (vid >> 5) & 0x7F;
-	vfta = E1000_READ_REG_ARRAY(hw, E1000_VFTA, index);
-	vfta |= (1 << (vid & 0x1F));
-	e1000e_write_vfta(hw, index, vfta);
+	if (adapter->flags & FLAG_HAS_HW_VLAN_FILTER) {
+		index = (vid >> 5) & 0x7F;
+		vfta = E1000_READ_REG_ARRAY(hw, E1000_VFTA, index);
+		vfta |= (1 << (vid & 0x1F));
+		hw->mac.ops.write_vfta(hw, index, vfta);
+	}
 }
 
 static void e1000_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
@@ -2060,10 +2063,12 @@ static void e1000_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 	}
 
 	/* remove VID from filter table */
-	index = (vid >> 5) & 0x7F;
-	vfta = E1000_READ_REG_ARRAY(hw, E1000_VFTA, index);
-	vfta &= ~(1 << (vid & 0x1F));
-	e1000e_write_vfta(hw, index, vfta);
+	if (adapter->flags & FLAG_HAS_HW_VLAN_FILTER) {
+		index = (vid >> 5) & 0x7F;
+		vfta = E1000_READ_REG_ARRAY(hw, E1000_VFTA, index);
+		vfta &= ~(1 << (vid & 0x1F));
+		hw->mac.ops.write_vfta(hw, index, vfta);
+	}
 }
 
 static void e1000_update_mng_vlan(struct e1000_adapter *adapter)
@@ -2636,18 +2641,8 @@ static void e1000_configure(struct e1000_adapter *adapter)
  **/
 void e1000e_power_up_phy(struct e1000_adapter *adapter)
 {
-	u16 mii_reg = 0;
-
-	/* Just clear the power down bit to wake the phy back up */
-	if (adapter->hw.phy.media_type == e1000_media_type_copper) {
-		/*
-		 * According to the manual, the phy will retain its
-		 * settings across a power-down/up cycle
-		 */
-		e1e_rphy(&adapter->hw, PHY_CONTROL, &mii_reg);
-		mii_reg &= ~MII_CR_POWER_DOWN;
-		e1e_wphy(&adapter->hw, PHY_CONTROL, mii_reg);
-	}
+	if (adapter->hw.phy.ops.power_up)
+		adapter->hw.phy.ops.power_up(&adapter->hw);
 
 	adapter->hw.mac.ops.setup_link(&adapter->hw);
 }
@@ -2655,35 +2650,17 @@ void e1000e_power_up_phy(struct e1000_adapter *adapter)
 /**
  * e1000_power_down_phy - Power down the PHY
  *
- * Power down the PHY so no link is implied when interface is down
- * The PHY cannot be powered down is management or WoL is active
+ * Power down the PHY so no link is implied when interface is down.
+ * The PHY cannot be powered down if management or WoL is active.
  */
 static void e1000_power_down_phy(struct e1000_adapter *adapter)
 {
-	struct e1000_hw *hw = &adapter->hw;
-	u16 mii_reg;
-
 	/* WoL is enabled */
 	if (adapter->wol)
 		return;
 
-	/* non-copper PHY? */
-	if (adapter->hw.phy.media_type != e1000_media_type_copper)
-		return;
-
-	/* reset is blocked because of a SoL/IDER session */
-	if (e1000e_check_mng_mode(hw) || e1000_check_reset_block(hw))
-		return;
-
-	/* manageability (AMT) is enabled */
-	if (er32(MANC) & E1000_MANC_SMBUS_EN)
-		return;
-
-	/* power down the PHY */
-	e1e_rphy(hw, PHY_CONTROL, &mii_reg);
-	mii_reg |= MII_CR_POWER_DOWN;
-	e1e_wphy(hw, PHY_CONTROL, mii_reg);
-	mdelay(1);
+	if (adapter->hw.phy.ops.power_down)
+		adapter->hw.phy.ops.power_down(&adapter->hw);
 }
 
 /**
@@ -5273,16 +5250,16 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 	cancel_work_sync(&adapter->print_hang_task);
 	flush_scheduled_work();
 
+	if (!(netdev->flags & IFF_UP))
+		e1000_power_down_phy(adapter);
+
+	unregister_netdev(netdev);
+
 	/*
 	 * Release control of h/w to f/w.  If f/w is AMT enabled, this
 	 * would have already happened in close and is redundant.
 	 */
 	e1000_release_hw_control(adapter);
-
-	unregister_netdev(netdev);
-
-	if (!e1000_check_reset_block(&adapter->hw))
-		e1000_phy_hw_reset(&adapter->hw);
 
 	e1000e_reset_interrupt_capability(adapter);
 	kfree(adapter->tx_ring);
@@ -5349,6 +5326,7 @@ static struct pci_device_id e1000_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IGP_C), board_ich8lan },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IGP_M), board_ich8lan },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_IGP_M_AMT), board_ich8lan },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH8_82567V_3), board_ich8lan },
 
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH9_IFE), board_ich9lan },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_ICH9_IFE_G), board_ich9lan },

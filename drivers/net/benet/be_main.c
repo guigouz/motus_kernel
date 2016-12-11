@@ -125,6 +125,9 @@ static int be_mac_addr_set(struct net_device *netdev, void *p)
 	struct sockaddr *addr = p;
 	int status = 0;
 
+	if (!is_valid_ether_addr(addr->sa_data))
+		return -EADDRNOTAVAIL;
+
 	status = be_cmd_pmac_del(adapter, adapter->if_handle, adapter->pmac_id);
 	if (status)
 		return status;
@@ -214,6 +217,7 @@ void be_link_status_update(struct be_adapter *adapter, bool link_up)
 
 	/* If link came up or went down */
 	if (adapter->link_up != link_up) {
+		adapter->link_speed = -1;
 		if (link_up) {
 			netif_start_queue(netdev);
 			netif_carrier_on(netdev);
@@ -1378,6 +1382,7 @@ int be_poll_rx(struct napi_struct *napi, int budget)
 	struct be_eth_rx_compl *rxcp;
 	u32 work_done;
 
+	adapter->stats.drvr_stats.be_rx_polls++;
 	for (work_done = 0; work_done < budget; work_done++) {
 		rxcp = be_rx_compl_get(adapter);
 		if (!rxcp)
@@ -1670,6 +1675,8 @@ static int be_setup(struct be_adapter *adapter)
 	if (status != 0)
 		goto rx_qs_destroy;
 
+	adapter->link_speed = -1;
+
 	return 0;
 
 rx_qs_destroy:
@@ -1951,6 +1958,8 @@ static void be_netdev_init(struct net_device *netdev)
 		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER | NETIF_F_HW_CSUM |
 		NETIF_F_GRO;
 
+	netdev->vlan_features |= NETIF_F_SG | NETIF_F_TSO | NETIF_F_HW_CSUM;
+
 	netdev->flags |= IFF_MULTICAST;
 
 	adapter->rx_csum = true;
@@ -2151,7 +2160,12 @@ static int be_get_config(struct be_adapter *adapter)
 			MAC_ADDRESS_TYPE_NETWORK, true /*permanent */, 0);
 	if (status)
 		return status;
+
+	if (!is_valid_ether_addr(mac))
+		return -EADDRNOTAVAIL;
+
 	memcpy(adapter->netdev->dev_addr, mac, ETH_ALEN);
+	memcpy(adapter->netdev->perm_addr, mac, ETH_ALEN);
 
 	return 0;
 }

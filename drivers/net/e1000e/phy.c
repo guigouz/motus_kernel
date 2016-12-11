@@ -44,6 +44,8 @@ static s32 e1000_access_phy_debug_regs_hv(struct e1000_hw *hw, u32 offset,
 /* Cable length tables */
 static const u16 e1000_m88_cable_length_table[] =
 	{ 0, 50, 80, 110, 140, 140, E1000_CABLE_LENGTH_UNDEFINED };
+#define M88E1000_CABLE_LENGTH_TABLE_SIZE \
+		ARRAY_SIZE(e1000_m88_cable_length_table)
 
 static const u16 e1000_igp_2_cable_length_table[] =
 	{ 0, 0, 0, 0, 0, 0, 0, 0, 3, 5, 8, 11, 13, 16, 18, 21, 0, 0, 0, 3,
@@ -152,10 +154,10 @@ s32 e1000e_get_phy_id(struct e1000_hw *hw)
 			goto out;
 
 		/*
-		 * If the PHY ID is still unknown, we may have an 82577i
-		 * without link.  We will try again after setting Slow
-		 * MDIC mode. No harm in trying again in this case since
-		 * the PHY ID is unknown at this point anyway
+		 * If the PHY ID is still unknown, we may have an 82577
+		 * without link.  We will try again after setting Slow MDIC
+		 * mode. No harm in trying again in this case since the PHY
+		 * ID is unknown at this point anyway.
 		 */
 		ret_val = phy->ops.acquire(hw);
 		if (ret_val)
@@ -1533,8 +1535,8 @@ s32 e1000e_check_downshift(struct e1000_hw *hw)
 	switch (phy->type) {
 	case e1000_phy_m88:
 	case e1000_phy_gg82563:
+	case e1000_phy_bm:
 	case e1000_phy_82578:
-	case e1000_phy_82577:
 		offset	= M88E1000_PHY_SPEC_STATUS;
 		mask	= M88E1000_PSSR_DOWNSHIFT;
 		break;
@@ -1727,15 +1729,21 @@ s32 e1000e_get_cable_length_m88(struct e1000_hw *hw)
 
 	ret_val = e1e_rphy(hw, M88E1000_PHY_SPEC_STATUS, &phy_data);
 	if (ret_val)
-		return ret_val;
+		goto out;
 
 	index = (phy_data & M88E1000_PSSR_CABLE_LENGTH) >>
-		M88E1000_PSSR_CABLE_LENGTH_SHIFT;
+	        M88E1000_PSSR_CABLE_LENGTH_SHIFT;
+	if (index >= M88E1000_CABLE_LENGTH_TABLE_SIZE - 1) {
+		ret_val = -E1000_ERR_PHY;
+		goto out;
+	}
+
 	phy->min_cable_length = e1000_m88_cable_length_table[index];
-	phy->max_cable_length = e1000_m88_cable_length_table[index+1];
+	phy->max_cable_length = e1000_m88_cable_length_table[index + 1];
 
 	phy->cable_length = (phy->min_cable_length + phy->max_cable_length) / 2;
 
+out:
 	return ret_val;
 }
 
@@ -1746,7 +1754,7 @@ s32 e1000e_get_cable_length_m88(struct e1000_hw *hw)
  *  The automatic gain control (agc) normalizes the amplitude of the
  *  received signal, adjusting for the attenuation produced by the
  *  cable.  By reading the AGC registers, which represent the
- *  combination of course and fine gain value, the value can be put
+ *  combination of coarse and fine gain value, the value can be put
  *  into a lookup table to obtain the approximate cable length
  *  for each channel.
  **/
@@ -1771,7 +1779,7 @@ s32 e1000e_get_cable_length_igp_2(struct e1000_hw *hw)
 
 		/*
 		 * Getting bits 15:9, which represent the combination of
-		 * course and fine gain values.  The result is a number
+		 * coarse and fine gain values.  The result is a number
 		 * that can be put into the lookup table to obtain the
 		 * approximate cable length.
 		 */
@@ -2474,7 +2482,7 @@ static s32 e1000_access_phy_wakeup_reg_bm(struct e1000_hw *hw, u32 offset,
 	/* Gig must be disabled for MDIO accesses to page 800 */
 	if ((hw->mac.type == e1000_pchlan) &&
 	   (!(er32(PHY_CTRL) & E1000_PHY_CTRL_GBE_DISABLE)))
-		e_dbg("Attempting to access page 800 while gig enabled\n");
+		e_dbg("Attempting to access page 800 while gig enabled.\n");
 
 	/* All operations in this function are phy address 1 */
 	hw->phy.addr = 1;
@@ -2484,20 +2492,26 @@ static s32 e1000_access_phy_wakeup_reg_bm(struct e1000_hw *hw, u32 offset,
 	                          (BM_WUC_ENABLE_PAGE << IGP_PAGE_SHIFT));
 
 	ret_val = e1000e_read_phy_reg_mdic(hw, BM_WUC_ENABLE_REG, &phy_reg);
-	if (ret_val)
+	if (ret_val) {
+		e_dbg("Could not read PHY page 769\n");
 		goto out;
+	}
 
 	/* First clear bit 4 to avoid a power state change */
 	phy_reg &= ~(BM_WUC_HOST_WU_BIT);
 	ret_val = e1000e_write_phy_reg_mdic(hw, BM_WUC_ENABLE_REG, phy_reg);
-	if (ret_val)
+	if (ret_val) {
+		e_dbg("Could not clear PHY page 769 bit 4\n");
 		goto out;
+	}
 
 	/* Write bit 2 = 1, and clear bit 4 to 769_17 */
 	ret_val = e1000e_write_phy_reg_mdic(hw, BM_WUC_ENABLE_REG,
 	                                    phy_reg | BM_WUC_ENABLE_BIT);
-	if (ret_val)
+	if (ret_val) {
+		e_dbg("Could not write PHY page 769 bit 2\n");
 		goto out;
+	}
 
 	/* Select page 800 */
 	ret_val = e1000e_write_phy_reg_mdic(hw, IGP01E1000_PHY_PAGE_SELECT,
@@ -2505,21 +2519,25 @@ static s32 e1000_access_phy_wakeup_reg_bm(struct e1000_hw *hw, u32 offset,
 
 	/* Write the page 800 offset value using opcode 0x11 */
 	ret_val = e1000e_write_phy_reg_mdic(hw, BM_WUC_ADDRESS_OPCODE, reg);
-	if (ret_val)
+	if (ret_val) {
+		e_dbg("Could not write address opcode to page 800\n");
 		goto out;
+	}
 
 	if (read) {
 	        /* Read the page 800 value using opcode 0x12 */
 		ret_val = e1000e_read_phy_reg_mdic(hw, BM_WUC_DATA_OPCODE,
 		                                   data);
 	} else {
-	        /* Read the page 800 value using opcode 0x12 */
+	        /* Write the page 800 value using opcode 0x12 */
 		ret_val = e1000e_write_phy_reg_mdic(hw, BM_WUC_DATA_OPCODE,
 						    *data);
 	}
 
-	if (ret_val)
+	if (ret_val) {
+		e_dbg("Could not access data value from page 800\n");
 		goto out;
+	}
 
 	/*
 	 * Restore 769_17.2 to its original value
@@ -2530,9 +2548,50 @@ static s32 e1000_access_phy_wakeup_reg_bm(struct e1000_hw *hw, u32 offset,
 
 	/* Clear 769_17.2 */
 	ret_val = e1000e_write_phy_reg_mdic(hw, BM_WUC_ENABLE_REG, phy_reg);
+	if (ret_val) {
+		e_dbg("Could not clear PHY page 769 bit 2\n");
+		goto out;
+	}
 
 out:
 	return ret_val;
+}
+
+/**
+ * e1000_power_up_phy_copper - Restore copper link in case of PHY power down
+ * @hw: pointer to the HW structure
+ *
+ * In the case of a PHY power down to save power, or to turn off link during a
+ * driver unload, or wake on lan is not enabled, restore the link to previous
+ * settings.
+ **/
+void e1000_power_up_phy_copper(struct e1000_hw *hw)
+{
+	u16 mii_reg = 0;
+
+	/* The PHY will retain its settings across a power down/up cycle */
+	e1e_rphy(hw, PHY_CONTROL, &mii_reg);
+	mii_reg &= ~MII_CR_POWER_DOWN;
+	e1e_wphy(hw, PHY_CONTROL, mii_reg);
+}
+
+/**
+ * e1000_power_down_phy_copper - Restore copper link in case of PHY power down
+ * @hw: pointer to the HW structure
+ *
+ * In the case of a PHY power down to save power, or to turn off link during a
+ * driver unload, or wake on lan is not enabled, restore the link to previous
+ * settings.
+ **/
+void e1000_power_down_phy_copper(struct e1000_hw *hw)
+{
+	u16 mii_reg = 0;
+
+	/* The PHY will retain its settings across a power down/up cycle */
+	e1e_rphy(hw, PHY_CONTROL, &mii_reg);
+	mii_reg |= MII_CR_POWER_DOWN;
+	e1e_wphy(hw, PHY_CONTROL, mii_reg);
+	msleep(1);
 }
 
 /**

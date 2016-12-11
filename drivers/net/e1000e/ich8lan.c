@@ -217,6 +217,7 @@ static s32 e1000_cleanup_led_pchlan(struct e1000_hw *hw);
 static s32 e1000_led_on_pchlan(struct e1000_hw *hw);
 static s32 e1000_led_off_pchlan(struct e1000_hw *hw);
 static s32 e1000_set_lplu_state_pchlan(struct e1000_hw *hw, bool active);
+static void e1000_power_down_phy_copper_ich8lan(struct e1000_hw *hw);
 static void e1000_lan_init_done_ich8lan(struct e1000_hw *hw);
 static s32  e1000_k1_gig_workaround_hv(struct e1000_hw *hw, bool link);
 
@@ -266,6 +267,8 @@ static s32 e1000_init_phy_params_pchlan(struct e1000_hw *hw)
 	phy->ops.set_d3_lplu_state    = e1000_set_lplu_state_pchlan;
 	phy->ops.write_reg            = e1000_write_phy_reg_hv;
 	phy->ops.write_reg_locked     = e1000_write_phy_reg_hv_locked;
+	phy->ops.power_up             = e1000_power_up_phy_copper;
+	phy->ops.power_down           = e1000_power_down_phy_copper_ich8lan;
 	phy->autoneg_mask             = AUTONEG_ADVERTISE_SPEED_DEFAULT;
 
 	phy->id = e1000_phy_unknown;
@@ -299,6 +302,9 @@ static s32 e1000_init_phy_params_ich8lan(struct e1000_hw *hw)
 	phy->addr			= 1;
 	phy->reset_delay_us		= 100;
 
+	phy->ops.power_up               = e1000_power_up_phy_copper;
+	phy->ops.power_down             = e1000_power_down_phy_copper_ich8lan;
+
 	/*
 	 * We may need to do this twice - once for IGP and if that fails,
 	 * we'll set BM func pointers and try again
@@ -308,8 +314,10 @@ static s32 e1000_init_phy_params_ich8lan(struct e1000_hw *hw)
 		phy->ops.write_reg = e1000e_write_phy_reg_bm;
 		phy->ops.read_reg  = e1000e_read_phy_reg_bm;
 		ret_val = e1000e_determine_phy_address(hw);
-		if (ret_val)
+		if (ret_val) {
+			e_dbg("Cannot determine PHY addr. Erroring out\n");
 			return ret_val;
+		}
 	}
 
 	phy->id = 0;
@@ -1740,7 +1748,7 @@ static s32 e1000_flash_cycle_init_ich8lan(struct e1000_hw *hw)
 	if (hsfsts.hsf_status.flcinprog == 0) {
 		/*
 		 * There is no cycle running at present,
-		 * so we can start a cycle
+		 * so we can start a cycle.
 		 * Begin by setting Flash Cycle Done.
 		 */
 		hsfsts.hsf_status.flcdone = 1;
@@ -1748,7 +1756,7 @@ static s32 e1000_flash_cycle_init_ich8lan(struct e1000_hw *hw)
 		ret_val = 0;
 	} else {
 		/*
-		 * otherwise poll for sometime so the current
+		 * Otherwise poll for sometime so the current
 		 * cycle has a chance to end before giving up.
 		 */
 		for (i = 0; i < ICH_FLASH_READ_COMMAND_TIMEOUT; i++) {
@@ -2638,7 +2646,6 @@ static s32 e1000_reset_hw_ich8lan(struct e1000_hw *hw)
 		ctrl |= E1000_CTRL_PHY_RST;
 	}
 	ret_val = e1000_acquire_swflag_ich8lan(hw);
-	/* Whether or not the swflag was acquired, we need to reset the part */
 	e_dbg("Issuing a global reset to ich8lan\n");
 	ew32(CTRL, (ctrl | E1000_CTRL_RST));
 	msleep(20);
@@ -3197,6 +3204,7 @@ void e1000e_disable_gig_wol_ich8lan(struct e1000_hw *hw)
 	u32 phy_ctrl;
 
 	switch (hw->mac.type) {
+	case e1000_ich8lan:
 	case e1000_ich9lan:
 	case e1000_ich10lan:
 	case e1000_pchlan:
@@ -3388,6 +3396,23 @@ static s32 e1000_get_cfg_done_ich8lan(struct e1000_hw *hw)
 	}
 
 	return 0;
+}
+
+/**
+ * e1000_power_down_phy_copper_ich8lan - Remove link during PHY power down
+ * @hw: pointer to the HW structure
+ *
+ * In the case of a PHY power down to save power, or to turn off link during a
+ * driver unload, or wake on lan is not enabled, remove the link.
+ **/
+static void e1000_power_down_phy_copper_ich8lan(struct e1000_hw *hw)
+{
+	/* If the management interface is not enabled, then power down */
+	if (!(hw->mac.ops.check_mng_mode(hw) ||
+	      hw->phy.ops.check_reset_block(hw)))
+		e1000_power_down_phy_copper(hw);
+
+	return;
 }
 
 /**

@@ -165,19 +165,17 @@ struct be_drvr_stats {
 	ulong be_tx_jiffies;
 	u64 be_tx_bytes;
 	u64 be_tx_bytes_prev;
-	u64 be_tx_pkts;
 	u32 be_tx_rate;
 
 	u32 cache_barrier[16];
 
 	u32 be_ethrx_post_fail;/* number of ethrx buffer alloc failures */
-	u32 be_polls;		/* number of times NAPI called poll function */
+	u32 be_rx_polls;	/* number of times NAPI called poll function */
 	u32 be_rx_events;	/* number of ucast rx completion events  */
 	u32 be_rx_compl;	/* number of rx completion entries processed */
 	ulong be_rx_jiffies;
 	u64 be_rx_bytes;
 	u64 be_rx_bytes_prev;
-	u64 be_rx_pkts;
 	u32 be_rx_rate;
 	/* number of non ether type II frames dropped where
 	 * frame len > length field of Mac Hdr */
@@ -274,12 +272,9 @@ struct be_adapter {
 	u32 cap;
 	u32 rx_fc;		/* Rx flow control */
 	u32 tx_fc;		/* Tx flow control */
-	u8 generation;		/* BladeEngine ASIC generation */
+	int link_speed;
+	u8 port_type;
 };
-
-/* BladeEngine Generation numbers */
-#define BE_GEN2 2
-#define BE_GEN3 3
 
 extern const struct ethtool_ops be_ethtool_ops;
 

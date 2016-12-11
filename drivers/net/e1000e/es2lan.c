@@ -99,6 +99,8 @@
  */
 static const u16 e1000_gg82563_cable_length_table[] =
 	 { 0, 60, 115, 150, 150, 60, 115, 150, 180, 180, 0xFF };
+#define GG82563_CABLE_LENGTH_TABLE_SIZE \
+		ARRAY_SIZE(e1000_gg82563_cable_length_table)
 
 static s32 e1000_setup_copper_link_80003es2lan(struct e1000_hw *hw);
 static s32 e1000_acquire_swfw_sync_80003es2lan(struct e1000_hw *hw, u16 mask);
@@ -112,6 +114,7 @@ static s32  e1000_read_kmrn_reg_80003es2lan(struct e1000_hw *hw, u32 offset,
                                             u16 *data);
 static s32  e1000_write_kmrn_reg_80003es2lan(struct e1000_hw *hw, u32 offset,
                                              u16 data);
+static void e1000_power_down_phy_copper_80003es2lan(struct e1000_hw *hw);
 
 /**
  *  e1000_init_phy_params_80003es2lan - Init ESB2 PHY func ptrs.
@@ -125,6 +128,9 @@ static s32 e1000_init_phy_params_80003es2lan(struct e1000_hw *hw)
 	if (hw->phy.media_type != e1000_media_type_copper) {
 		phy->type	= e1000_phy_none;
 		return 0;
+	} else {
+		phy->ops.power_up = e1000_power_up_phy_copper;
+		phy->ops.power_down = e1000_power_down_phy_copper_80003es2lan;
 	}
 
 	phy->addr		= 1;
@@ -694,20 +700,27 @@ static s32 e1000_phy_force_speed_duplex_80003es2lan(struct e1000_hw *hw)
 static s32 e1000_get_cable_length_80003es2lan(struct e1000_hw *hw)
 {
 	struct e1000_phy_info *phy = &hw->phy;
-	s32 ret_val;
+	s32 ret_val = 0;
 	u16 phy_data, index;
 
 	ret_val = e1e_rphy(hw, GG82563_PHY_DSP_DISTANCE, &phy_data);
 	if (ret_val)
-		return ret_val;
+		goto out;
 
 	index = phy_data & GG82563_DSPD_CABLE_LENGTH;
+
+	if (index >= GG82563_CABLE_LENGTH_TABLE_SIZE - 5) {
+		ret_val = -E1000_ERR_PHY;
+		goto out;
+	}
+
 	phy->min_cable_length = e1000_gg82563_cable_length_table[index];
-	phy->max_cable_length = e1000_gg82563_cable_length_table[index+5];
+	phy->max_cable_length = e1000_gg82563_cable_length_table[index + 5];
 
 	phy->cable_length = (phy->min_cable_length + phy->max_cable_length) / 2;
 
-	return 0;
+out:
+	return ret_val;
 }
 
 /**
@@ -807,7 +820,7 @@ static s32 e1000_init_hw_80003es2lan(struct e1000_hw *hw)
 
 	/* Disabling VLAN filtering */
 	e_dbg("Initializing the IEEE VLAN\n");
-	e1000e_clear_vfta(hw);
+	mac->ops.clear_vfta(hw);
 
 	/* Setup the receive address. */
 	e1000e_init_rx_addrs(hw, mac->rar_entry_count);
@@ -1294,6 +1307,23 @@ static s32 e1000_write_kmrn_reg_80003es2lan(struct e1000_hw *hw, u32 offset,
 }
 
 /**
+ * e1000_power_down_phy_copper_80003es2lan - Remove link during PHY power down
+ * @hw: pointer to the HW structure
+ *
+ * In the case of a PHY power down to save power, or to turn off link during a
+ * driver unload, or wake on lan is not enabled, remove the link.
+ **/
+static void e1000_power_down_phy_copper_80003es2lan(struct e1000_hw *hw)
+{
+	/* If the management interface is not enabled, then power down */
+	if (!(hw->mac.ops.check_mng_mode(hw) ||
+	      hw->phy.ops.check_reset_block(hw)))
+		e1000_power_down_phy_copper(hw);
+
+	return;
+}
+
+/**
  *  e1000_clear_hw_cntrs_80003es2lan - Clear device specific hardware counters
  *  @hw: pointer to the HW structure
  *
@@ -1350,6 +1380,8 @@ static struct e1000_mac_operations es2_mac_ops = {
 	.led_on			= e1000e_led_on_generic,
 	.led_off		= e1000e_led_off_generic,
 	.update_mc_addr_list	= e1000e_update_mc_addr_list_generic,
+	.write_vfta		= e1000_write_vfta_generic,
+	.clear_vfta		= e1000_clear_vfta_generic,
 	.reset_hw		= e1000_reset_hw_80003es2lan,
 	.init_hw		= e1000_init_hw_80003es2lan,
 	.setup_link		= e1000e_setup_link,
