@@ -51,7 +51,7 @@ static struct syscall_metadata *syscall_nr_to_meta(int nr)
 	return syscalls_metadata[nr];
 }
 
-int syscall_name_to_nr(const char *name)
+static int syscall_name_to_nr(const char *name)
 {
 	int i;
 
@@ -65,16 +65,6 @@ int syscall_name_to_nr(const char *name)
 		}
 	}
 	return -1;
-}
-
-void set_syscall_enter_id(int num, int id)
-{
-	syscalls_metadata[num]->enter_id = id;
-}
-
-void set_syscall_exit_id(int num, int id)
-{
-	syscalls_metadata[num]->exit_id = id;
 }
 
 enum print_line_t
@@ -93,7 +83,7 @@ print_syscall_enter(struct trace_iterator *iter, int flags)
 	if (!entry)
 		goto end;
 
-	if (entry->enter_id != ent->type) {
+	if (entry->enter_event->id != ent->type) {
 		WARN_ON_ONCE(1);
 		goto end;
 	}
@@ -148,7 +138,7 @@ print_syscall_exit(struct trace_iterator *iter, int flags)
 		return TRACE_TYPE_HANDLED;
 	}
 
-	if (entry->exit_id != ent->type) {
+	if (entry->exit_event->id != ent->type) {
 		WARN_ON_ONCE(1);
 		return TRACE_TYPE_UNHANDLED;
 	}
@@ -302,8 +292,8 @@ void ftrace_syscall_enter(struct pt_regs *regs, long id)
 
 	size = sizeof(*entry) + sizeof(unsigned long) * sys_data->nb_args;
 
-	event = trace_current_buffer_lock_reserve(&buffer, sys_data->enter_id,
-						  size, 0, 0);
+	event = trace_current_buffer_lock_reserve(&buffer,
+			sys_data->enter_event->id, size, 0, 0);
 	if (!event)
 		return;
 
@@ -334,8 +324,8 @@ void ftrace_syscall_exit(struct pt_regs *regs, long ret)
 	if (!sys_data)
 		return;
 
-	event = trace_current_buffer_lock_reserve(&buffer, sys_data->exit_id,
-				sizeof(*entry), 0, 0);
+	event = trace_current_buffer_lock_reserve(&buffer,
+			sys_data->exit_event->id, sizeof(*entry), 0, 0);
 	if (!event)
 		return;
 
@@ -352,10 +342,8 @@ int reg_event_syscall_enter(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
-	const char *name;
 
-	name = ((struct syscall_metadata *)call->data)->name;
-	num = syscall_name_to_nr(name);
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 	if (num < 0 || num >= NR_syscalls)
 		return -ENOSYS;
 	mutex_lock(&syscall_trace_lock);
@@ -375,10 +363,8 @@ int reg_event_syscall_enter(struct ftrace_event_call *call)
 void unreg_event_syscall_enter(struct ftrace_event_call *call)
 {
 	int num;
-	const char *name;
 
-	name = ((struct syscall_metadata *)call->data)->name;
-	num = syscall_name_to_nr(name);
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 	if (num < 0 || num >= NR_syscalls)
 		return;
 	mutex_lock(&syscall_trace_lock);
@@ -393,10 +379,8 @@ int reg_event_syscall_exit(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
-	const char *name;
 
-	name = ((struct syscall_metadata *)call->data)->name;
-	num = syscall_name_to_nr(name);
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 	if (num < 0 || num >= NR_syscalls)
 		return -ENOSYS;
 	mutex_lock(&syscall_trace_lock);
@@ -416,10 +400,8 @@ int reg_event_syscall_exit(struct ftrace_event_call *call)
 void unreg_event_syscall_exit(struct ftrace_event_call *call)
 {
 	int num;
-	const char *name;
 
-	name = ((struct syscall_metadata *)call->data)->name;
-	num = syscall_name_to_nr(name);
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 	if (num < 0 || num >= NR_syscalls)
 		return;
 	mutex_lock(&syscall_trace_lock);
@@ -428,6 +410,18 @@ void unreg_event_syscall_exit(struct ftrace_event_call *call)
 	if (!sys_refcount_exit)
 		unregister_trace_sys_exit(ftrace_syscall_exit);
 	mutex_unlock(&syscall_trace_lock);
+}
+
+int init_syscall_trace(struct ftrace_event_call *call)
+{
+	int id;
+
+	id = register_ftrace_event(call->event);
+	if (!id)
+		return -ENODEV;
+	call->id = id;
+	INIT_LIST_HEAD(&call->fields);
+	return 0;
 }
 
 int __init init_ftrace_syscalls(void)
@@ -446,6 +440,10 @@ int __init init_ftrace_syscalls(void)
 	for (i = 0; i < NR_syscalls; i++) {
 		addr = arch_syscall_addr(i);
 		meta = find_syscall_meta(addr);
+		if (!meta)
+			continue;
+
+		meta->syscall_nr = i;
 		syscalls_metadata[i] = meta;
 	}
 
@@ -510,11 +508,11 @@ static void prof_syscall_enter(struct pt_regs *regs, long id)
 
 	rec = (struct syscall_trace_enter *) raw_data;
 	tracing_generic_entry_update(&rec->ent, 0, 0);
-	rec->ent.type = sys_data->enter_id;
+	rec->ent.type = sys_data->enter_event->id;
 	rec->nr = syscall_nr;
 	syscall_get_arguments(current, regs, 0, sys_data->nb_args,
 			       (unsigned long *)&rec->args);
-	perf_tp_event(sys_data->enter_id, 0, 1, rec, size);
+	perf_tp_event(sys_data->enter_event->id, 0, 1, rec, size);
 
 end:
 	perf_swevent_put_recursion_context(rctx);
@@ -522,14 +520,12 @@ end_recursion:
 	local_irq_restore(flags);
 }
 
-int reg_prof_syscall_enter(char *name)
+int prof_sysenter_enable(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
 
-	num = syscall_name_to_nr(name);
-	if (num < 0 || num >= NR_syscalls)
-		return -ENOSYS;
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 
 	mutex_lock(&syscall_trace_lock);
 	if (!sys_prof_refcount_enter)
@@ -545,13 +541,11 @@ int reg_prof_syscall_enter(char *name)
 	return ret;
 }
 
-void unreg_prof_syscall_enter(char *name)
+void prof_sysenter_disable(struct ftrace_event_call *call)
 {
 	int num;
 
-	num = syscall_name_to_nr(name);
-	if (num < 0 || num >= NR_syscalls)
-		return;
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 
 	mutex_lock(&syscall_trace_lock);
 	sys_prof_refcount_enter--;
@@ -615,11 +609,11 @@ static void prof_syscall_exit(struct pt_regs *regs, long ret)
 	rec = (struct syscall_trace_exit *)raw_data;
 
 	tracing_generic_entry_update(&rec->ent, 0, 0);
-	rec->ent.type = sys_data->exit_id;
+	rec->ent.type = sys_data->exit_event->id;
 	rec->nr = syscall_nr;
 	rec->ret = syscall_get_return_value(current, regs);
 
-	perf_tp_event(sys_data->exit_id, 0, 1, rec, size);
+	perf_tp_event(sys_data->exit_event->id, 0, 1, rec, size);
 
 end:
 	perf_swevent_put_recursion_context(rctx);
@@ -627,14 +621,12 @@ end_recursion:
 	local_irq_restore(flags);
 }
 
-int reg_prof_syscall_exit(char *name)
+int prof_sysexit_enable(struct ftrace_event_call *call)
 {
 	int ret = 0;
 	int num;
 
-	num = syscall_name_to_nr(name);
-	if (num < 0 || num >= NR_syscalls)
-		return -ENOSYS;
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 
 	mutex_lock(&syscall_trace_lock);
 	if (!sys_prof_refcount_exit)
@@ -650,13 +642,11 @@ int reg_prof_syscall_exit(char *name)
 	return ret;
 }
 
-void unreg_prof_syscall_exit(char *name)
+void prof_sysexit_disable(struct ftrace_event_call *call)
 {
 	int num;
 
-	num = syscall_name_to_nr(name);
-	if (num < 0 || num >= NR_syscalls)
-		return;
+	num = ((struct syscall_metadata *)call->data)->syscall_nr;
 
 	mutex_lock(&syscall_trace_lock);
 	sys_prof_refcount_exit--;
