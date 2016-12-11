@@ -78,6 +78,10 @@ struct io_context {
 	unsigned short ioprio;
 	DECLARE_BITMAP(ioprio_changed, IOC_IOPRIO_CHANGED_BITS);
 
+#ifdef CONFIG_BLK_CGROUP
+	unsigned short cgroup_changed;
+#endif
+
 	/*
 	 * For request batching
 	 */

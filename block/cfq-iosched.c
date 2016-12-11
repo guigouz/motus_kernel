@@ -66,6 +66,7 @@ static DEFINE_SPINLOCK(ioc_gone_lock);
 #define cfq_class_rt(cfqq)	((cfqq)->ioprio_class == IOPRIO_CLASS_RT)
 
 #define sample_valid(samples)	((samples) > 80)
+#define rb_entry_cfqg(node)	rb_entry((node), struct cfq_group, rb_node)
 
 /*
  * Most of our rbtree usage is for sorting with min extraction, so
@@ -77,8 +78,9 @@ struct cfq_rb_root {
 	struct rb_root rb;
 	struct rb_node *left;
 	unsigned count;
+	u64 min_vdisktime;
 };
-#define CFQ_RB_ROOT	(struct cfq_rb_root) { RB_ROOT, NULL, 0, }
+#define CFQ_RB_ROOT	(struct cfq_rb_root) { RB_ROOT, NULL, 0, 0, }
 
 /*
  * Per process-grouping structure
@@ -132,6 +134,7 @@ struct cfq_queue {
 
 	struct cfq_rb_root *service_tree;
 	struct cfq_queue *new_cfqq;
+	struct cfq_group *cfqg;
 };
 
 /*
@@ -139,9 +142,9 @@ struct cfq_queue {
  * IDLE is handled separately, so it has negative index
  */
 enum wl_prio_t {
-	IDLE_WORKLOAD = -1,
 	BE_WORKLOAD = 0,
-	RT_WORKLOAD = 1
+	RT_WORKLOAD = 1,
+	IDLE_WORKLOAD = 2,
 };
 
 /*
@@ -153,12 +156,17 @@ enum wl_type_t {
 	SYNC_WORKLOAD = 2
 };
 
+/* This is per cgroup per device grouping structure */
+struct cfq_group {
+	/* group service_tree member */
+	struct rb_node rb_node;
 
-/*
- * Per block device queue structure
- */
-struct cfq_data {
-	struct request_queue *queue;
+	/* group service_tree key */
+	u64 vdisktime;
+	bool on_st;
+
+	/* number of cfqq currently on this group */
+	int nr_cfqq;
 
 	/*
 	 * rr lists of queues with requests, onle rr for each priority class.
@@ -166,12 +174,24 @@ struct cfq_data {
 	 */
 	struct cfq_rb_root service_trees[2][3];
 	struct cfq_rb_root service_tree_idle;
+};
+
+/*
+ * Per block device queue structure
+ */
+struct cfq_data {
+	struct request_queue *queue;
+	/* Root service tree for cfq_groups */
+	struct cfq_rb_root grp_service_tree;
+	struct cfq_group root_group;
+
 	/*
 	 * The priority currently being served
 	 */
 	enum wl_prio_t serving_prio;
 	enum wl_type_t serving_type;
 	unsigned long workload_expires;
+	struct cfq_group *serving_group;
 	bool noidle_tree_requires_idle;
 
 	/*
@@ -240,14 +260,18 @@ struct cfq_data {
 	unsigned long last_end_sync_rq;
 };
 
-static struct cfq_rb_root *service_tree_for(enum wl_prio_t prio,
+static struct cfq_rb_root *service_tree_for(struct cfq_group *cfqg,
+					    enum wl_prio_t prio,
 					    enum wl_type_t type,
 					    struct cfq_data *cfqd)
 {
-	if (prio == IDLE_WORKLOAD)
-		return &cfqd->service_tree_idle;
+	if (!cfqg)
+		return NULL;
 
-	return &cfqd->service_trees[prio][type];
+	if (prio == IDLE_WORKLOAD)
+		return &cfqg->service_tree_idle;
+
+	return &cfqg->service_trees[prio][type];
 }
 
 enum cfqq_state_flags {
@@ -296,6 +320,17 @@ CFQ_CFQQ_FNS(deep);
 #define cfq_log(cfqd, fmt, args...)	\
 	blk_add_trace_msg((cfqd)->queue, "cfq " fmt, ##args)
 
+/* Traverses through cfq group service trees */
+#define for_each_cfqg_st(cfqg, i, j, st) \
+	for (i = 0; i <= IDLE_WORKLOAD; i++) \
+		for (j = 0, st = i < IDLE_WORKLOAD ? &cfqg->service_trees[i][j]\
+			: &cfqg->service_tree_idle; \
+			(i < IDLE_WORKLOAD && j <= SYNC_WORKLOAD) || \
+			(i == IDLE_WORKLOAD && j == 0); \
+			j++, st = i < IDLE_WORKLOAD ? \
+			&cfqg->service_trees[i][j]: NULL) \
+
+
 static inline enum wl_prio_t cfqq_prio(struct cfq_queue *cfqq)
 {
 	if (cfq_class_idle(cfqq))
@@ -317,12 +352,14 @@ static enum wl_type_t cfqq_type(struct cfq_queue *cfqq)
 
 static inline int cfq_busy_queues_wl(enum wl_prio_t wl, struct cfq_data *cfqd)
 {
-	if (wl == IDLE_WORKLOAD)
-		return cfqd->service_tree_idle.count;
+	struct cfq_group *cfqg = &cfqd->root_group;
 
-	return cfqd->service_trees[wl][ASYNC_WORKLOAD].count
-		+ cfqd->service_trees[wl][SYNC_NOIDLE_WORKLOAD].count
-		+ cfqd->service_trees[wl][SYNC_WORKLOAD].count;
+	if (wl == IDLE_WORKLOAD)
+		return cfqg->service_tree_idle.count;
+
+	return cfqg->service_trees[wl][ASYNC_WORKLOAD].count
+		+ cfqg->service_trees[wl][SYNC_NOIDLE_WORKLOAD].count
+		+ cfqg->service_trees[wl][SYNC_WORKLOAD].count;
 }
 
 static void cfq_dispatch_insert(struct request_queue *, struct request *);
@@ -373,7 +410,7 @@ static int cfq_queue_empty(struct request_queue *q)
 {
 	struct cfq_data *cfqd = q->elevator->elevator_data;
 
-	return !cfqd->busy_queues;
+	return !cfqd->rq_queued;
 }
 
 /*
@@ -556,11 +593,26 @@ cfq_choose_req(struct cfq_data *cfqd, struct request *rq1, struct request *rq2, 
  */
 static struct cfq_queue *cfq_rb_first(struct cfq_rb_root *root)
 {
+	/* Service tree is empty */
+	if (!root->count)
+		return NULL;
+
 	if (!root->left)
 		root->left = rb_first(&root->rb);
 
 	if (root->left)
 		return rb_entry(root->left, struct cfq_queue, rb_node);
+
+	return NULL;
+}
+
+static struct cfq_group *cfq_rb_first_group(struct cfq_rb_root *root)
+{
+	if (!root->left)
+		root->left = rb_first(&root->rb);
+
+	if (root->left)
+		return rb_entry_cfqg(root->left);
 
 	return NULL;
 }
@@ -612,8 +664,85 @@ static unsigned long cfq_slice_offset(struct cfq_data *cfqd,
 	/*
 	 * just an approximation, should be ok.
 	 */
-	return (cfqd->busy_queues - 1) * (cfq_prio_slice(cfqd, 1, 0) -
+	return (cfqq->cfqg->nr_cfqq - 1) * (cfq_prio_slice(cfqd, 1, 0) -
 		       cfq_prio_slice(cfqd, cfq_cfqq_sync(cfqq), cfqq->ioprio));
+}
+
+static inline s64
+cfqg_key(struct cfq_rb_root *st, struct cfq_group *cfqg)
+{
+	return cfqg->vdisktime - st->min_vdisktime;
+}
+
+static void
+__cfq_group_service_tree_add(struct cfq_rb_root *st, struct cfq_group *cfqg)
+{
+	struct rb_node **node = &st->rb.rb_node;
+	struct rb_node *parent = NULL;
+	struct cfq_group *__cfqg;
+	s64 key = cfqg_key(st, cfqg);
+	int left = 1;
+
+	while (*node != NULL) {
+		parent = *node;
+		__cfqg = rb_entry_cfqg(parent);
+
+		if (key < cfqg_key(st, __cfqg))
+			node = &parent->rb_left;
+		else {
+			node = &parent->rb_right;
+			left = 0;
+		}
+	}
+
+	if (left)
+		st->left = &cfqg->rb_node;
+
+	rb_link_node(&cfqg->rb_node, parent, node);
+	rb_insert_color(&cfqg->rb_node, &st->rb);
+}
+
+static void
+cfq_group_service_tree_add(struct cfq_data *cfqd, struct cfq_group *cfqg)
+{
+	struct cfq_rb_root *st = &cfqd->grp_service_tree;
+	struct cfq_group *__cfqg;
+	struct rb_node *n;
+
+	cfqg->nr_cfqq++;
+	if (cfqg->on_st)
+		return;
+
+	/*
+	 * Currently put the group at the end. Later implement something
+	 * so that groups get lesser vtime based on their weights, so that
+	 * if group does not loose all if it was not continously backlogged.
+	 */
+	n = rb_last(&st->rb);
+	if (n) {
+		__cfqg = rb_entry_cfqg(n);
+		cfqg->vdisktime = __cfqg->vdisktime + CFQ_IDLE_DELAY;
+	} else
+		cfqg->vdisktime = st->min_vdisktime;
+
+	__cfq_group_service_tree_add(st, cfqg);
+	cfqg->on_st = true;
+}
+
+static void
+cfq_group_service_tree_del(struct cfq_data *cfqd, struct cfq_group *cfqg)
+{
+	struct cfq_rb_root *st = &cfqd->grp_service_tree;
+
+	BUG_ON(cfqg->nr_cfqq < 1);
+	cfqg->nr_cfqq--;
+	/* If there are other cfq queues under this group, don't delete it */
+	if (cfqg->nr_cfqq)
+		return;
+
+	cfqg->on_st = false;
+	if (!RB_EMPTY_NODE(&cfqg->rb_node))
+		cfq_rb_erase(&cfqg->rb_node, st);
 }
 
 /*
@@ -630,7 +759,8 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	struct cfq_rb_root *service_tree;
 	int left;
 
-	service_tree = service_tree_for(cfqq_prio(cfqq), cfqq_type(cfqq), cfqd);
+	service_tree = service_tree_for(cfqq->cfqg, cfqq_prio(cfqq),
+						cfqq_type(cfqq), cfqd);
 	if (cfq_class_idle(cfqq)) {
 		rb_key = CFQ_IDLE_DELAY;
 		parent = rb_last(&service_tree->rb);
@@ -697,6 +827,7 @@ static void cfq_service_tree_add(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	rb_link_node(&cfqq->rb_node, parent, p);
 	rb_insert_color(&cfqq->rb_node, &service_tree->rb);
 	service_tree->count++;
+	cfq_group_service_tree_add(cfqd, cfqq->cfqg);
 }
 
 static struct cfq_queue *
@@ -807,6 +938,7 @@ static void cfq_del_cfqq_rr(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 		cfqq->p_root = NULL;
 	}
 
+	cfq_group_service_tree_del(cfqd, cfqq->cfqg);
 	BUG_ON(!cfqd->busy_queues);
 	cfqd->busy_queues--;
 }
@@ -817,7 +949,6 @@ static void cfq_del_cfqq_rr(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 static void cfq_del_rq_rb(struct request *rq)
 {
 	struct cfq_queue *cfqq = RQ_CFQQ(rq);
-	struct cfq_data *cfqd = cfqq->cfqd;
 	const int sync = rq_is_sync(rq);
 
 	BUG_ON(!cfqq->queued[sync]);
@@ -825,8 +956,17 @@ static void cfq_del_rq_rb(struct request *rq)
 
 	elv_rb_del(&cfqq->sort_list, rq);
 
-	if (cfq_cfqq_on_rr(cfqq) && RB_EMPTY_ROOT(&cfqq->sort_list))
-		cfq_del_cfqq_rr(cfqd, cfqq);
+	if (cfq_cfqq_on_rr(cfqq) && RB_EMPTY_ROOT(&cfqq->sort_list)) {
+		/*
+		 * Queue will be deleted from service tree when we actually
+		 * expire it later. Right now just remove it from prio tree
+		 * as it is empty.
+		 */
+		if (cfqq->p_root) {
+			rb_erase(&cfqq->p_node, cfqq->p_root);
+			cfqq->p_root = NULL;
+		}
+	}
 }
 
 static void cfq_add_rq_rb(struct request *rq)
@@ -1040,6 +1180,9 @@ __cfq_slice_expired(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 		cfq_log_cfqq(cfqd, cfqq, "resid=%ld", cfqq->slice_resid);
 	}
 
+	if (cfq_cfqq_on_rr(cfqq) && RB_EMPTY_ROOT(&cfqq->sort_list))
+		cfq_del_cfqq_rr(cfqd, cfqq);
+
 	cfq_resort_rr_list(cfqd, cfqq);
 
 	if (cfqq == cfqd->active_queue)
@@ -1066,11 +1209,34 @@ static inline void cfq_slice_expired(struct cfq_data *cfqd, bool timed_out)
 static struct cfq_queue *cfq_get_next_queue(struct cfq_data *cfqd)
 {
 	struct cfq_rb_root *service_tree =
-		service_tree_for(cfqd->serving_prio, cfqd->serving_type, cfqd);
+		service_tree_for(cfqd->serving_group, cfqd->serving_prio,
+					cfqd->serving_type, cfqd);
 
+	if (!cfqd->rq_queued)
+		return NULL;
+
+	/* There is nothing to dispatch */
+	if (!service_tree)
+		return NULL;
 	if (RB_EMPTY_ROOT(&service_tree->rb))
 		return NULL;
 	return cfq_rb_first(service_tree);
+}
+
+static struct cfq_queue *cfq_get_next_queue_forced(struct cfq_data *cfqd)
+{
+	struct cfq_group *cfqg = &cfqd->root_group;
+	struct cfq_queue *cfqq;
+	int i, j;
+	struct cfq_rb_root *st;
+
+	if (!cfqd->rq_queued)
+		return NULL;
+
+	for_each_cfqg_st(cfqg, i, j, st)
+		if ((cfqq = cfq_rb_first(st)) != NULL)
+			return cfqq;
+	return NULL;
 }
 
 /*
@@ -1205,6 +1371,9 @@ static bool cfq_should_idle(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	enum wl_prio_t prio = cfqq_prio(cfqq);
 	struct cfq_rb_root *service_tree = cfqq->service_tree;
 
+	BUG_ON(!service_tree);
+	BUG_ON(!service_tree->count);
+
 	/* We never do for idle class queues. */
 	if (prio == IDLE_WORKLOAD)
 		return false;
@@ -1217,13 +1386,7 @@ static bool cfq_should_idle(struct cfq_data *cfqd, struct cfq_queue *cfqq)
 	 * Otherwise, we do only if they are the last ones
 	 * in their service tree.
 	 */
-	if (!service_tree)
-		service_tree = service_tree_for(prio, cfqq_type(cfqq), cfqd);
-
-	if (service_tree->count == 0)
-		return true;
-
-	return (service_tree->count == 1 && cfq_rb_first(service_tree) == cfqq);
+	return service_tree->count == 1;
 }
 
 static void cfq_arm_slice_timer(struct cfq_data *cfqd)
@@ -1377,8 +1540,9 @@ static void cfq_setup_merge(struct cfq_queue *cfqq, struct cfq_queue *new_cfqq)
 	}
 }
 
-static enum wl_type_t cfq_choose_wl(struct cfq_data *cfqd, enum wl_prio_t prio,
-				    bool prio_changed)
+static enum wl_type_t cfq_choose_wl(struct cfq_data *cfqd,
+				struct cfq_group *cfqg, enum wl_prio_t prio,
+				bool prio_changed)
 {
 	struct cfq_queue *queue;
 	int i;
@@ -1392,10 +1556,10 @@ static enum wl_type_t cfq_choose_wl(struct cfq_data *cfqd, enum wl_prio_t prio,
 		 * from SYNC_NOIDLE (first choice), or just SYNC
 		 * over ASYNC
 		 */
-		if (service_tree_for(prio, cur_best, cfqd)->count)
+		if (service_tree_for(cfqg, prio, cur_best, cfqd)->count)
 			return cur_best;
 		cur_best = SYNC_WORKLOAD;
-		if (service_tree_for(prio, cur_best, cfqd)->count)
+		if (service_tree_for(cfqg, prio, cur_best, cfqd)->count)
 			return cur_best;
 
 		return ASYNC_WORKLOAD;
@@ -1403,7 +1567,7 @@ static enum wl_type_t cfq_choose_wl(struct cfq_data *cfqd, enum wl_prio_t prio,
 
 	for (i = 0; i < 3; ++i) {
 		/* otherwise, select the one with lowest rb_key */
-		queue = cfq_rb_first(service_tree_for(prio, i, cfqd));
+		queue = cfq_rb_first(service_tree_for(cfqg, prio, i, cfqd));
 		if (queue &&
 		    (!key_valid || time_before(queue->rb_key, lowest_key))) {
 			lowest_key = queue->rb_key;
@@ -1415,12 +1579,19 @@ static enum wl_type_t cfq_choose_wl(struct cfq_data *cfqd, enum wl_prio_t prio,
 	return cur_best;
 }
 
-static void choose_service_tree(struct cfq_data *cfqd)
+static void choose_service_tree(struct cfq_data *cfqd, struct cfq_group *cfqg)
 {
 	enum wl_prio_t previous_prio = cfqd->serving_prio;
 	bool prio_changed;
 	unsigned slice;
 	unsigned count;
+	struct cfq_rb_root *st;
+
+	if (!cfqg) {
+		cfqd->serving_prio = IDLE_WORKLOAD;
+		cfqd->workload_expires = jiffies + 1;
+		return;
+	}
 
 	/* Choose next priority. RT > BE > IDLE */
 	if (cfq_busy_queues_wl(RT_WORKLOAD, cfqd))
@@ -1439,8 +1610,9 @@ static void choose_service_tree(struct cfq_data *cfqd)
 	 * expiration time
 	 */
 	prio_changed = (cfqd->serving_prio != previous_prio);
-	count = service_tree_for(cfqd->serving_prio, cfqd->serving_type, cfqd)
-		->count;
+	st = service_tree_for(cfqg, cfqd->serving_prio, cfqd->serving_type,
+				cfqd);
+	count = st->count;
 
 	/*
 	 * If priority didn't change, check workload expiration,
@@ -1452,9 +1624,10 @@ static void choose_service_tree(struct cfq_data *cfqd)
 
 	/* otherwise select new workload type */
 	cfqd->serving_type =
-		cfq_choose_wl(cfqd, cfqd->serving_prio, prio_changed);
-	count = service_tree_for(cfqd->serving_prio, cfqd->serving_type, cfqd)
-		->count;
+		cfq_choose_wl(cfqd, cfqg, cfqd->serving_prio, prio_changed);
+	st = service_tree_for(cfqg, cfqd->serving_prio, cfqd->serving_type,
+				cfqd);
+	count = st->count;
 
 	/*
 	 * the workload slice is computed as a fraction of target latency
@@ -1478,6 +1651,23 @@ static void choose_service_tree(struct cfq_data *cfqd)
 	cfqd->noidle_tree_requires_idle = false;
 }
 
+static struct cfq_group *cfq_get_next_cfqg(struct cfq_data *cfqd)
+{
+	struct cfq_rb_root *st = &cfqd->grp_service_tree;
+
+	if (RB_EMPTY_ROOT(&st->rb))
+		return NULL;
+	return cfq_rb_first_group(st);
+}
+
+static void cfq_choose_cfqg(struct cfq_data *cfqd)
+{
+	struct cfq_group *cfqg = cfq_get_next_cfqg(cfqd);
+
+	cfqd->serving_group = cfqg;
+	choose_service_tree(cfqd, cfqg);
+}
+
 /*
  * Select a queue for service. If we have a current active queue,
  * check whether to continue servicing it, or retrieve and set a new one.
@@ -1490,6 +1680,8 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
 	if (!cfqq)
 		goto new_queue;
 
+	if (!cfqd->rq_queued)
+		return NULL;
 	/*
 	 * The active queue has run out of time, expire it and select new.
 	 */
@@ -1535,7 +1727,7 @@ new_queue:
 	 * service tree
 	 */
 	if (!new_cfqq)
-		choose_service_tree(cfqd);
+		cfq_choose_cfqg(cfqd);
 
 	cfqq = cfq_set_active_queue(cfqd, new_cfqq);
 keep_queue:
@@ -1552,6 +1744,9 @@ static int __cfq_forced_dispatch_cfqq(struct cfq_queue *cfqq)
 	}
 
 	BUG_ON(!list_empty(&cfqq->fifo));
+
+	/* By default cfqq is not expired if it is empty. Do it explicitly */
+	__cfq_slice_expired(cfqq->cfqd, cfqq, 0);
 	return dispatched;
 }
 
@@ -1563,18 +1758,11 @@ static int cfq_forced_dispatch(struct cfq_data *cfqd)
 {
 	struct cfq_queue *cfqq;
 	int dispatched = 0;
-	int i, j;
-	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 3; ++j)
-			while ((cfqq = cfq_rb_first(&cfqd->service_trees[i][j]))
-				!= NULL)
-				dispatched += __cfq_forced_dispatch_cfqq(cfqq);
 
-	while ((cfqq = cfq_rb_first(&cfqd->service_tree_idle)) != NULL)
+	while ((cfqq = cfq_get_next_queue_forced(cfqd)) != NULL)
 		dispatched += __cfq_forced_dispatch_cfqq(cfqq);
 
 	cfq_slice_expired(cfqd, 0);
-
 	BUG_ON(cfqd->busy_queues);
 
 	cfq_log(cfqd, "forced_dispatch=%d", dispatched);
@@ -1741,13 +1929,13 @@ static void cfq_put_queue(struct cfq_queue *cfqq)
 	cfq_log_cfqq(cfqd, cfqq, "put_queue");
 	BUG_ON(rb_first(&cfqq->sort_list));
 	BUG_ON(cfqq->allocated[READ] + cfqq->allocated[WRITE]);
-	BUG_ON(cfq_cfqq_on_rr(cfqq));
 
 	if (unlikely(cfqd->active_queue == cfqq)) {
 		__cfq_slice_expired(cfqd, cfqq, 0);
 		cfq_schedule_dispatch(cfqd);
 	}
 
+	BUG_ON(cfq_cfqq_on_rr(cfqq));
 	kmem_cache_free(cfq_pool, cfqq);
 }
 
@@ -2046,14 +2234,26 @@ static void cfq_init_cfqq(struct cfq_data *cfqd, struct cfq_queue *cfqq,
 	cfqq->pid = pid;
 }
 
+static void cfq_link_cfqq_cfqg(struct cfq_queue *cfqq, struct cfq_group *cfqg)
+{
+	cfqq->cfqg = cfqg;
+}
+
+static struct cfq_group *cfq_get_cfqg(struct cfq_data *cfqd, int create)
+{
+	return &cfqd->root_group;
+}
+
 static struct cfq_queue *
 cfq_find_alloc_queue(struct cfq_data *cfqd, bool is_sync,
 		     struct io_context *ioc, gfp_t gfp_mask)
 {
 	struct cfq_queue *cfqq, *new_cfqq = NULL;
 	struct cfq_io_context *cic;
+	struct cfq_group *cfqg;
 
 retry:
+	cfqg = cfq_get_cfqg(cfqd, 1);
 	cic = cfq_cic_lookup(cfqd, ioc);
 	/* cic always exists here */
 	cfqq = cic_to_cfqq(cic, is_sync);
@@ -2084,6 +2284,7 @@ retry:
 		if (cfqq) {
 			cfq_init_cfqq(cfqd, cfqq, current->pid, is_sync);
 			cfq_init_prio_data(cfqq, ioc);
+			cfq_link_cfqq_cfqg(cfqq, cfqg);
 			cfq_log_cfqq(cfqd, cfqq, "alloced");
 		} else
 			cfqq = &cfqd->oom_cfqq;
@@ -2413,9 +2614,11 @@ cfq_should_preempt(struct cfq_data *cfqd, struct cfq_queue *new_cfqq,
 	if (cfq_class_idle(cfqq))
 		return true;
 
+	/* Allow preemption only if we are idling on sync-noidle tree */
 	if (cfqd->serving_type == SYNC_NOIDLE_WORKLOAD &&
 	    cfqq_type(new_cfqq) == SYNC_NOIDLE_WORKLOAD &&
-	    new_cfqq->service_tree->count == 1)
+	    new_cfqq->service_tree->count == 2 &&
+	    RB_EMPTY_ROOT(&cfqq->sort_list))
 		return true;
 
 	/*
@@ -2948,15 +3151,21 @@ static void *cfq_init_queue(struct request_queue *q)
 {
 	struct cfq_data *cfqd;
 	int i, j;
+	struct cfq_group *cfqg;
+	struct cfq_rb_root *st;
 
 	cfqd = kmalloc_node(sizeof(*cfqd), GFP_KERNEL | __GFP_ZERO, q->node);
 	if (!cfqd)
 		return NULL;
 
-	for (i = 0; i < 2; ++i)
-		for (j = 0; j < 3; ++j)
-			cfqd->service_trees[i][j] = CFQ_RB_ROOT;
-	cfqd->service_tree_idle = CFQ_RB_ROOT;
+	/* Init root service tree */
+	cfqd->grp_service_tree = CFQ_RB_ROOT;
+
+	/* Init root group */
+	cfqg = &cfqd->root_group;
+	for_each_cfqg_st(cfqg, i, j, st)
+		*st = CFQ_RB_ROOT;
+	RB_CLEAR_NODE(&cfqg->rb_node);
 
 	/*
 	 * Not strictly needed (since RB_ROOT just clears the node and we
@@ -2973,6 +3182,7 @@ static void *cfq_init_queue(struct request_queue *q)
 	 */
 	cfq_init_cfqq(cfqd, &cfqd->oom_cfqq, 1, 0);
 	atomic_inc(&cfqd->oom_cfqq.ref);
+	cfq_link_cfqq_cfqg(&cfqd->oom_cfqq, &cfqd->root_group);
 
 	INIT_LIST_HEAD(&cfqd->cic_list);
 
