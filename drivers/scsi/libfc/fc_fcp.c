@@ -285,7 +285,6 @@ void fc_fcp_ddp_setup(struct fc_fcp_pkt *fsp, u16 xid)
 			fsp->xfer_ddp = xid;
 	}
 }
-EXPORT_SYMBOL(fc_fcp_ddp_setup);
 
 /*
  * fc_fcp_ddp_done - calls to LLD's ddp_done to release any
@@ -1098,7 +1097,7 @@ unlock:
  * Scsi abort handler- calls to send an abort
  * and then wait for abort completion
  */
-static int fc_fcp_pkt_abort(struct fc_lport *lp, struct fc_fcp_pkt *fsp)
+static int fc_fcp_pkt_abort(struct fc_fcp_pkt *fsp)
 {
 	int rc = FAILED;
 
@@ -1945,7 +1944,7 @@ int fc_eh_abort(struct scsi_cmnd *sc_cmd)
 		goto release_pkt;
 	}
 
-	rc = fc_fcp_pkt_abort(lp, fsp);
+	rc = fc_fcp_pkt_abort(fsp);
 	fc_fcp_unlock_pkt(fsp);
 
 release_pkt:

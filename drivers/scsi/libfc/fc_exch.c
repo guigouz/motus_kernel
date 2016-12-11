@@ -75,7 +75,6 @@ struct fc_exch_mgr {
 	struct kref	kref;		/* exchange mgr reference count */
 	u16		min_xid;	/* min exchange ID */
 	u16		max_xid;	/* max exchange ID */
-	struct list_head	ex_list;	/* allocated exchanges list */
 	mempool_t	*ep_pool;	/* reserve ep's */
 	u16		pool_max_index;	/* max exch array index in exch pool */
 	struct fc_exch_pool *pool;	/* per cpu exch pool */
@@ -422,7 +421,6 @@ int fc_seq_exch_abort(const struct fc_seq *req_sp, unsigned int timer_msec)
 		error = -ENOBUFS;
 	return error;
 }
-EXPORT_SYMBOL(fc_seq_exch_abort);
 
 /*
  * Exchange timeout - handle exchange timer expiration.
@@ -1719,7 +1717,7 @@ retry:
  */
 static void fc_exch_els_rrq(struct fc_seq *sp, struct fc_frame *fp)
 {
-	struct fc_exch *ep;		/* request or subject exchange */
+	struct fc_exch *ep = NULL;	/* request or subject exchange */
 	struct fc_els_rrq *rp;
 	u32 sid;
 	u16 xid;
@@ -1769,15 +1767,16 @@ static void fc_exch_els_rrq(struct fc_seq *sp, struct fc_frame *fp)
 	 * Send LS_ACC.
 	 */
 	fc_seq_ls_acc(sp);
-	fc_frame_free(fp);
-	return;
+	goto out;
 
 unlock_reject:
 	spin_unlock_bh(&ep->ex_lock);
-	fc_exch_release(ep);	/* drop hold from fc_exch_find */
 reject:
 	fc_seq_ls_rjt(sp, ELS_RJT_LOGIC, explan);
+out:
 	fc_frame_free(fp);
+	if (ep)
+		fc_exch_release(ep);	/* drop hold from fc_exch_find */
 }
 
 struct fc_exch_mgr_anchor *fc_exch_mgr_add(struct fc_lport *lport,
@@ -2047,6 +2046,20 @@ int fc_exch_init(struct fc_lport *lp)
 	if (!lp->tt.seq_exch_abort)
 		lp->tt.seq_exch_abort = fc_seq_exch_abort;
 
+	return 0;
+}
+EXPORT_SYMBOL(fc_exch_init);
+
+/**
+ * fc_setup_exch_mgr() - Setup an exchange manager
+ */
+int fc_setup_exch_mgr()
+{
+	fc_em_cachep = kmem_cache_create("libfc_em", sizeof(struct fc_exch),
+					 0, SLAB_HWCACHE_ALIGN, NULL);
+	if (!fc_em_cachep)
+		return -ENOMEM;
+
 	/*
 	 * Initialize fc_cpu_mask and fc_cpu_order. The
 	 * fc_cpu_mask is set for nr_cpu_ids rounded up
@@ -2069,16 +2082,6 @@ int fc_exch_init(struct fc_lport *lp)
 	}
 	fc_cpu_mask--;
 
-	return 0;
-}
-EXPORT_SYMBOL(fc_exch_init);
-
-int fc_setup_exch_mgr(void)
-{
-	fc_em_cachep = kmem_cache_create("libfc_em", sizeof(struct fc_exch),
-					 0, SLAB_HWCACHE_ALIGN, NULL);
-	if (!fc_em_cachep)
-		return -ENOMEM;
 	return 0;
 }
 

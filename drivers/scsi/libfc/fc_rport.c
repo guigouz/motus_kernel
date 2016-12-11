@@ -300,7 +300,6 @@ static void fc_rport_work(struct work_struct *work)
 				restart = 1;
 			else
 				list_del(&rdata->peers);
-			rdata->event = RPORT_EV_NONE;
 			mutex_unlock(&rdata->rp_mutex);
 			mutex_unlock(&lport->disc.disc_mutex);
 		}
@@ -1597,13 +1596,11 @@ int fc_setup_rport(void)
 		return -ENOMEM;
 	return 0;
 }
-EXPORT_SYMBOL(fc_setup_rport);
 
 void fc_destroy_rport(void)
 {
 	destroy_workqueue(rport_event_queue);
 }
-EXPORT_SYMBOL(fc_destroy_rport);
 
 void fc_rport_terminate_io(struct fc_rport *rport)
 {
