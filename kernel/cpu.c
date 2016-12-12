@@ -226,6 +226,10 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 		goto out_release;
 	}
 
+	/* Ensure that we are not runnable on dying cpu */
+	cpumask_copy(old_allowed, &current->cpus_allowed);
+	set_cpus_allowed_ptr(current, cpu_active_mask);
+
 	err = __stop_machine(take_cpu_down, &tcd_param, cpumask_of(cpu));
 	if (err) {
 		set_cpu_active(cpu, true);
@@ -371,6 +375,14 @@ int disable_nonboot_cpus(void)
 	 * with the userspace trying to use the CPU hotplug at the same time
 	 */
 	cpumask_clear(frozen_cpus);
+
+	for_each_online_cpu(cpu) {
+		if (cpu == first_cpu)
+			continue;
+		set_cpu_active(cpu, false);
+	}
+
+	synchronize_sched();
 
 	printk("Disabling non-boot CPUs ...\n");
 	for_each_online_cpu(cpu) {

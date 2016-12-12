@@ -4655,10 +4655,12 @@ struct nfs4_session *nfs4_alloc_session(struct nfs_client *clp)
 	init_completion(&session->complete);
 
 	tbl = &session->fc_slot_table;
+	tbl->highest_used_slotid = -1;
 	spin_lock_init(&tbl->slot_tbl_lock);
 	rpc_init_wait_queue(&tbl->slot_tbl_waitq, "ForeChannel Slot table");
 
 	tbl = &session->bc_slot_table;
+	tbl->highest_used_slotid = -1;
 	spin_lock_init(&tbl->slot_tbl_lock);
 	rpc_init_wait_queue(&tbl->slot_tbl_waitq, "BackChannel Slot table");
 
@@ -4814,7 +4816,6 @@ int nfs4_proc_create_session(struct nfs_client *clp)
 {
 	int status;
 	unsigned *ptr;
-	struct nfs_fsinfo fsinfo;
 	struct nfs4_session *session = clp->cl_session;
 
 	dprintk("--> %s clp=%p session=%p\n", __func__, clp, session);
@@ -4836,18 +4837,6 @@ int nfs4_proc_create_session(struct nfs_client *clp)
 	ptr = (unsigned *)&session->sess_id.data[0];
 	dprintk("%s client>seqid %d sessionid %u:%u:%u:%u\n", __func__,
 		clp->cl_seqid, ptr[0], ptr[1], ptr[2], ptr[3]);
-
-	/* Get the lease time */
-	status = nfs4_proc_get_lease_time(clp, &fsinfo);
-	if (status == 0) {
-		/* Update lease time and schedule renewal */
-		spin_lock(&clp->cl_lock);
-		clp->cl_lease_time = fsinfo.lease_time * HZ;
-		clp->cl_last_renewal = jiffies;
-		spin_unlock(&clp->cl_lock);
-
-		nfs4_schedule_state_renewal(clp);
-	}
 out:
 	dprintk("<-- %s\n", __func__);
 	return status;

@@ -4306,7 +4306,7 @@ static int load_balance(int this_cpu, struct rq *this_rq,
 	unsigned long flags;
 	struct cpumask *cpus = __get_cpu_var(load_balance_tmpmask);
 
-	cpumask_copy(cpus, cpu_online_mask);
+	cpumask_copy(cpus, cpu_active_mask);
 
 	/*
 	 * When power savings policy is enabled for the parent domain, idle
@@ -4476,7 +4476,7 @@ load_balance_newidle(int this_cpu, struct rq *this_rq, struct sched_domain *sd)
 	int all_pinned = 0;
 	struct cpumask *cpus = __get_cpu_var(load_balance_tmpmask);
 
-	cpumask_copy(cpus, cpu_online_mask);
+	cpumask_copy(cpus, cpu_active_mask);
 
 	/*
 	 * When power savings policy is enabled for the parent domain, idle
@@ -7480,20 +7480,38 @@ void move_task_off_dead_cpu(int dead_cpu, struct task_struct *p)
 	int needs_cpu, uninitialized_var(dest_cpu);
 	unsigned long flags;
 
-	local_irq_save(flags);
+again:
+	/* Look for allowed, online CPU in same node. */
+	for_each_cpu_and(dest_cpu, nodemask, cpu_active_mask)
+		if (cpumask_test_cpu(dest_cpu, &p->cpus_allowed))
+			goto move;
 
-	spin_lock(&rq->lock);
-	needs_cpu = (task_cpu(p) == dead_cpu) && (p->state != TASK_WAKING);
-	if (needs_cpu)
-		dest_cpu = select_fallback_rq(dead_cpu, p);
-	spin_unlock(&rq->lock);
-	/*
-	 * It can only fail if we race with set_cpus_allowed(),
-	 * in the racer should migrate the task anyway.
-	 */
-	if (needs_cpu)
-		__migrate_task(p, dead_cpu, dest_cpu);
-	local_irq_restore(flags);
+	/* Any allowed, online CPU? */
+	dest_cpu = cpumask_any_and(&p->cpus_allowed, cpu_active_mask);
+	if (dest_cpu < nr_cpu_ids)
+		goto move;
+
+	/* No more Mr. Nice Guy. */
+	if (dest_cpu >= nr_cpu_ids) {
+		cpuset_cpus_allowed_locked(p, &p->cpus_allowed);
+		dest_cpu = cpumask_any_and(cpu_active_mask, &p->cpus_allowed);
+
+		/*
+		 * Don't tell them about moving exiting tasks or
+		 * kernel threads (both mm NULL), since they never
+		 * leave kernel.
+		 */
+		if (p->mm && printk_ratelimit()) {
+			printk(KERN_INFO "process %d (%s) no "
+			       "longer affine to cpu%d\n",
+			       task_pid_nr(p), p->comm, dead_cpu);
+		}
+	}
+
+move:
+	/* It can have affinity changed while we were choosing. */
+	if (unlikely(!__migrate_task_irq(p, dead_cpu, dest_cpu)))
+		goto again;
 }
 
 /*
@@ -9300,7 +9318,7 @@ match1:
 	if (doms_new == NULL) {
 		ndoms_cur = 0;
 		doms_new = &fallback_doms;
-		cpumask_andnot(doms_new[0], cpu_online_mask, cpu_isolated_map);
+		cpumask_andnot(doms_new[0], cpu_active_mask, cpu_isolated_map);
 		WARN_ON_ONCE(dattr_new);
 	}
 
