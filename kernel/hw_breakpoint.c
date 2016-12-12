@@ -259,7 +259,7 @@ void release_bp_slot(struct perf_event *bp)
 }
 
 
-int __register_perf_hw_breakpoint(struct perf_event *bp)
+int register_perf_hw_breakpoint(struct perf_event *bp)
 {
 	int ret;
 
@@ -276,17 +276,10 @@ int __register_perf_hw_breakpoint(struct perf_event *bp)
 	 * This is a quick hack that will be removed soon, once we remove
 	 * the tmp breakpoints from ptrace
 	 */
-	if (!bp->attr.disabled || bp->callback == perf_bp_event)
+	if (!bp->attr.disabled || !bp->overflow_handler)
 		ret = arch_validate_hwbkpt_settings(bp, bp->ctx->task);
 
 	return ret;
-}
-
-int register_perf_hw_breakpoint(struct perf_event *bp)
-{
-	bp->callback = perf_bp_event;
-
-	return __register_perf_hw_breakpoint(bp);
 }
 
 /**
@@ -297,7 +290,7 @@ int register_perf_hw_breakpoint(struct perf_event *bp)
  */
 struct perf_event *
 register_user_hw_breakpoint(struct perf_event_attr *attr,
-			    perf_callback_t triggered,
+			    perf_overflow_handler_t triggered,
 			    struct task_struct *tsk)
 {
 	return perf_event_create_kernel_counter(attr, -1, tsk->pid, triggered);
@@ -312,9 +305,7 @@ EXPORT_SYMBOL_GPL(register_user_hw_breakpoint);
  * @tsk: pointer to 'task_struct' of the process to which the address belongs
  */
 struct perf_event *
-modify_user_hw_breakpoint(struct perf_event *bp, struct perf_event_attr *attr,
-			  perf_callback_t triggered,
-			  struct task_struct *tsk)
+modify_user_hw_breakpoint(struct perf_event *bp, struct perf_event_attr *attr)
 {
 	/*
 	 * FIXME: do it without unregistering
@@ -323,7 +314,8 @@ modify_user_hw_breakpoint(struct perf_event *bp, struct perf_event_attr *attr,
 	 */
 	unregister_hw_breakpoint(bp);
 
-	return perf_event_create_kernel_counter(attr, -1, tsk->pid, triggered);
+	return perf_event_create_kernel_counter(attr, -1, bp->ctx->task->pid,
+						bp->overflow_handler);
 }
 EXPORT_SYMBOL_GPL(modify_user_hw_breakpoint);
 
@@ -348,7 +340,7 @@ EXPORT_SYMBOL_GPL(unregister_hw_breakpoint);
  */
 struct perf_event **
 register_wide_hw_breakpoint(struct perf_event_attr *attr,
-			    perf_callback_t triggered)
+			    perf_overflow_handler_t triggered)
 {
 	struct perf_event **cpu_events, **pevent, *bp;
 	long err;

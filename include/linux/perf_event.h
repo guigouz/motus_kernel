@@ -215,12 +215,12 @@ struct perf_event_attr {
 		__u32		wakeup_watermark; /* bytes before wakeup   */
 	};
 
-	union {
-		struct { /* Hardware breakpoint info */
-			__u64		bp_addr;
-			__u32		bp_type;
-			__u32		bp_len;
-		};
+	struct { /* Hardware breakpoint info */
+		__u64		bp_addr;
+		__u32		bp_type;
+		__u32		bp_len;
+		__u64		__bp_reserved_1;
+		__u64		__bp_reserved_2;
 	};
 
 	__u32			__reserved_2;
@@ -565,9 +565,11 @@ struct perf_pending_entry {
 	void (*func)(struct perf_pending_entry *);
 };
 
-typedef void (*perf_callback_t)(struct perf_event *, void *);
-
 struct perf_sample_data;
+
+typedef void (*perf_overflow_handler_t)(struct perf_event *, int,
+					struct perf_sample_data *,
+					struct pt_regs *regs);
 
 /**
  * struct perf_event - performance event kernel representation:
@@ -660,17 +662,11 @@ struct perf_event {
 	struct pid_namespace		*ns;
 	u64				id;
 
-	void (*overflow_handler)(struct perf_event *event,
-			int nmi, struct perf_sample_data *data,
-			struct pt_regs *regs);
+	perf_overflow_handler_t		overflow_handler;
 
 #ifdef CONFIG_EVENT_PROFILE
 	struct event_filter		*filter;
 #endif
-
-	perf_callback_t			callback;
-
-	perf_callback_t			event_callback;
 
 #endif /* CONFIG_PERF_EVENTS */
 };
@@ -781,7 +777,7 @@ extern struct perf_event *
 perf_event_create_kernel_counter(struct perf_event_attr *attr,
 				int cpu,
 				pid_t pid,
-				perf_callback_t callback);
+				perf_overflow_handler_t callback);
 extern u64 perf_event_read_value(struct perf_event *event,
 				 u64 *enabled, u64 *running);
 

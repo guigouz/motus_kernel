@@ -123,7 +123,7 @@ int nfs41_init_clientid(struct nfs_client *clp, struct rpc_cred *cred)
 	status = nfs4_proc_exchange_id(clp, cred);
 	if (status == 0)
 		/* create session schedules state renewal upon success */
-		status = nfs4_proc_create_session(clp, 0);
+		status = nfs4_proc_create_session(clp);
 	if (status == 0)
 		nfs_mark_client_ready(clp, NFS_CS_READY);
 	return status;
@@ -1220,10 +1220,10 @@ static int nfs4_reset_session(struct nfs_client *clp)
 	struct nfs4_slot_table *tbl = &ses->fc_slot_table;
 	int status;
 
-	INIT_COMPLETION(ses->complete);
 	spin_lock(&tbl->slot_tbl_lock);
 	set_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state);
 	if (tbl->highest_used_slotid != -1) {
+		INIT_COMPLETION(ses->complete);
 		spin_unlock(&tbl->slot_tbl_lock);
 		status = wait_for_completion_interruptible(&ses->complete);
 		if (status) /* -ERESTARTSYS */
@@ -1240,14 +1240,14 @@ static int nfs4_reset_session(struct nfs_client *clp)
 	}
 
 	memset(clp->cl_session->sess_id.data, 0, NFS4_MAX_SESSIONID_LEN);
-	status = nfs4_proc_create_session(clp, 1);
+	status = nfs4_proc_create_session(clp);
 	if (status)
 		nfs4_session_recovery_handle_error(clp, status);
 		/* fall through*/
 out:
 	/* Wake up the next rpc task even on error */
 	clear_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state);
-	rpc_wake_up_next(&clp->cl_session->fc_slot_table.slot_tbl_waitq);
+	rpc_wake_up(&clp->cl_session->fc_slot_table.slot_tbl_waitq);
 	return status;
 }
 
