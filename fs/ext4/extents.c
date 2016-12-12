@@ -3178,8 +3178,7 @@ ext4_ext_handle_uninitialized_extents(handle_t *handle, struct inode *inode,
 	/* async DIO end_io complete, convert the filled extent to written */
 	if (flags == EXT4_GET_BLOCKS_DIO_CONVERT_EXT) {
 		ret = ext4_convert_unwritten_extents_dio(handle, inode,
-							 iblock, max_blocks,
-							 path);
+							path);
 		if (ret >= 0)
 			ext4_update_inode_fsync_trans(handle, inode, 1);
 		goto out2;
@@ -3506,13 +3505,6 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	if (allocated > max_blocks)
 		allocated = max_blocks;
 	set_buffer_new(bh_result);
-
-	/*
-	 * Update reserved blocks/metadata blocks after successful
-	 * block allocation which had been deferred till now.
-	 */
-	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
-		ext4_da_update_reserve_space(inode, allocated, 1);
 
 	/*
 	 * Cache the extent and update transaction to commit on fdatasync only
