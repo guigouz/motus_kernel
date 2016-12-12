@@ -45,6 +45,20 @@
 void rs600_gpu_init(struct radeon_device *rdev);
 int rs600_mc_wait_for_idle(struct radeon_device *rdev);
 
+int rs600_mc_init(struct radeon_device *rdev)
+{
+	/* read back the MC value from the hw */
+	uint32_t mc_fb_loc;
+	int r;
+
+	mc_fb_loc = RREG32_MC(R_000004_MC_FB_LOCATION);
+	rdev->mc.vram_location = G_000004_MC_FB_START(mc_fb_loc) << 16;
+	rdev->mc.gtt_location = 0xffffffffUL;
+	r = radeon_mc_setup(rdev);
+	if (r)
+		return r;
+	return 0;
+}
 /*
  * GART.
  */
@@ -100,39 +114,39 @@ int rs600_gart_enable(struct radeon_device *rdev)
 	WREG32(R_00004C_BUS_CNTL, tmp);
 	/* FIXME: setup default page */
 	WREG32_MC(R_000100_MC_PT0_CNTL,
-		 (S_000100_EFFECTIVE_L2_CACHE_SIZE(6) |
-		  S_000100_EFFECTIVE_L2_QUEUE_SIZE(6)));
+		  (S_000100_EFFECTIVE_L2_CACHE_SIZE(6) |
+		   S_000100_EFFECTIVE_L2_QUEUE_SIZE(6)));
+
 	for (i = 0; i < 19; i++) {
 		WREG32_MC(R_00016C_MC_PT0_CLIENT0_CNTL + i,
-			S_00016C_ENABLE_TRANSLATION_MODE_OVERRIDE(1) |
-			S_00016C_SYSTEM_ACCESS_MODE_MASK(
-				V_00016C_SYSTEM_ACCESS_MODE_IN_SYS) |
-			S_00016C_SYSTEM_APERTURE_UNMAPPED_ACCESS(
-				V_00016C_SYSTEM_APERTURE_UNMAPPED_DEFAULT_PAGE) |
-			S_00016C_EFFECTIVE_L1_CACHE_SIZE(1) |
-			S_00016C_ENABLE_FRAGMENT_PROCESSING(1) |
-			S_00016C_EFFECTIVE_L1_QUEUE_SIZE(1));
+			  S_00016C_ENABLE_TRANSLATION_MODE_OVERRIDE(1) |
+			  S_00016C_SYSTEM_ACCESS_MODE_MASK(
+				  V_00016C_SYSTEM_ACCESS_MODE_NOT_IN_SYS) |
+			  S_00016C_SYSTEM_APERTURE_UNMAPPED_ACCESS(
+				  V_00016C_SYSTEM_APERTURE_UNMAPPED_PASSTHROUGH) |
+			  S_00016C_EFFECTIVE_L1_CACHE_SIZE(3) |
+			  S_00016C_ENABLE_FRAGMENT_PROCESSING(1) |
+			  S_00016C_EFFECTIVE_L1_QUEUE_SIZE(3));
 	}
-
-	/* System context map to GART space */
-	WREG32_MC(R_000112_MC_PT0_SYSTEM_APERTURE_LOW_ADDR, rdev->mc.gtt_start);
-	WREG32_MC(R_000114_MC_PT0_SYSTEM_APERTURE_HIGH_ADDR, rdev->mc.gtt_end);
-
 	/* enable first context */
-	WREG32_MC(R_00013C_MC_PT0_CONTEXT0_FLAT_START_ADDR, rdev->mc.gtt_start);
-	WREG32_MC(R_00014C_MC_PT0_CONTEXT0_FLAT_END_ADDR, rdev->mc.gtt_end);
 	WREG32_MC(R_000102_MC_PT0_CONTEXT0_CNTL,
-			S_000102_ENABLE_PAGE_TABLE(1) |
-			S_000102_PAGE_TABLE_DEPTH(V_000102_PAGE_TABLE_FLAT));
+		  S_000102_ENABLE_PAGE_TABLE(1) |
+		  S_000102_PAGE_TABLE_DEPTH(V_000102_PAGE_TABLE_FLAT));
+
 	/* disable all other contexts */
-	for (i = 1; i < 8; i++) {
+	for (i = 1; i < 8; i++)
 		WREG32_MC(R_000102_MC_PT0_CONTEXT0_CNTL + i, 0);
-	}
 
 	/* setup the page table */
 	WREG32_MC(R_00012C_MC_PT0_CONTEXT0_FLAT_BASE_ADDR,
-			rdev->gart.table_addr);
+		  rdev->gart.table_addr);
+	WREG32_MC(R_00013C_MC_PT0_CONTEXT0_FLAT_START_ADDR, rdev->mc.gtt_start);
+	WREG32_MC(R_00014C_MC_PT0_CONTEXT0_FLAT_END_ADDR, rdev->mc.gtt_end);
 	WREG32_MC(R_00011C_MC_PT0_CONTEXT0_DEFAULT_READ_ADDR, 0);
+
+	/* System context maps to VRAM space */
+	WREG32_MC(R_000112_MC_PT0_SYSTEM_APERTURE_LOW_ADDR, rdev->mc.vram_start);
+	WREG32_MC(R_000114_MC_PT0_SYSTEM_APERTURE_HIGH_ADDR, rdev->mc.vram_end);
 
 	/* enable page tables */
 	tmp = RREG32_MC(R_000100_MC_PT0_CNTL);
@@ -505,7 +519,7 @@ int rs600_init(struct radeon_device *rdev)
 	/* Get vram informations */
 	rs600_vram_info(rdev);
 	/* Initialize memory controller (also test AGP) */
-	r = r420_mc_init(rdev);
+	r = rs600_mc_init(rdev);
 	if (r)
 		return r;
 	rs600_debugfs(rdev);

@@ -1006,7 +1006,14 @@ out:
 #ifdef CONFIG_QUOTA
 qsize_t *ext4_get_reserved_space(struct inode *inode)
 {
-	return &EXT4_I(inode)->i_reserved_quota;
+	unsigned long long total;
+
+	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
+	total = EXT4_I(inode)->i_reserved_data_blocks +
+		EXT4_I(inode)->i_reserved_meta_blocks;
+	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
+
+	return (total << inode->i_blkbits);
 }
 #endif
 
