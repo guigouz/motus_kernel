@@ -46,11 +46,6 @@ static DEFINE_MUTEX(core_lock);
 static DEFINE_IDR(i2c_adapter_idr);
 static LIST_HEAD(userspace_devices);
 
-#if defined(CONFIG_MACH_MOT)
-static struct mutex __i2c_common_mutex;
-bool __i2c_common_mutex_flag = 0;
-#endif
-
 static struct device_type i2c_client_type;
 static int i2c_check_addr(struct i2c_adapter *adapter, int addr);
 static int i2c_detect(struct i2c_adapter *adapter, struct i2c_driver *driver);
@@ -588,13 +583,6 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 		res = -EAGAIN;
 		goto out_list;
 	}
-
-#if defined(CONFIG_MACH_MOT)
-	if (!__i2c_common_mutex_flag) {
-		mutex_init(&__i2c_common_mutex);
-		__i2c_common_mutex_flag = 1;
-	}
-#endif
 
 	rt_mutex_init(&adap->bus_lock);
 
@@ -1139,9 +1127,6 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 			rt_mutex_lock(&adap->bus_lock);
 		}
 
-#if defined(CONFIG_MACH_MOT)
-		mutex_lock(&__i2c_common_mutex);
-#endif
 		/* Retry automatically on arbitration loss */
 		orig_jiffies = jiffies;
 		for (ret = 0, try = 0; try <= adap->retries; try++) {
@@ -1151,16 +1136,7 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 			if (time_after(jiffies, orig_jiffies + adap->timeout))
 				break;
 		}
-<<<<<<< HEAD
-#if defined(CONFIG_MACH_MOT)
-		mutex_unlock(&__i2c_common_mutex);
-#endif
-		mutex_unlock(&adap->bus_lock);
-||||||| parent of 194684e... i2c: Prevent priority inversion on top of bus lock
-		mutex_unlock(&adap->bus_lock);
-=======
 		rt_mutex_unlock(&adap->bus_lock);
->>>>>>> 194684e... i2c: Prevent priority inversion on top of bus lock
 
 		return ret;
 	} else {
@@ -1231,7 +1207,7 @@ EXPORT_SYMBOL(i2c_master_recv);
  * ----------------------------------------------------
  */
 
-static int i2c_detect_address(struct i2c_client *temp_client, int kind,
+static int i2c_detect_address(struct i2c_client *temp_client,
 			      struct i2c_driver *driver)
 {
 	struct i2c_board_info info;
@@ -1250,32 +1226,18 @@ static int i2c_detect_address(struct i2c_client *temp_client, int kind,
 	if (i2c_check_addr(adapter, addr))
 		return 0;
 
-	/* Make sure there is something at this address, unless forced */
-	if (kind < 0) {
-		if (addr == 0x73 && (adapter->class & I2C_CLASS_HWMON)) {
-			/* Special probe for FSC hwmon chips */
-			union i2c_smbus_data dummy;
+	/* Make sure there is something at this address */
+	if (i2c_smbus_xfer(adapter, addr, 0, 0, 0, I2C_SMBUS_QUICK, NULL) < 0)
+		return 0;
 
-			if (i2c_smbus_xfer(adapter, addr, 0, I2C_SMBUS_READ, 0,
-					   I2C_SMBUS_BYTE_DATA, &dummy) < 0)
-				return 0;
-		} else {
-			if (i2c_smbus_xfer(adapter, addr, 0, I2C_SMBUS_WRITE, 0,
-					   I2C_SMBUS_QUICK, NULL) < 0)
-				return 0;
-
-			/* Prevent 24RF08 corruption */
-			if ((addr & ~0x0f) == 0x50)
-				i2c_smbus_xfer(adapter, addr, 0,
-					       I2C_SMBUS_WRITE, 0,
-					       I2C_SMBUS_QUICK, NULL);
-		}
-	}
+	/* Prevent 24RF08 corruption */
+	if ((addr & ~0x0f) == 0x50)
+		i2c_smbus_xfer(adapter, addr, 0, 0, 0, I2C_SMBUS_QUICK, NULL);
 
 	/* Finally call the custom detection function */
 	memset(&info, 0, sizeof(struct i2c_board_info));
 	info.addr = addr;
-	err = driver->detect(temp_client, kind, &info);
+	err = driver->detect(temp_client, -1, &info);
 	if (err) {
 		/* -ENODEV is returned if the detection fails. We catch it
 		   here as this isn't an error. */
@@ -1320,40 +1282,13 @@ static int i2c_detect(struct i2c_adapter *adapter, struct i2c_driver *driver)
 		return -ENOMEM;
 	temp_client->adapter = adapter;
 
-	/* Force entries are done first, and are not affected by ignore
-	   entries */
-	if (address_data->forces) {
-		const unsigned short * const *forces = address_data->forces;
-		int kind;
-
-		for (kind = 0; forces[kind]; kind++) {
-			for (i = 0; forces[kind][i] != I2C_CLIENT_END;
-			     i += 2) {
-				if (forces[kind][i] == adap_id
-				 || forces[kind][i] == ANY_I2C_BUS) {
-					dev_dbg(&adapter->dev, "found force "
-						"parameter for adapter %d, "
-						"addr 0x%02x, kind %d\n",
-						adap_id, forces[kind][i + 1],
-						kind);
-					temp_client->addr = forces[kind][i + 1];
-					err = i2c_detect_address(temp_client,
-						kind, driver);
-					if (err)
-						goto exit_free;
-				}
-			}
-		}
-	}
-
 	/* Stop here if the classes do not match */
 	if (!(adapter->class & driver->class))
 		goto exit_free;
 
 	/* Stop here if we can't use SMBUS_QUICK */
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_QUICK)) {
-		if (address_data->probe[0] == I2C_CLIENT_END
-		 && address_data->normal_i2c[0] == I2C_CLIENT_END)
+		if (address_data->normal_i2c[0] == I2C_CLIENT_END)
 			goto exit_free;
 
 		dev_warn(&adapter->dev, "SMBus Quick command not supported, "
@@ -1362,48 +1297,12 @@ static int i2c_detect(struct i2c_adapter *adapter, struct i2c_driver *driver)
 		goto exit_free;
 	}
 
-	/* Probe entries are done second, and are not affected by ignore
-	   entries either */
-	for (i = 0; address_data->probe[i] != I2C_CLIENT_END; i += 2) {
-		if (address_data->probe[i] == adap_id
-		 || address_data->probe[i] == ANY_I2C_BUS) {
-			dev_dbg(&adapter->dev, "found probe parameter for "
-				"adapter %d, addr 0x%02x\n", adap_id,
-				address_data->probe[i + 1]);
-			temp_client->addr = address_data->probe[i + 1];
-			err = i2c_detect_address(temp_client, -1, driver);
-			if (err)
-				goto exit_free;
-		}
-	}
-
-	/* Normal entries are done last, unless shadowed by an ignore entry */
 	for (i = 0; address_data->normal_i2c[i] != I2C_CLIENT_END; i += 1) {
-		int j, ignore;
-
-		ignore = 0;
-		for (j = 0; address_data->ignore[j] != I2C_CLIENT_END;
-		     j += 2) {
-			if ((address_data->ignore[j] == adap_id ||
-			     address_data->ignore[j] == ANY_I2C_BUS)
-			 && address_data->ignore[j + 1]
-			    == address_data->normal_i2c[i]) {
-				dev_dbg(&adapter->dev, "found ignore "
-					"parameter for adapter %d, "
-					"addr 0x%02x\n", adap_id,
-					address_data->ignore[j + 1]);
-				ignore = 1;
-				break;
-			}
-		}
-		if (ignore)
-			continue;
-
 		dev_dbg(&adapter->dev, "found normal entry for adapter %d, "
 			"addr 0x%02x\n", adap_id,
 			address_data->normal_i2c[i]);
 		temp_client->addr = address_data->normal_i2c[i];
-		err = i2c_detect_address(temp_client, -1, driver);
+		err = i2c_detect_address(temp_client, driver);
 		if (err)
 			goto exit_free;
 	}
