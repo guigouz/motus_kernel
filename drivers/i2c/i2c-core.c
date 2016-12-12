@@ -596,7 +596,7 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
 	}
 #endif
 
-	mutex_init(&adap->bus_lock);
+	rt_mutex_init(&adap->bus_lock);
 
 	/* Set default timeout to 1 second if not already set */
 	if (adap->timeout == 0)
@@ -1131,12 +1131,12 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 #endif
 
 		if (in_atomic() || irqs_disabled()) {
-			ret = mutex_trylock(&adap->bus_lock);
+			ret = rt_mutex_trylock(&adap->bus_lock);
 			if (!ret)
 				/* I2C activity is ongoing. */
 				return -EAGAIN;
 		} else {
-			mutex_lock_nested(&adap->bus_lock, adap->level);
+			rt_mutex_lock(&adap->bus_lock);
 		}
 
 #if defined(CONFIG_MACH_MOT)
@@ -1151,10 +1151,16 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 			if (time_after(jiffies, orig_jiffies + adap->timeout))
 				break;
 		}
+<<<<<<< HEAD
 #if defined(CONFIG_MACH_MOT)
 		mutex_unlock(&__i2c_common_mutex);
 #endif
 		mutex_unlock(&adap->bus_lock);
+||||||| parent of 194684e... i2c: Prevent priority inversion on top of bus lock
+		mutex_unlock(&adap->bus_lock);
+=======
+		rt_mutex_unlock(&adap->bus_lock);
+>>>>>>> 194684e... i2c: Prevent priority inversion on top of bus lock
 
 		return ret;
 	} else {
@@ -1968,7 +1974,7 @@ s32 i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr, unsigned short flags,
 	flags &= I2C_M_TEN | I2C_CLIENT_PEC;
 
 	if (adapter->algo->smbus_xfer) {
-		mutex_lock(&adapter->bus_lock);
+		rt_mutex_lock(&adapter->bus_lock);
 
 		/* Retry automatically on arbitration loss */
 		orig_jiffies = jiffies;
@@ -1982,7 +1988,7 @@ s32 i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr, unsigned short flags,
 				       orig_jiffies + adapter->timeout))
 				break;
 		}
-		mutex_unlock(&adapter->bus_lock);
+		rt_mutex_unlock(&adapter->bus_lock);
 	} else
 		res = i2c_smbus_xfer_emulated(adapter,addr,flags,read_write,
 					      command, protocol, data);
