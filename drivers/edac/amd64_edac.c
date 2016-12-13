@@ -19,26 +19,48 @@ static struct mem_ctl_info *mci_lookup[EDAC_MAX_NUMNODES];
 static struct amd64_pvt *pvt_lookup[EDAC_MAX_NUMNODES];
 
 /*
- * See F2x80 for K8 and F2x[1,0]80 for Fam10 and later. The table below is only
- * for DDR2 DRAM mapping.
+ * Address to DRAM bank mapping: see F2x80 for K8 and F2x[1,0]80 for Fam10 and
+ * later.
  */
-u32 revf_quad_ddr2_shift[] = {
-	0,	/* 0000b NULL DIMM (128mb) */
-	28,	/* 0001b 256mb */
-	29,	/* 0010b 512mb */
-	29,	/* 0011b 512mb */
-	29,	/* 0100b 512mb */
-	30,	/* 0101b 1gb */
-	30,	/* 0110b 1gb */
-	31,	/* 0111b 2gb */
-	31,	/* 1000b 2gb */
-	32,	/* 1001b 4gb */
-	32,	/* 1010b 4gb */
-	33,	/* 1011b 8gb */
-	0,	/* 1100b future */
-	0,	/* 1101b future */
-	0,	/* 1110b future */
-	0	/* 1111b future */
+static int ddr2_dbam_revCG[] = {
+			   [0]		= 32,
+			   [1]		= 64,
+			   [2]		= 128,
+			   [3]		= 256,
+			   [4]		= 512,
+			   [5]		= 1024,
+			   [6]		= 2048,
+};
+
+static int ddr2_dbam_revD[] = {
+			   [0]		= 32,
+			   [1]		= 64,
+			   [2 ... 3]	= 128,
+			   [4]		= 256,
+			   [5]		= 512,
+			   [6]		= 256,
+			   [7]		= 512,
+			   [8 ... 9]	= 1024,
+			   [10]		= 2048,
+};
+
+static int ddr2_dbam[] = { [0]		= 128,
+			   [1]		= 256,
+			   [2 ... 4]	= 512,
+			   [5 ... 6]	= 1024,
+			   [7 ... 8]	= 2048,
+			   [9 ... 10]	= 4096,
+			   [11]		= 8192,
+};
+
+static int ddr3_dbam[] = { [0]		= -1,
+			   [1]		= 256,
+			   [2]		= 512,
+			   [3 ... 4]	= -1,
+			   [5 ... 6]	= 1024,
+			   [7 ... 8]	= 2048,
+			   [9 ... 10]	= 4096,
+			   [11]	= 8192,
 };
 
 /*
@@ -164,11 +186,9 @@ static int amd64_get_scrub_rate(struct mem_ctl_info *mci, u32 *bw)
 {
 	struct amd64_pvt *pvt = mci->pvt_info;
 	u32 scrubval = 0;
-	int status = -1, i, ret = 0;
+	int status = -1, i;
 
-	ret = pci_read_config_dword(pvt->misc_f3_ctl, K8_SCRCTRL, &scrubval);
-	if (ret)
-		debugf0("Reading K8_SCRCTRL failed\n");
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_SCRCTRL, &scrubval);
 
 	scrubval = scrubval & 0x001F;
 
@@ -189,7 +209,7 @@ static int amd64_get_scrub_rate(struct mem_ctl_info *mci, u32 *bw)
 /* Map from a CSROW entry to the mask entry that operates on it */
 static inline u32 amd64_map_to_dcs_mask(struct amd64_pvt *pvt, int csrow)
 {
-	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_F)
+	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_F)
 		return csrow;
 	else
 		return csrow >> 1;
@@ -437,7 +457,7 @@ int amd64_get_dram_hole_info(struct mem_ctl_info *mci, u64 *hole_base,
 	u64 base;
 
 	/* only revE and later have the DRAM Hole Address Register */
-	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_E) {
+	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_E) {
 		debugf1("  revision %d for node %d does not support DHAR\n",
 			pvt->ext_model, pvt->mc_node_id);
 		return 1;
@@ -743,21 +763,6 @@ static void find_csrow_limits(struct mem_ctl_info *mci, int csrow,
 	*input_addr_max = base | mask | pvt->dcs_mask_notused;
 }
 
-/*
- * Extract error address from MCA NB Address Low (section 3.6.4.5) and MCA NB
- * Address High (section 3.6.4.6) register values and return the result. Address
- * is located in the info structure (nbeah and nbeal), the encoding is device
- * specific.
- */
-static u64 extract_error_address(struct mem_ctl_info *mci,
-				 struct err_regs *info)
-{
-	struct amd64_pvt *pvt = mci->pvt_info;
-
-	return pvt->ops->get_error_address(mci, info);
-}
-
-
 /* Map the Error address to a PAGE and PAGE OFFSET. */
 static inline void error_address_to_page_and_offset(u64 error_address,
 						    u32 *page, u32 *offset)
@@ -797,7 +802,7 @@ static void amd64_cpu_display_info(struct amd64_pvt *pvt)
 		edac_printk(KERN_DEBUG, EDAC_MC, "F10h CPU detected\n");
 	else if (boot_cpu_data.x86 == 0xf)
 		edac_printk(KERN_DEBUG, EDAC_MC, "%s detected\n",
-			(pvt->ext_model >= OPTERON_CPU_REV_F) ?
+			(pvt->ext_model >= K8_REV_F) ?
 			"Rev F or later" : "Rev E or earlier");
 	else
 		/* we'll hardly ever ever get here */
@@ -813,7 +818,7 @@ static enum edac_type amd64_determine_edac_cap(struct amd64_pvt *pvt)
 	int bit;
 	enum dev_type edac_cap = EDAC_FLAG_NONE;
 
-	bit = (boot_cpu_data.x86 > 0xf || pvt->ext_model >= OPTERON_CPU_REV_F)
+	bit = (boot_cpu_data.x86 > 0xf || pvt->ext_model >= K8_REV_F)
 		? 19
 		: 17;
 
@@ -824,75 +829,66 @@ static enum edac_type amd64_determine_edac_cap(struct amd64_pvt *pvt)
 }
 
 
-static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
-					 int ganged);
+static void amd64_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt);
+
+static void amd64_dump_dramcfg_low(u32 dclr, int chan)
+{
+	debugf1("F2x%d90 (DRAM Cfg Low): 0x%08x\n", chan, dclr);
+
+	debugf1("  DIMM type: %sbuffered; all DIMMs support ECC: %s\n",
+		(dclr & BIT(16)) ?  "un" : "",
+		(dclr & BIT(19)) ? "yes" : "no");
+
+	debugf1("  PAR/ERR parity: %s\n",
+		(dclr & BIT(8)) ?  "enabled" : "disabled");
+
+	debugf1("  DCT 128bit mode width: %s\n",
+		(dclr & BIT(11)) ?  "128b" : "64b");
+
+	debugf1("  x4 logical DIMMs present: L0: %s L1: %s L2: %s L3: %s\n",
+		(dclr & BIT(12)) ?  "yes" : "no",
+		(dclr & BIT(13)) ?  "yes" : "no",
+		(dclr & BIT(14)) ?  "yes" : "no",
+		(dclr & BIT(15)) ?  "yes" : "no");
+}
 
 /* Display and decode various NB registers for debug purposes. */
 static void amd64_dump_misc_regs(struct amd64_pvt *pvt)
 {
 	int ganged;
 
-	debugf1("  nbcap:0x%8.08x DctDualCap=%s DualNode=%s 8-Node=%s\n",
-		pvt->nbcap,
-		(pvt->nbcap & K8_NBCAP_DCT_DUAL) ? "True" : "False",
-		(pvt->nbcap & K8_NBCAP_DUAL_NODE) ? "True" : "False",
-		(pvt->nbcap & K8_NBCAP_8_NODE) ? "True" : "False");
-	debugf1("    ECC Capable=%s   ChipKill Capable=%s\n",
-		(pvt->nbcap & K8_NBCAP_SECDED) ? "True" : "False",
-		(pvt->nbcap & K8_NBCAP_CHIPKILL) ? "True" : "False");
-	debugf1("  DramCfg0-low=0x%08x DIMM-ECC=%s Parity=%s Width=%s\n",
-		pvt->dclr0,
-		(pvt->dclr0 & BIT(19)) ?  "Enabled" : "Disabled",
-		(pvt->dclr0 & BIT(8)) ?  "Enabled" : "Disabled",
-		(pvt->dclr0 & BIT(11)) ?  "128b" : "64b");
-	debugf1("    DIMM x4 Present: L0=%s L1=%s L2=%s L3=%s  DIMM Type=%s\n",
-		(pvt->dclr0 & BIT(12)) ?  "Y" : "N",
-		(pvt->dclr0 & BIT(13)) ?  "Y" : "N",
-		(pvt->dclr0 & BIT(14)) ?  "Y" : "N",
-		(pvt->dclr0 & BIT(15)) ?  "Y" : "N",
-		(pvt->dclr0 & BIT(16)) ?  "UN-Buffered" : "Buffered");
+	debugf1("F3xE8 (NB Cap): 0x%08x\n", pvt->nbcap);
 
+	debugf1("  NB two channel DRAM capable: %s\n",
+		(pvt->nbcap & K8_NBCAP_DCT_DUAL) ? "yes" : "no");
 
-	debugf1("  online-spare: 0x%8.08x\n", pvt->online_spare);
+	debugf1("  ECC capable: %s, ChipKill ECC capable: %s\n",
+		(pvt->nbcap & K8_NBCAP_SECDED) ? "yes" : "no",
+		(pvt->nbcap & K8_NBCAP_CHIPKILL) ? "yes" : "no");
 
+	amd64_dump_dramcfg_low(pvt->dclr0, 0);
+
+	debugf1("F3xB0 (Online Spare): 0x%08x\n", pvt->online_spare);
+
+	debugf1("F1xF0 (DRAM Hole Address): 0x%08x, base: 0x%08x, "
+			"offset: 0x%08x\n",
+			pvt->dhar,
+			dhar_base(pvt->dhar),
+			(boot_cpu_data.x86 == 0xf) ? k8_dhar_offset(pvt->dhar)
+						   : f10_dhar_offset(pvt->dhar));
+
+	debugf1("  DramHoleValid: %s\n",
+		(pvt->dhar & DHAR_VALID) ? "yes" : "no");
+
+	/* everything below this point is Fam10h and above */
 	if (boot_cpu_data.x86 == 0xf) {
-		debugf1("  dhar: 0x%8.08x Base=0x%08x Offset=0x%08x\n",
-			pvt->dhar, dhar_base(pvt->dhar),
-			k8_dhar_offset(pvt->dhar));
-		debugf1("      DramHoleValid=%s\n",
-			(pvt->dhar & DHAR_VALID) ?  "True" : "False");
-
-		debugf1("  dbam-dkt: 0x%8.08x\n", pvt->dbam0);
-
-		/* everything below this point is Fam10h and above */
+		amd64_debug_display_dimm_sizes(0, pvt);
 		return;
-
-	} else {
-		debugf1("  dhar: 0x%8.08x Base=0x%08x Offset=0x%08x\n",
-			pvt->dhar, dhar_base(pvt->dhar),
-			f10_dhar_offset(pvt->dhar));
-		debugf1("    DramMemHoistValid=%s DramHoleValid=%s\n",
-			(pvt->dhar & F10_DRAM_MEM_HOIST_VALID) ?
-			"True" : "False",
-			(pvt->dhar & DHAR_VALID) ?
-			"True" : "False");
 	}
 
-	/* Only if NOT ganged does dcl1 have valid info */
-	if (!dct_ganging_enabled(pvt)) {
-		debugf1("  DramCfg1-low=0x%08x DIMM-ECC=%s Parity=%s "
-			"Width=%s\n", pvt->dclr1,
-			(pvt->dclr1 & BIT(19)) ?  "Enabled" : "Disabled",
-			(pvt->dclr1 & BIT(8)) ?  "Enabled" : "Disabled",
-			(pvt->dclr1 & BIT(11)) ?  "128b" : "64b");
-		debugf1("    DIMM x4 Present: L0=%s L1=%s L2=%s L3=%s  "
-			"DIMM Type=%s\n",
-			(pvt->dclr1 & BIT(12)) ?  "Y" : "N",
-			(pvt->dclr1 & BIT(13)) ?  "Y" : "N",
-			(pvt->dclr1 & BIT(14)) ?  "Y" : "N",
-			(pvt->dclr1 & BIT(15)) ?  "Y" : "N",
-			(pvt->dclr1 & BIT(16)) ?  "UN-Buffered" : "Buffered");
-	}
+	/* Only if NOT ganged does dclr1 have valid info */
+	if (!dct_ganging_enabled(pvt))
+		amd64_dump_dramcfg_low(pvt->dclr1, 1);
 
 	/*
 	 * Determine if ganged and then dump memory sizes for first controller,
@@ -900,35 +896,19 @@ static void amd64_dump_misc_regs(struct amd64_pvt *pvt)
 	 */
 	ganged = dct_ganging_enabled(pvt);
 
-	f10_debug_display_dimm_sizes(0, pvt, ganged);
+	amd64_debug_display_dimm_sizes(0, pvt);
 
 	if (!ganged)
-		f10_debug_display_dimm_sizes(1, pvt, ganged);
+		amd64_debug_display_dimm_sizes(1, pvt);
 }
 
 /* Read in both of DBAM registers */
 static void amd64_read_dbam_reg(struct amd64_pvt *pvt)
 {
-	int err = 0;
-	unsigned int reg;
+	amd64_read_pci_cfg(pvt->dram_f2_ctl, DBAM0, &pvt->dbam0);
 
-	reg = DBAM0;
-	err = pci_read_config_dword(pvt->dram_f2_ctl, reg, &pvt->dbam0);
-	if (err)
-		goto err_reg;
-
-	if (boot_cpu_data.x86 >= 0x10) {
-		reg = DBAM1;
-		err = pci_read_config_dword(pvt->dram_f2_ctl, reg, &pvt->dbam1);
-
-		if (err)
-			goto err_reg;
-	}
-
-	return;
-
-err_reg:
-	debugf0("Error reading F2x%03x.\n", reg);
+	if (boot_cpu_data.x86 >= 0x10)
+		amd64_read_pci_cfg(pvt->dram_f2_ctl, DBAM1, &pvt->dbam1);
 }
 
 /*
@@ -963,7 +943,7 @@ err_reg:
 static void amd64_set_dct_base_and_mask(struct amd64_pvt *pvt)
 {
 
-	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_F) {
+	if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_F) {
 		pvt->dcsb_base		= REV_E_DCSB_BASE_BITS;
 		pvt->dcsm_mask		= REV_E_DCSM_MASK_BITS;
 		pvt->dcs_mask_notused	= REV_E_DCS_NOTUSED_BITS;
@@ -991,28 +971,21 @@ static void amd64_set_dct_base_and_mask(struct amd64_pvt *pvt)
  */
 static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
 {
-	int cs, reg, err = 0;
+	int cs, reg;
 
 	amd64_set_dct_base_and_mask(pvt);
 
 	for (cs = 0; cs < pvt->cs_count; cs++) {
 		reg = K8_DCSB0 + (cs * 4);
-		err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
-						&pvt->dcsb0[cs]);
-		if (unlikely(err))
-			debugf0("Reading K8_DCSB0[%d] failed\n", cs);
-		else
+		if (!amd64_read_pci_cfg(pvt->dram_f2_ctl, reg, &pvt->dcsb0[cs]))
 			debugf0("  DCSB0[%d]=0x%08x reg: F2x%x\n",
 				cs, pvt->dcsb0[cs], reg);
 
 		/* If DCT are NOT ganged, then read in DCT1's base */
 		if (boot_cpu_data.x86 >= 0x10 && !dct_ganging_enabled(pvt)) {
 			reg = F10_DCSB1 + (cs * 4);
-			err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
-							&pvt->dcsb1[cs]);
-			if (unlikely(err))
-				debugf0("Reading F10_DCSB1[%d] failed\n", cs);
-			else
+			if (!amd64_read_pci_cfg(pvt->dram_f2_ctl, reg,
+						&pvt->dcsb1[cs]))
 				debugf0("  DCSB1[%d]=0x%08x reg: F2x%x\n",
 					cs, pvt->dcsb1[cs], reg);
 		} else {
@@ -1022,26 +995,20 @@ static void amd64_read_dct_base_mask(struct amd64_pvt *pvt)
 
 	for (cs = 0; cs < pvt->num_dcsm; cs++) {
 		reg = K8_DCSM0 + (cs * 4);
-		err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
-					&pvt->dcsm0[cs]);
-		if (unlikely(err))
-			debugf0("Reading K8_DCSM0 failed\n");
-		else
+		if (!amd64_read_pci_cfg(pvt->dram_f2_ctl, reg, &pvt->dcsm0[cs]))
 			debugf0("    DCSM0[%d]=0x%08x reg: F2x%x\n",
 				cs, pvt->dcsm0[cs], reg);
 
 		/* If DCT are NOT ganged, then read in DCT1's mask */
 		if (boot_cpu_data.x86 >= 0x10 && !dct_ganging_enabled(pvt)) {
 			reg = F10_DCSM1 + (cs * 4);
-			err = pci_read_config_dword(pvt->dram_f2_ctl, reg,
-					&pvt->dcsm1[cs]);
-			if (unlikely(err))
-				debugf0("Reading F10_DCSM1[%d] failed\n", cs);
-			else
+			if (!amd64_read_pci_cfg(pvt->dram_f2_ctl, reg,
+						&pvt->dcsm1[cs]))
 				debugf0("    DCSM1[%d]=0x%08x reg: F2x%x\n",
 					cs, pvt->dcsm1[cs], reg);
-		} else
+		} else {
 			pvt->dcsm1[cs] = 0;
+		}
 	}
 }
 
@@ -1049,18 +1016,16 @@ static enum mem_type amd64_determine_memory_type(struct amd64_pvt *pvt)
 {
 	enum mem_type type;
 
-	if (boot_cpu_data.x86 >= 0x10 || pvt->ext_model >= OPTERON_CPU_REV_F) {
-		/* Rev F and later */
-		type = (pvt->dclr0 & BIT(16)) ? MEM_DDR2 : MEM_RDDR2;
+	if (boot_cpu_data.x86 >= 0x10 || pvt->ext_model >= K8_REV_F) {
+		if (pvt->dchr0 & DDR3_MODE)
+			type = (pvt->dclr0 & BIT(16)) ?	MEM_DDR3 : MEM_RDDR3;
+		else
+			type = (pvt->dclr0 & BIT(16)) ? MEM_DDR2 : MEM_RDDR2;
 	} else {
-		/* Rev E and earlier */
 		type = (pvt->dclr0 & BIT(18)) ? MEM_DDR : MEM_RDDR;
 	}
 
-	debugf1("  Memory type is: %s\n",
-		(type == MEM_DDR2) ? "MEM_DDR2" :
-		(type == MEM_RDDR2) ? "MEM_RDDR2" :
-		(type == MEM_DDR) ? "MEM_DDR" : "MEM_RDDR");
+	debugf1("  Memory type is: %s\n", edac_mem_types[type]);
 
 	return type;
 }
@@ -1078,11 +1043,11 @@ static int k8_early_channel_count(struct amd64_pvt *pvt)
 {
 	int flag, err = 0;
 
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
+	err = amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
 	if (err)
 		return err;
 
-	if ((boot_cpu_data.x86_model >> 4) >= OPTERON_CPU_REV_F) {
+	if ((boot_cpu_data.x86_model >> 4) >= K8_REV_F) {
 		/* RevF (NPT) and later */
 		flag = pvt->dclr0 & F10_WIDTH_128;
 	} else {
@@ -1114,22 +1079,15 @@ static void k8_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
 {
 	u32 low;
 	u32 off = dram << 3;	/* 8 bytes between DRAM entries */
-	int err;
 
-	err = pci_read_config_dword(pvt->addr_f1_ctl,
-				    K8_DRAM_BASE_LOW + off, &low);
-	if (err)
-		debugf0("Reading K8_DRAM_BASE_LOW failed\n");
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, K8_DRAM_BASE_LOW + off, &low);
 
 	/* Extract parts into separate data entries */
 	pvt->dram_base[dram] = ((u64) low & 0xFFFF0000) << 8;
 	pvt->dram_IntlvEn[dram] = (low >> 8) & 0x7;
 	pvt->dram_rw_en[dram] = (low & 0x3);
 
-	err = pci_read_config_dword(pvt->addr_f1_ctl,
-				    K8_DRAM_LIMIT_LOW + off, &low);
-	if (err)
-		debugf0("Reading K8_DRAM_LIMIT_LOW failed\n");
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, K8_DRAM_LIMIT_LOW + off, &low);
 
 	/*
 	 * Extract parts into separate data entries. Limit is the HIGHEST memory
@@ -1142,7 +1100,7 @@ static void k8_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
 
 static void k8_map_sysaddr_to_csrow(struct mem_ctl_info *mci,
 					struct err_regs *info,
-					u64 SystemAddress)
+					u64 sys_addr)
 {
 	struct mem_ctl_info *src_mci;
 	unsigned short syndrome;
@@ -1177,64 +1135,46 @@ static void k8_map_sysaddr_to_csrow(struct mem_ctl_info *mci,
 		 * was obtained from email communication with someone at AMD.
 		 * (Wish the email was placed in this comment - norsk)
 		 */
-		channel = ((SystemAddress & BIT(3)) != 0);
+		channel = ((sys_addr & BIT(3)) != 0);
 	}
 
 	/*
 	 * Find out which node the error address belongs to. This may be
 	 * different from the node that detected the error.
 	 */
-	src_mci = find_mc_by_sys_addr(mci, SystemAddress);
+	src_mci = find_mc_by_sys_addr(mci, sys_addr);
 	if (!src_mci) {
 		amd64_mc_printk(mci, KERN_ERR,
 			     "failed to map error address 0x%lx to a node\n",
-			     (unsigned long)SystemAddress);
+			     (unsigned long)sys_addr);
 		edac_mc_handle_ce_no_info(mci, EDAC_MOD_STR);
 		return;
 	}
 
-	/* Now map the SystemAddress to a CSROW */
-	csrow = sys_addr_to_csrow(src_mci, SystemAddress);
+	/* Now map the sys_addr to a CSROW */
+	csrow = sys_addr_to_csrow(src_mci, sys_addr);
 	if (csrow < 0) {
 		edac_mc_handle_ce_no_info(src_mci, EDAC_MOD_STR);
 	} else {
-		error_address_to_page_and_offset(SystemAddress, &page, &offset);
+		error_address_to_page_and_offset(sys_addr, &page, &offset);
 
 		edac_mc_handle_ce(src_mci, page, offset, syndrome, csrow,
 				  channel, EDAC_MOD_STR);
 	}
 }
 
-/*
- * determrine the number of PAGES in for this DIMM's size based on its DRAM
- * Address Mapping.
- *
- * First step is to calc the number of bits to shift a value of 1 left to
- * indicate show many pages. Start with the DBAM value as the starting bits,
- * then proceed to adjust those shift bits, based on CPU rev and the table.
- * See BKDG on the DBAM
- */
-static int k8_dbam_map_to_pages(struct amd64_pvt *pvt, int dram_map)
+static int k8_dbam_to_chip_select(struct amd64_pvt *pvt, int cs_mode)
 {
-	int nr_pages;
+	int *dbam_map;
 
-	if (pvt->ext_model >= OPTERON_CPU_REV_F) {
-		nr_pages = 1 << (revf_quad_ddr2_shift[dram_map] - PAGE_SHIFT);
-	} else {
-		/*
-		 * RevE and less section; this line is tricky. It collapses the
-		 * table used by RevD and later to one that matches revisions CG
-		 * and earlier.
-		 */
-		dram_map -= (pvt->ext_model >= OPTERON_CPU_REV_D) ?
-				(dram_map > 8 ? 4 : (dram_map > 5 ?
-				3 : (dram_map > 2 ? 1 : 0))) : 0;
+	if (pvt->ext_model >= K8_REV_F)
+		dbam_map = ddr2_dbam;
+	else if (pvt->ext_model >= K8_REV_D)
+		dbam_map = ddr2_dbam_revD;
+	else
+		dbam_map = ddr2_dbam_revCG;
 
-		/* 25 shift is 32MiB minimum DIMM size in RevE and prior */
-		nr_pages = 1 << (dram_map + 25 - PAGE_SHIFT);
-	}
-
-	return nr_pages;
+	return dbam_map[cs_mode];
 }
 
 /*
@@ -1248,34 +1188,24 @@ static int k8_dbam_map_to_pages(struct amd64_pvt *pvt, int dram_map)
 static int f10_early_channel_count(struct amd64_pvt *pvt)
 {
 	int dbams[] = { DBAM0, DBAM1 };
-	int err = 0, channels = 0;
-	int i, j;
+	int i, j, channels = 0;
 	u32 dbam;
-
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
-	if (err)
-		goto err_reg;
-
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_1, &pvt->dclr1);
-	if (err)
-		goto err_reg;
 
 	/* If we are in 128 bit mode, then we are using 2 channels */
 	if (pvt->dclr0 & F10_WIDTH_128) {
-		debugf0("Data WIDTH is 128 bits - 2 channels\n");
 		channels = 2;
 		return channels;
 	}
 
 	/*
-	 * Need to check if in UN-ganged mode: In such, there are 2 channels,
-	 * but they are NOT in 128 bit mode and thus the above 'dcl0' status bit
-	 * will be OFF.
+	 * Need to check if in unganged mode: In such, there are 2 channels,
+	 * but they are not in 128 bit mode and thus the above 'dclr0' status
+	 * bit will be OFF.
 	 *
 	 * Need to check DCT0[0] and DCT1[0] to see if only one of them has
 	 * their CSEnable bit on. If so, then SINGLE DIMM case.
 	 */
-	debugf0("Data WIDTH is NOT 128 bits - need more decoding\n");
+	debugf0("Data width is not 128 bits - need more decoding\n");
 
 	/*
 	 * Check DRAM Bank Address Mapping values for each DIMM to see if there
@@ -1283,8 +1213,7 @@ static int f10_early_channel_count(struct amd64_pvt *pvt)
 	 * both controllers since DIMMs can be placed in either one.
 	 */
 	for (i = 0; i < ARRAY_SIZE(dbams); i++) {
-		err = pci_read_config_dword(pvt->dram_f2_ctl, dbams[i], &dbam);
-		if (err)
+		if (amd64_read_pci_cfg(pvt->dram_f2_ctl, dbams[i], &dbam))
 			goto err_reg;
 
 		for (j = 0; j < 4; j++) {
@@ -1295,6 +1224,9 @@ static int f10_early_channel_count(struct amd64_pvt *pvt)
 		}
 	}
 
+	if (channels > 2)
+		channels = 2;
+
 	debugf0("MCT channel count: %d\n", channels);
 
 	return channels;
@@ -1304,9 +1236,16 @@ err_reg:
 
 }
 
-static int f10_dbam_map_to_pages(struct amd64_pvt *pvt, int dram_map)
+static int f10_dbam_to_chip_select(struct amd64_pvt *pvt, int cs_mode)
 {
-	return 1 << (revf_quad_ddr2_shift[dram_map] - PAGE_SHIFT);
+	int *dbam_map;
+
+	if (pvt->dchr0 & DDR3_MODE || pvt->dchr1 & DDR3_MODE)
+		dbam_map = ddr3_dbam;
+	else
+		dbam_map = ddr2_dbam;
+
+	return dbam_map[cs_mode];
 }
 
 /* Enable extended configuration access via 0xCF8 feature */
@@ -1314,7 +1253,7 @@ static void amd64_setup(struct amd64_pvt *pvt)
 {
 	u32 reg;
 
-	pci_read_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
 
 	pvt->flags.cf8_extcfg = !!(reg & F10_NB_CFG_LOW_ENABLE_EXT_CFG);
 	reg |= F10_NB_CFG_LOW_ENABLE_EXT_CFG;
@@ -1326,7 +1265,7 @@ static void amd64_teardown(struct amd64_pvt *pvt)
 {
 	u32 reg;
 
-	pci_read_config_dword(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, F10_NB_CFG_HIGH, &reg);
 
 	reg &= ~F10_NB_CFG_LOW_ENABLE_EXT_CFG;
 	if (pvt->flags.cf8_extcfg)
@@ -1355,10 +1294,10 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
 	high_offset = F10_DRAM_BASE_HIGH + (dram << 3);
 
 	/* read the 'raw' DRAM BASE Address register */
-	pci_read_config_dword(pvt->addr_f1_ctl, low_offset, &low_base);
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, low_offset, &low_base);
 
 	/* Read from the ECS data register */
-	pci_read_config_dword(pvt->addr_f1_ctl, high_offset, &high_base);
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, high_offset, &high_base);
 
 	/* Extract parts into separate data entries */
 	pvt->dram_rw_en[dram] = (low_base & 0x3);
@@ -1375,13 +1314,10 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
 	high_offset = F10_DRAM_LIMIT_HIGH + (dram << 3);
 
 	/* read the 'raw' LIMIT registers */
-	pci_read_config_dword(pvt->addr_f1_ctl, low_offset, &low_limit);
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, low_offset, &low_limit);
 
 	/* Read from the ECS data register for the HIGH portion */
-	pci_read_config_dword(pvt->addr_f1_ctl, high_offset, &high_limit);
-
-	debugf0("  HW Regs: BASE=0x%08x-%08x      LIMIT=  0x%08x-%08x\n",
-		high_base, low_base, high_limit, low_limit);
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, high_offset, &high_limit);
 
 	pvt->dram_DstNode[dram] = (low_limit & 0x7);
 	pvt->dram_IntlvSel[dram] = (low_limit >> 8) & 0x7;
@@ -1397,13 +1333,9 @@ static void f10_read_dram_base_limit(struct amd64_pvt *pvt, int dram)
 
 static void f10_read_dram_ctl_register(struct amd64_pvt *pvt)
 {
-	int err = 0;
 
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_LOW,
-				    &pvt->dram_ctl_select_low);
-	if (err) {
-		debugf0("Reading F2x110 (DCTL Sel. Low) failed\n");
-	} else {
+	if (!amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCTL_SEL_LOW,
+				&pvt->dram_ctl_select_low)) {
 		debugf0("F2x110 (DCTL Sel. Low): 0x%08x, "
 			"High range addresses at: 0x%x\n",
 			pvt->dram_ctl_select_low,
@@ -1428,10 +1360,8 @@ static void f10_read_dram_ctl_register(struct amd64_pvt *pvt)
 			dct_sel_interleave_addr(pvt));
 	}
 
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCTL_SEL_HIGH,
-				    &pvt->dram_ctl_select_high);
-	if (err)
-		debugf0("Reading F2x114 (DCT Sel. High) failed\n");
+	amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCTL_SEL_HIGH,
+			   &pvt->dram_ctl_select_high);
 }
 
 /*
@@ -1767,97 +1697,45 @@ static void f10_map_sysaddr_to_csrow(struct mem_ctl_info *mci,
 }
 
 /*
- * Input (@index) is the DBAM DIMM value (1 of 4) used as an index into a shift
- * table (revf_quad_ddr2_shift) which starts at 128MB DIMM size. Index of 0
- * indicates an empty DIMM slot, as reported by Hardware on empty slots.
- *
- * Normalize to 128MB by subracting 27 bit shift.
- */
-static int map_dbam_to_csrow_size(int index)
-{
-	int mega_bytes = 0;
-
-	if (index > 0 && index <= DBAM_MAX_VALUE)
-		mega_bytes = ((128 << (revf_quad_ddr2_shift[index]-27)));
-
-	return mega_bytes;
-}
-
-/*
- * debug routine to display the memory sizes of a DIMM (ganged or not) and it
+ * debug routine to display the memory sizes of all logical DIMMs and its
  * CSROWs as well
  */
-static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
-					 int ganged)
+static void amd64_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt)
 {
 	int dimm, size0, size1;
 	u32 dbam;
 	u32 *dcsb;
 
-	debugf1("  dbam%d: 0x%8.08x  CSROW is %s\n", ctrl,
-			ctrl ? pvt->dbam1 : pvt->dbam0,
-			ganged ? "GANGED - dbam1 not used" : "NON-GANGED");
+	if (boot_cpu_data.x86 == 0xf) {
+		/* K8 families < revF not supported yet */
+	       if (pvt->ext_model < K8_REV_F)
+			return;
+	       else
+		       WARN_ON(ctrl != 0);
+	}
+
+	debugf1("F2x%d80 (DRAM Bank Address Mapping): 0x%08x\n",
+		ctrl, ctrl ? pvt->dbam1 : pvt->dbam0);
 
 	dbam = ctrl ? pvt->dbam1 : pvt->dbam0;
 	dcsb = ctrl ? pvt->dcsb1 : pvt->dcsb0;
+
+	edac_printk(KERN_DEBUG, EDAC_MC, "DCT%d chip selects:\n", ctrl);
 
 	/* Dump memory sizes for DIMM and its CSROWs */
 	for (dimm = 0; dimm < 4; dimm++) {
 
 		size0 = 0;
 		if (dcsb[dimm*2] & K8_DCSB_CS_ENABLE)
-			size0 = map_dbam_to_csrow_size(DBAM_DIMM(dimm, dbam));
+			size0 = pvt->ops->dbam_to_cs(pvt, DBAM_DIMM(dimm, dbam));
 
 		size1 = 0;
 		if (dcsb[dimm*2 + 1] & K8_DCSB_CS_ENABLE)
-			size1 = map_dbam_to_csrow_size(DBAM_DIMM(dimm, dbam));
+			size1 = pvt->ops->dbam_to_cs(pvt, DBAM_DIMM(dimm, dbam));
 
-		debugf1("     CTRL-%d DIMM-%d=%5dMB   CSROW-%d=%5dMB "
-				"CSROW-%d=%5dMB\n",
-				ctrl,
-				dimm,
-				size0 + size1,
-				dimm * 2,
-				size0,
-				dimm * 2 + 1,
-				size1);
+		edac_printk(KERN_DEBUG, EDAC_MC, " %d: %5dMB %d: %5dMB\n",
+			    dimm * 2, size0, dimm * 2 + 1, size1);
 	}
-}
-
-/*
- * Very early hardware probe on pci_probe thread to determine if this module
- * supports the hardware.
- *
- * Return:
- *      0 for OK
- *      1 for error
- */
-static int f10_probe_valid_hardware(struct amd64_pvt *pvt)
-{
-	int ret = 0;
-
-	/*
-	 * If we are on a DDR3 machine, we don't know yet if
-	 * we support that properly at this time
-	 */
-	if ((pvt->dchr0 & F10_DCHR_Ddr3Mode) ||
-	    (pvt->dchr1 & F10_DCHR_Ddr3Mode)) {
-
-		amd64_printk(KERN_WARNING,
-			"%s() This machine is running with DDR3 memory. "
-			"This is not currently supported. "
-			"DCHR0=0x%x DCHR1=0x%x\n",
-			__func__, pvt->dchr0, pvt->dchr1);
-
-		amd64_printk(KERN_WARNING,
-			"   Contact '%s' module MAINTAINER to help add"
-			" support.\n",
-			EDAC_MOD_STR);
-
-		ret = 1;
-
-	}
-	return ret;
 }
 
 /*
@@ -1877,11 +1755,11 @@ static struct amd64_family_type amd64_family_types[] = {
 		.addr_f1_ctl = PCI_DEVICE_ID_AMD_K8_NB_ADDRMAP,
 		.misc_f3_ctl = PCI_DEVICE_ID_AMD_K8_NB_MISC,
 		.ops = {
-			.early_channel_count = k8_early_channel_count,
-			.get_error_address = k8_get_error_address,
-			.read_dram_base_limit = k8_read_dram_base_limit,
-			.map_sysaddr_to_csrow = k8_map_sysaddr_to_csrow,
-			.dbam_map_to_pages = k8_dbam_map_to_pages,
+			.early_channel_count	= k8_early_channel_count,
+			.get_error_address	= k8_get_error_address,
+			.read_dram_base_limit	= k8_read_dram_base_limit,
+			.map_sysaddr_to_csrow	= k8_map_sysaddr_to_csrow,
+			.dbam_to_cs		= k8_dbam_to_chip_select,
 		}
 	},
 	[F10_CPUS] = {
@@ -1889,13 +1767,12 @@ static struct amd64_family_type amd64_family_types[] = {
 		.addr_f1_ctl = PCI_DEVICE_ID_AMD_10H_NB_MAP,
 		.misc_f3_ctl = PCI_DEVICE_ID_AMD_10H_NB_MISC,
 		.ops = {
-			.probe_valid_hardware = f10_probe_valid_hardware,
-			.early_channel_count = f10_early_channel_count,
-			.get_error_address = f10_get_error_address,
-			.read_dram_base_limit = f10_read_dram_base_limit,
-			.read_dram_ctl_register = f10_read_dram_ctl_register,
-			.map_sysaddr_to_csrow = f10_map_sysaddr_to_csrow,
-			.dbam_map_to_pages = f10_dbam_map_to_pages,
+			.early_channel_count	= f10_early_channel_count,
+			.get_error_address	= f10_get_error_address,
+			.read_dram_base_limit	= f10_read_dram_base_limit,
+			.read_dram_ctl_register	= f10_read_dram_ctl_register,
+			.map_sysaddr_to_csrow	= f10_map_sysaddr_to_csrow,
+			.dbam_to_cs		= f10_dbam_to_chip_select,
 		}
 	},
 	[F11_CPUS] = {
@@ -1903,13 +1780,12 @@ static struct amd64_family_type amd64_family_types[] = {
 		.addr_f1_ctl = PCI_DEVICE_ID_AMD_11H_NB_MAP,
 		.misc_f3_ctl = PCI_DEVICE_ID_AMD_11H_NB_MISC,
 		.ops = {
-			.probe_valid_hardware = f10_probe_valid_hardware,
-			.early_channel_count = f10_early_channel_count,
-			.get_error_address = f10_get_error_address,
-			.read_dram_base_limit = f10_read_dram_base_limit,
-			.read_dram_ctl_register = f10_read_dram_ctl_register,
-			.map_sysaddr_to_csrow = f10_map_sysaddr_to_csrow,
-			.dbam_map_to_pages = f10_dbam_map_to_pages,
+			.early_channel_count	= f10_early_channel_count,
+			.get_error_address	= f10_get_error_address,
+			.read_dram_base_limit	= f10_read_dram_base_limit,
+			.read_dram_ctl_register	= f10_read_dram_ctl_register,
+			.map_sysaddr_to_csrow	= f10_map_sysaddr_to_csrow,
+			.dbam_to_cs		= f10_dbam_to_chip_select,
 		}
 	},
 };
@@ -2082,40 +1958,24 @@ static int amd64_get_error_info_regs(struct mem_ctl_info *mci,
 {
 	struct amd64_pvt *pvt;
 	struct pci_dev *misc_f3_ctl;
-	int err = 0;
 
 	pvt = mci->pvt_info;
 	misc_f3_ctl = pvt->misc_f3_ctl;
 
-	err = pci_read_config_dword(misc_f3_ctl, K8_NBSH, &regs->nbsh);
-	if (err)
-		goto err_reg;
+	if (amd64_read_pci_cfg(misc_f3_ctl, K8_NBSH, &regs->nbsh))
+		return 0;
 
 	if (!(regs->nbsh & K8_NBSH_VALID_BIT))
 		return 0;
 
 	/* valid error, read remaining error information registers */
-	err = pci_read_config_dword(misc_f3_ctl, K8_NBSL, &regs->nbsl);
-	if (err)
-		goto err_reg;
-
-	err = pci_read_config_dword(misc_f3_ctl, K8_NBEAL, &regs->nbeal);
-	if (err)
-		goto err_reg;
-
-	err = pci_read_config_dword(misc_f3_ctl, K8_NBEAH, &regs->nbeah);
-	if (err)
-		goto err_reg;
-
-	err = pci_read_config_dword(misc_f3_ctl, K8_NBCFG, &regs->nbcfg);
-	if (err)
-		goto err_reg;
+	if (amd64_read_pci_cfg(misc_f3_ctl, K8_NBSL, &regs->nbsl) ||
+	    amd64_read_pci_cfg(misc_f3_ctl, K8_NBEAL, &regs->nbeal) ||
+	    amd64_read_pci_cfg(misc_f3_ctl, K8_NBEAH, &regs->nbeah) ||
+	    amd64_read_pci_cfg(misc_f3_ctl, K8_NBCFG, &regs->nbcfg))
+		return 0;
 
 	return 1;
-
-err_reg:
-	debugf0("Reading error info register failed\n");
-	return 0;
 }
 
 /*
@@ -2193,7 +2053,7 @@ static void amd64_handle_ce(struct mem_ctl_info *mci,
 			    struct err_regs *info)
 {
 	struct amd64_pvt *pvt = mci->pvt_info;
-	u64 SystemAddress;
+	u64 sys_addr;
 
 	/* Ensure that the Error Address is VALID */
 	if ((info->nbsh & K8_NBSH_VALID_ERROR_ADDR) == 0) {
@@ -2203,22 +2063,23 @@ static void amd64_handle_ce(struct mem_ctl_info *mci,
 		return;
 	}
 
-	SystemAddress = extract_error_address(mci, info);
+	sys_addr = pvt->ops->get_error_address(mci, info);
 
 	amd64_mc_printk(mci, KERN_ERR,
-		"CE ERROR_ADDRESS= 0x%llx\n", SystemAddress);
+		"CE ERROR_ADDRESS= 0x%llx\n", sys_addr);
 
-	pvt->ops->map_sysaddr_to_csrow(mci, info, SystemAddress);
+	pvt->ops->map_sysaddr_to_csrow(mci, info, sys_addr);
 }
 
 /* Handle any Un-correctable Errors (UEs) */
 static void amd64_handle_ue(struct mem_ctl_info *mci,
 			    struct err_regs *info)
 {
-	int csrow;
-	u64 SystemAddress;
-	u32 page, offset;
+	struct amd64_pvt *pvt = mci->pvt_info;
 	struct mem_ctl_info *log_mci, *src_mci = NULL;
+	int csrow;
+	u64 sys_addr;
+	u32 page, offset;
 
 	log_mci = mci;
 
@@ -2229,31 +2090,31 @@ static void amd64_handle_ue(struct mem_ctl_info *mci,
 		return;
 	}
 
-	SystemAddress = extract_error_address(mci, info);
+	sys_addr = pvt->ops->get_error_address(mci, info);
 
 	/*
 	 * Find out which node the error address belongs to. This may be
 	 * different from the node that detected the error.
 	 */
-	src_mci = find_mc_by_sys_addr(mci, SystemAddress);
+	src_mci = find_mc_by_sys_addr(mci, sys_addr);
 	if (!src_mci) {
 		amd64_mc_printk(mci, KERN_CRIT,
 			"ERROR ADDRESS (0x%lx) value NOT mapped to a MC\n",
-			(unsigned long)SystemAddress);
+			(unsigned long)sys_addr);
 		edac_mc_handle_ue_no_info(log_mci, EDAC_MOD_STR);
 		return;
 	}
 
 	log_mci = src_mci;
 
-	csrow = sys_addr_to_csrow(log_mci, SystemAddress);
+	csrow = sys_addr_to_csrow(log_mci, sys_addr);
 	if (csrow < 0) {
 		amd64_mc_printk(mci, KERN_CRIT,
 			"ERROR_ADDRESS (0x%lx) value NOT mapped to 'csrow'\n",
-			(unsigned long)SystemAddress);
+			(unsigned long)sys_addr);
 		edac_mc_handle_ue_no_info(log_mci, EDAC_MOD_STR);
 	} else {
-		error_address_to_page_and_offset(SystemAddress, &page, &offset);
+		error_address_to_page_and_offset(sys_addr, &page, &offset);
 		edac_mc_handle_ue(log_mci, page, offset, csrow, EDAC_MOD_STR);
 	}
 }
@@ -2393,7 +2254,7 @@ static void amd64_free_mc_sibling_devices(struct amd64_pvt *pvt)
 static void amd64_read_mc_registers(struct amd64_pvt *pvt)
 {
 	u64 msr_val;
-	int dram, err = 0;
+	int dram;
 
 	/*
 	 * Retrieve TOP_MEM and TOP_MEM2; no masking off of reserved bits since
@@ -2412,9 +2273,7 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
 
 	amd64_cpu_display_info(pvt);
 
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCAP, &pvt->nbcap);
-	if (err)
-		goto err_reg;
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCAP, &pvt->nbcap);
 
 	if (pvt->ops->read_dram_ctl_register)
 		pvt->ops->read_dram_ctl_register(pvt);
@@ -2451,44 +2310,20 @@ static void amd64_read_mc_registers(struct amd64_pvt *pvt)
 
 	amd64_read_dct_base_mask(pvt);
 
-	err = pci_read_config_dword(pvt->addr_f1_ctl, K8_DHAR, &pvt->dhar);
-	if (err)
-		goto err_reg;
-
+	amd64_read_pci_cfg(pvt->addr_f1_ctl, K8_DHAR, &pvt->dhar);
 	amd64_read_dbam_reg(pvt);
 
-	err = pci_read_config_dword(pvt->misc_f3_ctl,
-				F10_ONLINE_SPARE, &pvt->online_spare);
-	if (err)
-		goto err_reg;
+	amd64_read_pci_cfg(pvt->misc_f3_ctl,
+			   F10_ONLINE_SPARE, &pvt->online_spare);
 
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
-	if (err)
-		goto err_reg;
-
-	err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCHR_0, &pvt->dchr0);
-	if (err)
-		goto err_reg;
+	amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCLR_0, &pvt->dclr0);
+	amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCHR_0, &pvt->dchr0);
 
 	if (!dct_ganging_enabled(pvt)) {
-		err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCLR_1,
-						&pvt->dclr1);
-		if (err)
-			goto err_reg;
-
-		err = pci_read_config_dword(pvt->dram_f2_ctl, F10_DCHR_1,
-						&pvt->dchr1);
-		if (err)
-			goto err_reg;
+		amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCLR_1, &pvt->dclr1);
+		amd64_read_pci_cfg(pvt->dram_f2_ctl, F10_DCHR_1, &pvt->dchr1);
 	}
-
 	amd64_dump_misc_regs(pvt);
-
-	return;
-
-err_reg:
-	debugf0("Reading an MC register failed\n");
-
 }
 
 /*
@@ -2527,7 +2362,7 @@ err_reg:
  */
 static u32 amd64_csrow_nr_pages(int csrow_nr, struct amd64_pvt *pvt)
 {
-	u32 dram_map, nr_pages;
+	u32 cs_mode, nr_pages;
 
 	/*
 	 * The math on this doesn't look right on the surface because x/2*4 can
@@ -2536,9 +2371,9 @@ static u32 amd64_csrow_nr_pages(int csrow_nr, struct amd64_pvt *pvt)
 	 * number of bits to shift the DBAM register to extract the proper CSROW
 	 * field.
 	 */
-	dram_map = (pvt->dbam0 >> ((csrow_nr / 2) * 4)) & 0xF;
+	cs_mode = (pvt->dbam0 >> ((csrow_nr / 2) * 4)) & 0xF;
 
-	nr_pages = pvt->ops->dbam_map_to_pages(pvt, dram_map);
+	nr_pages = pvt->ops->dbam_to_cs(pvt, cs_mode) << (20 - PAGE_SHIFT);
 
 	/*
 	 * If dual channel then double the memory size of single channel.
@@ -2546,7 +2381,7 @@ static u32 amd64_csrow_nr_pages(int csrow_nr, struct amd64_pvt *pvt)
 	 */
 	nr_pages <<= (pvt->channel_count - 1);
 
-	debugf0("  (csrow=%d) DBAM map index= %d\n", csrow_nr, dram_map);
+	debugf0("  (csrow=%d) DBAM map index= %d\n", csrow_nr, cs_mode);
 	debugf0("    nr_pages= %u  channel-count = %d\n",
 		nr_pages, pvt->channel_count);
 
@@ -2562,13 +2397,11 @@ static int amd64_init_csrows(struct mem_ctl_info *mci)
 	struct csrow_info *csrow;
 	struct amd64_pvt *pvt;
 	u64 input_addr_min, input_addr_max, sys_addr;
-	int i, err = 0, empty = 1;
+	int i, empty = 1;
 
 	pvt = mci->pvt_info;
 
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &pvt->nbcfg);
-	if (err)
-		debugf0("Reading K8_NBCFG failed\n");
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCFG, &pvt->nbcfg);
 
 	debugf0("NBCFG= 0x%x  CHIPKILL= %s DRAM ECC= %s\n", pvt->nbcfg,
 		(pvt->nbcfg & K8_NBCFG_CHIPKILL) ? "Enabled" : "Disabled",
@@ -2622,121 +2455,6 @@ static int amd64_init_csrows(struct mem_ctl_info *mci)
 	}
 
 	return empty;
-}
-
-/*
- * Only if 'ecc_enable_override' is set AND BIOS had ECC disabled, do "we"
- * enable it.
- */
-static void amd64_enable_ecc_error_reporting(struct mem_ctl_info *mci)
-{
-	struct amd64_pvt *pvt = mci->pvt_info;
-	const struct cpumask *cpumask = cpumask_of_node(pvt->mc_node_id);
-	int cpu, idx = 0, err = 0;
-	struct msr msrs[cpumask_weight(cpumask)];
-	u32 value;
-	u32 mask = K8_NBCTL_CECCEn | K8_NBCTL_UECCEn;
-
-	if (!ecc_enable_override)
-		return;
-
-	memset(msrs, 0, sizeof(msrs));
-
-	amd64_printk(KERN_WARNING,
-		"'ecc_enable_override' parameter is active, "
-		"Enabling AMD ECC hardware now: CAUTION\n");
-
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
-	if (err)
-		debugf0("Reading K8_NBCTL failed\n");
-
-	/* turn on UECCn and CECCEn bits */
-	pvt->old_nbctl = value & mask;
-	pvt->nbctl_mcgctl_saved = 1;
-
-	value |= mask;
-	pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
-
-	rdmsr_on_cpus(cpumask, K8_MSR_MCGCTL, msrs);
-
-	for_each_cpu(cpu, cpumask) {
-		if (msrs[idx].l & K8_MSR_MCGCTL_NBE)
-			set_bit(idx, &pvt->old_mcgctl);
-
-		msrs[idx].l |= K8_MSR_MCGCTL_NBE;
-		idx++;
-	}
-	wrmsr_on_cpus(cpumask, K8_MSR_MCGCTL, msrs);
-
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
-	if (err)
-		debugf0("Reading K8_NBCFG failed\n");
-
-	debugf0("NBCFG(1)= 0x%x  CHIPKILL= %s ECC_ENABLE= %s\n", value,
-		(value & K8_NBCFG_CHIPKILL) ? "Enabled" : "Disabled",
-		(value & K8_NBCFG_ECC_ENABLE) ? "Enabled" : "Disabled");
-
-	if (!(value & K8_NBCFG_ECC_ENABLE)) {
-		amd64_printk(KERN_WARNING,
-			"This node reports that DRAM ECC is "
-			"currently Disabled; ENABLING now\n");
-
-		/* Attempt to turn on DRAM ECC Enable */
-		value |= K8_NBCFG_ECC_ENABLE;
-		pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCFG, value);
-
-		err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
-		if (err)
-			debugf0("Reading K8_NBCFG failed\n");
-
-		if (!(value & K8_NBCFG_ECC_ENABLE)) {
-			amd64_printk(KERN_WARNING,
-				"Hardware rejects Enabling DRAM ECC checking\n"
-				"Check memory DIMM configuration\n");
-		} else {
-			amd64_printk(KERN_DEBUG,
-				"Hardware accepted DRAM ECC Enable\n");
-		}
-	}
-	debugf0("NBCFG(2)= 0x%x  CHIPKILL= %s ECC_ENABLE= %s\n", value,
-		(value & K8_NBCFG_CHIPKILL) ? "Enabled" : "Disabled",
-		(value & K8_NBCFG_ECC_ENABLE) ? "Enabled" : "Disabled");
-
-	pvt->ctl_error_info.nbcfg = value;
-}
-
-static void amd64_restore_ecc_error_reporting(struct amd64_pvt *pvt)
-{
-	const struct cpumask *cpumask = cpumask_of_node(pvt->mc_node_id);
-	int cpu, idx = 0, err = 0;
-	struct msr msrs[cpumask_weight(cpumask)];
-	u32 value;
-	u32 mask = K8_NBCTL_CECCEn | K8_NBCTL_UECCEn;
-
-	if (!pvt->nbctl_mcgctl_saved)
-		return;
-
-	memset(msrs, 0, sizeof(msrs));
-
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCTL, &value);
-	if (err)
-		debugf0("Reading K8_NBCTL failed\n");
-	value &= ~mask;
-	value |= pvt->old_nbctl;
-
-	/* restore the NB Enable MCGCTL bit */
-	pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
-
-	rdmsr_on_cpus(cpumask, K8_MSR_MCGCTL, msrs);
-
-	for_each_cpu(cpu, cpumask) {
-		msrs[idx].l &= ~K8_MSR_MCGCTL_NBE;
-		msrs[idx].l |=
-			test_bit(idx, &pvt->old_mcgctl) << K8_MSR_MCGCTL_NBE;
-		idx++;
-	}
-
-	wrmsr_on_cpus(cpumask, K8_MSR_MCGCTL, msrs);
 }
 
 /* get all cores on this DCT */
@@ -2795,6 +2513,134 @@ out:
 	return ret;
 }
 
+static int amd64_toggle_ecc_err_reporting(struct amd64_pvt *pvt, bool on)
+{
+	cpumask_var_t cmask;
+	struct msr *msrs = NULL;
+	int cpu, idx = 0;
+
+	if (!zalloc_cpumask_var(&cmask, GFP_KERNEL)) {
+		amd64_printk(KERN_WARNING, "%s: error allocating mask\n",
+			     __func__);
+		return false;
+	}
+
+	get_cpus_on_this_dct_cpumask(cmask, pvt->mc_node_id);
+
+	msrs = kzalloc(sizeof(struct msr) * cpumask_weight(cmask), GFP_KERNEL);
+	if (!msrs) {
+		amd64_printk(KERN_WARNING, "%s: error allocating msrs\n",
+			     __func__);
+		return -ENOMEM;
+	}
+
+	rdmsr_on_cpus(cmask, MSR_IA32_MCG_CTL, msrs);
+
+	for_each_cpu(cpu, cmask) {
+
+		if (on) {
+			if (msrs[idx].l & K8_MSR_MCGCTL_NBE)
+				pvt->flags.ecc_report = 1;
+
+			msrs[idx].l |= K8_MSR_MCGCTL_NBE;
+		} else {
+			/*
+			 * Turn off ECC reporting only when it was off before
+			 */
+			if (!pvt->flags.ecc_report)
+				msrs[idx].l &= ~K8_MSR_MCGCTL_NBE;
+		}
+		idx++;
+	}
+	wrmsr_on_cpus(cmask, MSR_IA32_MCG_CTL, msrs);
+
+	kfree(msrs);
+	free_cpumask_var(cmask);
+
+	return 0;
+}
+
+/*
+ * Only if 'ecc_enable_override' is set AND BIOS had ECC disabled, do "we"
+ * enable it.
+ */
+static void amd64_enable_ecc_error_reporting(struct mem_ctl_info *mci)
+{
+	struct amd64_pvt *pvt = mci->pvt_info;
+	u32 value, mask = K8_NBCTL_CECCEn | K8_NBCTL_UECCEn;
+
+	if (!ecc_enable_override)
+		return;
+
+	amd64_printk(KERN_WARNING,
+		"'ecc_enable_override' parameter is active, "
+		"Enabling AMD ECC hardware now: CAUTION\n");
+
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCTL, &value);
+
+	/* turn on UECCn and CECCEn bits */
+	pvt->old_nbctl = value & mask;
+	pvt->nbctl_mcgctl_saved = 1;
+
+	value |= mask;
+	pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
+
+	if (amd64_toggle_ecc_err_reporting(pvt, ON))
+		amd64_printk(KERN_WARNING, "Error enabling ECC reporting over "
+					   "MCGCTL!\n");
+
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCFG, &value);
+
+	debugf0("NBCFG(1)= 0x%x  CHIPKILL= %s ECC_ENABLE= %s\n", value,
+		(value & K8_NBCFG_CHIPKILL) ? "Enabled" : "Disabled",
+		(value & K8_NBCFG_ECC_ENABLE) ? "Enabled" : "Disabled");
+
+	if (!(value & K8_NBCFG_ECC_ENABLE)) {
+		amd64_printk(KERN_WARNING,
+			"This node reports that DRAM ECC is "
+			"currently Disabled; ENABLING now\n");
+
+		/* Attempt to turn on DRAM ECC Enable */
+		value |= K8_NBCFG_ECC_ENABLE;
+		pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCFG, value);
+
+		amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCFG, &value);
+
+		if (!(value & K8_NBCFG_ECC_ENABLE)) {
+			amd64_printk(KERN_WARNING,
+				"Hardware rejects Enabling DRAM ECC checking\n"
+				"Check memory DIMM configuration\n");
+		} else {
+			amd64_printk(KERN_DEBUG,
+				"Hardware accepted DRAM ECC Enable\n");
+		}
+	}
+	debugf0("NBCFG(2)= 0x%x  CHIPKILL= %s ECC_ENABLE= %s\n", value,
+		(value & K8_NBCFG_CHIPKILL) ? "Enabled" : "Disabled",
+		(value & K8_NBCFG_ECC_ENABLE) ? "Enabled" : "Disabled");
+
+	pvt->ctl_error_info.nbcfg = value;
+}
+
+static void amd64_restore_ecc_error_reporting(struct amd64_pvt *pvt)
+{
+	u32 value, mask = K8_NBCTL_CECCEn | K8_NBCTL_UECCEn;
+
+	if (!pvt->nbctl_mcgctl_saved)
+		return;
+
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCTL, &value);
+	value &= ~mask;
+	value |= pvt->old_nbctl;
+
+	/* restore the NB Enable MCGCTL bit */
+	pci_write_config_dword(pvt->misc_f3_ctl, K8_NBCTL, value);
+
+	if (amd64_toggle_ecc_err_reporting(pvt, OFF))
+		amd64_printk(KERN_WARNING, "Error restoring ECC reporting over "
+					   "MCGCTL!\n");
+}
+
 /*
  * EDAC requires that the BIOS have ECC enabled before taking over the
  * processing of ECC errors. This is because the BIOS can properly initialize
@@ -2809,13 +2655,10 @@ static const char *ecc_warning =
 static int amd64_check_ecc_enabled(struct amd64_pvt *pvt)
 {
 	u32 value;
-	int err = 0;
 	u8 ecc_enabled = 0;
 	bool nb_mce_en = false;
 
-	err = pci_read_config_dword(pvt->misc_f3_ctl, K8_NBCFG, &value);
-	if (err)
-		debugf0("Reading K8_NBCTL failed\n");
+	amd64_read_pci_cfg(pvt->misc_f3_ctl, K8_NBCFG, &value);
 
 	ecc_enabled = !!(value & K8_NBCFG_ECC_ENABLE);
 	if (!ecc_enabled)
@@ -2921,7 +2764,6 @@ static int amd64_probe_one_instance(struct pci_dev *dram_f2_ctl,
 	pvt->ext_model		= boot_cpu_data.x86_model >> 4;
 	pvt->mc_type_index	= mc_type_index;
 	pvt->ops		= family_ops(mc_type_index);
-	pvt->old_mcgctl		= 0;
 
 	/*
 	 * We have the dram_f2_ctl device as an argument, now go reserve its
@@ -2971,16 +2813,9 @@ static int amd64_init_2nd_stage(struct amd64_pvt *pvt)
 {
 	int node_id = pvt->mc_node_id;
 	struct mem_ctl_info *mci;
-	int ret, err = 0;
+	int ret;
 
 	amd64_read_mc_registers(pvt);
-
-	ret = -ENODEV;
-	if (pvt->ops->probe_valid_hardware) {
-		err = pvt->ops->probe_valid_hardware(pvt);
-		if (err)
-			goto err_exit;
-	}
 
 	/*
 	 * We need to determine how many memory channels there are. Then use
