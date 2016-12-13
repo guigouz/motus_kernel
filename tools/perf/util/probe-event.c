@@ -48,6 +48,9 @@
 
 /* If there is no space to write, returns -E2BIG. */
 static int e_snprintf(char *str, size_t size, const char *format, ...)
+	__attribute__((format(printf, 3, 4)));
+
+static int e_snprintf(char *str, size_t size, const char *format, ...)
 {
 	int ret;
 	va_list ap;
@@ -258,7 +261,7 @@ int synthesize_perf_probe_event(struct probe_point *pp)
 		ret = e_snprintf(buf, MAX_CMDLEN, "%s%s%s%s", pp->function,
 				 offs, pp->retprobe ? "%return" : "", line);
 	else
-		ret = e_snprintf(buf, MAX_CMDLEN, "%s%s%s%s", pp->file, line);
+		ret = e_snprintf(buf, MAX_CMDLEN, "%s%s", pp->file, line);
 	if (ret <= 0)
 		goto error;
 	len = ret;
@@ -413,12 +416,13 @@ static struct strlist *get_perf_event_names(int fd)
 
 	rawlist = get_trace_kprobe_event_rawlist(fd);
 
-	sl = strlist__new(false, NULL);
+	sl = strlist__new(true, NULL);
 	for (i = 0; i < strlist__nr_entries(rawlist); i++) {
 		ent = strlist__entry(rawlist, i);
 		parse_trace_kprobe_event(ent->s, &group, &event, NULL);
 		strlist__add(sl, event);
 		free(group);
+		free(event);
 	}
 
 	strlist__delete(rawlist);
@@ -480,5 +484,6 @@ void add_trace_kprobe_events(struct probe_point *probes, int nr_probes)
 			strlist__add(namelist, event);
 		}
 	}
+	strlist__delete(namelist);
 	close(fd);
 }
