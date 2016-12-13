@@ -20,7 +20,7 @@ lib-y := delay.o
 lib-y += thunk_$(BITS).o
 lib-y += usercopy_$(BITS).o getuser.o putuser.o
 lib-y += memcpy_$(BITS).o
-lib-y += insn.o inat.o
+lib-$(CONFIG_KPROBES) += insn.o inat.o
 
 ifeq ($(CONFIG_X86_32),y)
         obj-y += atomic64_32.o
