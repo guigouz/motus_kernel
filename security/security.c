@@ -409,45 +409,45 @@ int security_inode_init_security(struct inode *inode, struct inode *dir,
 EXPORT_SYMBOL(security_inode_init_security);
 
 #ifdef CONFIG_SECURITY_PATH
-int security_path_mknod(struct path *path, struct dentry *dentry, int mode,
+int security_path_mknod(struct path *dir, struct dentry *dentry, int mode,
 			unsigned int dev)
 {
-	if (unlikely(IS_PRIVATE(path->dentry->d_inode)))
+	if (unlikely(IS_PRIVATE(dir->dentry->d_inode)))
 		return 0;
-	return security_ops->path_mknod(path, dentry, mode, dev);
+	return security_ops->path_mknod(dir, dentry, mode, dev);
 }
 EXPORT_SYMBOL(security_path_mknod);
 
-int security_path_mkdir(struct path *path, struct dentry *dentry, int mode)
+int security_path_mkdir(struct path *dir, struct dentry *dentry, int mode)
 {
-	if (unlikely(IS_PRIVATE(path->dentry->d_inode)))
+	if (unlikely(IS_PRIVATE(dir->dentry->d_inode)))
 		return 0;
-	return security_ops->path_mkdir(path, dentry, mode);
+	return security_ops->path_mkdir(dir, dentry, mode);
 }
 EXPORT_SYMBOL(security_path_mkdir);
 
-int security_path_rmdir(struct path *path, struct dentry *dentry)
+int security_path_rmdir(struct path *dir, struct dentry *dentry)
 {
-	if (unlikely(IS_PRIVATE(path->dentry->d_inode)))
+	if (unlikely(IS_PRIVATE(dir->dentry->d_inode)))
 		return 0;
-	return security_ops->path_rmdir(path, dentry);
+	return security_ops->path_rmdir(dir, dentry);
 }
 EXPORT_SYMBOL(security_path_rmdir);
 
-int security_path_unlink(struct path *path, struct dentry *dentry)
+int security_path_unlink(struct path *dir, struct dentry *dentry)
 {
-	if (unlikely(IS_PRIVATE(path->dentry->d_inode)))
+	if (unlikely(IS_PRIVATE(dir->dentry->d_inode)))
 		return 0;
-	return security_ops->path_unlink(path, dentry);
+	return security_ops->path_unlink(dir, dentry);
 }
 EXPORT_SYMBOL(security_path_unlink);
 
-int security_path_symlink(struct path *path, struct dentry *dentry,
+int security_path_symlink(struct path *dir, struct dentry *dentry,
 			  const char *old_name)
 {
-	if (unlikely(IS_PRIVATE(path->dentry->d_inode)))
+	if (unlikely(IS_PRIVATE(dir->dentry->d_inode)))
 		return 0;
-	return security_ops->path_symlink(path, dentry, old_name);
+	return security_ops->path_symlink(dir, dentry, old_name);
 }
 EXPORT_SYMBOL(security_path_symlink);
 

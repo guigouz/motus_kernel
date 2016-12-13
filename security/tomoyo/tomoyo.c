@@ -85,6 +85,83 @@ static int tomoyo_bprm_check_security(struct linux_binprm *bprm)
 	return tomoyo_check_open_permission(domain, &bprm->file->f_path, 1);
 }
 
+#ifdef CONFIG_SYSCTL
+
+static int tomoyo_prepend(char **buffer, int *buflen, const char *str)
+{
+	int namelen = strlen(str);
+
+	if (*buflen < namelen)
+		return -ENOMEM;
+	*buflen -= namelen;
+	*buffer -= namelen;
+	memcpy(*buffer, str, namelen);
+	return 0;
+}
+
+/**
+ * tomoyo_sysctl_path - return the realpath of a ctl_table.
+ * @table: pointer to "struct ctl_table".
+ *
+ * Returns realpath(3) of the @table on success.
+ * Returns NULL on failure.
+ *
+ * This function uses tomoyo_alloc(), so the caller must call tomoyo_free()
+ * if this function didn't return NULL.
+ */
+static char *tomoyo_sysctl_path(struct ctl_table *table)
+{
+	int buflen = TOMOYO_MAX_PATHNAME_LEN;
+	char *buf = tomoyo_alloc(buflen);
+	char *end = buf + buflen;
+	int error = -ENOMEM;
+
+	if (!buf)
+		return NULL;
+
+	*--end = '\0';
+	buflen--;
+	while (table) {
+		char num[32];
+		const char *sp = table->procname;
+
+		if (!sp) {
+			memset(num, 0, sizeof(num));
+			snprintf(num, sizeof(num) - 1, "=%d=", table->ctl_name);
+			sp = num;
+		}
+		if (tomoyo_prepend(&end, &buflen, sp) ||
+		    tomoyo_prepend(&end, &buflen, "/"))
+			goto out;
+		table = table->parent;
+	}
+	if (tomoyo_prepend(&end, &buflen, "/proc/sys"))
+		goto out;
+	error = tomoyo_encode(buf, end - buf, end);
+ out:
+	if (!error)
+		return buf;
+	tomoyo_free(buf);
+	return NULL;
+}
+
+static int tomoyo_sysctl(struct ctl_table *table, int op)
+{
+	int error;
+	char *name;
+
+	op &= MAY_READ | MAY_WRITE;
+	if (!op)
+		return 0;
+	name = tomoyo_sysctl_path(table);
+	if (!name)
+		return -ENOMEM;
+	error = tomoyo_check_file_perm(tomoyo_domain(), name, op);
+	tomoyo_free(name);
+	return error;
+}
+#endif
+
 static int tomoyo_path_truncate(struct path *path, loff_t length,
 				unsigned int time_attrs)
 {
@@ -194,6 +271,64 @@ static int tomoyo_dentry_open(struct file *f, const struct cred *cred)
 	return tomoyo_check_open_permission(tomoyo_domain(), &f->f_path, flags);
 }
 
+static int tomoyo_file_ioctl(struct file *file, unsigned int cmd,
+			     unsigned long arg)
+{
+	return tomoyo_check_1path_perm(tomoyo_domain(), TOMOYO_TYPE_IOCTL_ACL,
+				       &file->f_path);
+}
+
+static int tomoyo_path_chmod(struct dentry *dentry, struct vfsmount *mnt,
+			     mode_t mode)
+{
+	struct path path = { mnt, dentry };
+	return tomoyo_check_1path_perm(tomoyo_domain(), TOMOYO_TYPE_CHMOD_ACL,
+				       &path);
+}
+
+static int tomoyo_path_chown(struct path *path, uid_t uid, gid_t gid)
+{
+	int error = 0;
+	if (uid != (uid_t) -1)
+		error = tomoyo_check_1path_perm(tomoyo_domain(),
+						TOMOYO_TYPE_CHOWN_ACL, path);
+	if (!error && gid != (gid_t) -1)
+		error = tomoyo_check_1path_perm(tomoyo_domain(),
+						TOMOYO_TYPE_CHGRP_ACL, path);
+	return error;
+}
+
+static int tomoyo_path_chroot(struct path *path)
+{
+	return tomoyo_check_1path_perm(tomoyo_domain(), TOMOYO_TYPE_CHROOT_ACL,
+				       path);
+}
+
+static int tomoyo_sb_mount(char *dev_name, struct path *path,
+			   char *type, unsigned long flags, void *data)
+{
+	return tomoyo_check_1path_perm(tomoyo_domain(), TOMOYO_TYPE_MOUNT_ACL,
+				       path);
+}
+
+static int tomoyo_sb_umount(struct vfsmount *mnt, int flags)
+{
+	struct path path = { mnt, mnt->mnt_root };
+	return tomoyo_check_1path_perm(tomoyo_domain(), TOMOYO_TYPE_UMOUNT_ACL,
+				       &path);
+}
+
+static int tomoyo_sb_pivotroot(struct path *old_path, struct path *new_path)
+{
+	return tomoyo_check_2path_perm(tomoyo_domain(),
+				       TOMOYO_TYPE_PIVOT_ROOT_ACL,
+				       new_path, old_path);
+}
+
+/*
+ * tomoyo_security_ops is a "struct security_operations" which is used for
+ * registering TOMOYO.
+ */
 static struct security_operations tomoyo_security_ops = {
 	.name                = "tomoyo",
 	.cred_alloc_blank    = tomoyo_cred_alloc_blank,
@@ -201,6 +336,9 @@ static struct security_operations tomoyo_security_ops = {
 	.cred_transfer	     = tomoyo_cred_transfer,
 	.bprm_set_creds      = tomoyo_bprm_set_creds,
 	.bprm_check_security = tomoyo_bprm_check_security,
+#ifdef CONFIG_SYSCTL
+	.sysctl              = tomoyo_sysctl,
+#endif
 	.file_fcntl          = tomoyo_file_fcntl,
 	.dentry_open         = tomoyo_dentry_open,
 	.path_truncate       = tomoyo_path_truncate,
@@ -211,6 +349,13 @@ static struct security_operations tomoyo_security_ops = {
 	.path_mknod          = tomoyo_path_mknod,
 	.path_link           = tomoyo_path_link,
 	.path_rename         = tomoyo_path_rename,
+	.file_ioctl          = tomoyo_file_ioctl,
+	.path_chmod          = tomoyo_path_chmod,
+	.path_chown          = tomoyo_path_chown,
+	.path_chroot         = tomoyo_path_chroot,
+	.sb_mount            = tomoyo_sb_mount,
+	.sb_umount           = tomoyo_sb_umount,
+	.sb_pivotroot        = tomoyo_sb_pivotroot,
 };
 
 static int __init tomoyo_init(void)
