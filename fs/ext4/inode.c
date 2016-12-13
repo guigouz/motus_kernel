@@ -1068,6 +1068,7 @@ void ext4_da_update_reserve_space(struct inode *inode,
 	int mdb_free = 0, allocated_meta_blocks = 0;
 
 	spin_lock(&ei->i_block_reservation_lock);
+	trace_ext4_da_update_reserve_space(inode, used);
 	if (unlikely(used > ei->i_reserved_data_blocks)) {
 		ext4_msg(inode->i_sb, KERN_NOTICE, "%s: ino %lu, used %d "
 			 "with only %d reserved data blocks\n",
@@ -1863,6 +1864,7 @@ repeat:
 	spin_lock(&ei->i_block_reservation_lock);
 	md_reserved = ei->i_reserved_meta_blocks;
 	md_needed = ext4_calc_metadata_amount(inode, lblock);
+	trace_ext4_da_reserve_space(inode, md_needed);
 	spin_unlock(&ei->i_block_reservation_lock);
 
 	/*
@@ -4160,17 +4162,26 @@ no_top:
  * We release `count' blocks on disk, but (last - first) may be greater
  * than `count' because there can be holes in there.
  */
-static void ext4_clear_blocks(handle_t *handle, struct inode *inode,
-			      struct buffer_head *bh,
-			      ext4_fsblk_t block_to_free,
-			      unsigned long count, __le32 *first,
-			      __le32 *last)
+static int ext4_clear_blocks(handle_t *handle, struct inode *inode,
+			     struct buffer_head *bh,
+			     ext4_fsblk_t block_to_free,
+			     unsigned long count, __le32 *first,
+			     __le32 *last)
 {
 	__le32 *p;
-	int	flags = EXT4_FREE_BLOCKS_FORGET;
+	int	flags = EXT4_FREE_BLOCKS_FORGET | EXT4_FREE_BLOCKS_VALIDATED;
 
 	if (S_ISDIR(inode->i_mode) || S_ISLNK(inode->i_mode))
 		flags |= EXT4_FREE_BLOCKS_METADATA;
+
+	if (!ext4_data_block_valid(EXT4_SB(inode->i_sb), block_to_free,
+				   count)) {
+		ext4_error(inode->i_sb, __func__, "inode #%lu: "
+			   "attempt to clear blocks %llu len %lu, invalid",
+			   inode->i_ino, (unsigned long long) block_to_free,
+			   count);
+		return 1;
+	}
 
 	if (try_to_extend_transaction(handle, inode)) {
 		if (bh) {
@@ -4190,6 +4201,7 @@ static void ext4_clear_blocks(handle_t *handle, struct inode *inode,
 		*p = 0;
 
 	ext4_free_blocks(handle, inode, 0, block_to_free, count, flags);
+	return 0;
 }
 
 /**
@@ -4245,9 +4257,10 @@ static void ext4_free_data(handle_t *handle, struct inode *inode,
 			} else if (nr == block_to_free + count) {
 				count++;
 			} else {
-				ext4_clear_blocks(handle, inode, this_bh,
-						  block_to_free,
-						  count, block_to_free_p, p);
+				if (ext4_clear_blocks(handle, inode, this_bh,
+						      block_to_free, count,
+						      block_to_free_p, p))
+					break;
 				block_to_free = nr;
 				block_to_free_p = p;
 				count = 1;
@@ -4310,6 +4323,16 @@ static void ext4_free_branches(handle_t *handle, struct inode *inode,
 			nr = le32_to_cpu(*p);
 			if (!nr)
 				continue;		/* A hole */
+
+			if (!ext4_data_block_valid(EXT4_SB(inode->i_sb),
+						   nr, 1)) {
+				ext4_error(inode->i_sb, __func__,
+					   "indirect mapped block in inode "
+					   "#%lu invalid (level %d, blk #%lu)",
+					   inode->i_ino, depth,
+					   (unsigned long) nr);
+				break;
+			}
 
 			/* Go read the buffer for the next level down */
 			bh = sb_bread(inode->i_sb, nr);
