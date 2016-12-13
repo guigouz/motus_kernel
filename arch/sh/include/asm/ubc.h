@@ -10,8 +10,8 @@
  */
 #ifndef __ASM_SH_UBC_H
 #define __ASM_SH_UBC_H
-#ifdef __KERNEL__
 
+#ifdef __KERNEL__
 #include <cpu/ubc.h>
 
 /* User Break Controller */
@@ -58,6 +58,23 @@
 #define BRCR_PCBB		(1 << 6)
 #define BRCR_SEQ		(1 << 3)
 #define BRCR_UBDE		(1 << 0)
+#endif
+
+/*
+ * All SH parts have 2 UBC channels. I defy any hardware designer to
+ * invalidate this assertion.
+ */
+#define NR_UBC_CHANNELS		2
+
+#ifndef __ASSEMBLY__
+/* arch/sh/kernel/cpu/ubc.S */
+extern void ubc_sleep(void);
+
+#ifdef CONFIG_UBC_WAKEUP
+extern void ubc_wakeup(void);
+#else
+#define ubc_wakeup()	do { } while (0)
+#endif
 #endif
 
 #endif /* __KERNEL__ */
