@@ -2,6 +2,8 @@ menuconfig FB_OMAP2
         tristate "OMAP2/3 frame buffer support (EXPERIMENTAL)"
         depends on FB && OMAP2_DSS
 
+	select OMAP2_VRAM
+	select OMAP2_VRFB
         select FB_CFB_FILLRECT
         select FB_CFB_COPYAREA
         select FB_CFB_IMAGEBLIT
@@ -33,9 +35,3 @@ config FB_OMAP2_NUM_FBS
 	help
 	  Select the number of framebuffers created. OMAP2/3 has 3 overlays
 	  so normally this would be 3.
-config FB_OMAP2_MTD_LOGO
-	tristate "Show MTD logo"
-	depends on FB_OMAP2
-	default n
-	help
-	  Read the logo from mtd logo parition and show it when booting.
