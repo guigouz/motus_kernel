@@ -1,4 +1,2 @@
-source "drivers/video/omap2/dss/Kconfig"
-source "drivers/video/omap2/displays/Kconfig"
-source "drivers/video/omap2/omapfb/Kconfig"
-source "drivers/video/omap2/misc/Kconfig"
+config OMAP2_VRAM
+	bool
