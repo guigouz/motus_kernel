@@ -3053,13 +3053,9 @@ fix_extent_len:
 
 static int ext4_convert_unwritten_extents_dio(handle_t *handle,
 					      struct inode *inode,
-					      ext4_lblk_t iblock,
-					      unsigned int max_blocks,
 					      struct ext4_ext_path *path)
 {
 	struct ext4_extent *ex;
-	ext4_lblk_t ee_block;
-	unsigned int ee_len;
 	struct ext4_extent_header *eh;
 	int depth;
 	int err = 0;
@@ -3068,30 +3064,6 @@ static int ext4_convert_unwritten_extents_dio(handle_t *handle,
 	depth = ext_depth(inode);
 	eh = path[depth].p_hdr;
 	ex = path[depth].p_ext;
-	ee_block = le32_to_cpu(ex->ee_block);
-	ee_len = ext4_ext_get_actual_len(ex);
-
-	ext_debug("ext4_convert_unwritten_extents_endio: inode %lu, logical"
-		  "block %llu, max_blocks %u\n", inode->i_ino,
-		  (unsigned long long)ee_block, ee_len);
-
-	/* If extent is larger than requested then split is required */
-
-	if (ee_block != iblock || ee_len > max_blocks) {
-		err = ext4_split_unwritten_extents(handle, inode, path,
-					iblock, max_blocks,
-					EXT4_EXT_DATA_VALID);
-		if (err < 0)
-			goto out;
-		ext4_ext_drop_refs(path);
-		path = ext4_ext_find_extent(inode, iblock, path);
-		if (IS_ERR(path)) {
-			err = PTR_ERR(path);
-			goto out;
-		}
-		depth = ext_depth(inode);
-		ex = path[depth].p_ext;
-	}
 
 	err = ext4_ext_get_access(handle, inode, path + depth);
 	if (err)

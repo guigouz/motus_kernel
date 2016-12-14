@@ -2399,29 +2399,13 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
 	return dest_cpu;
 }
 
-/*
- * The caller (fork, wakeup) owns TASK_WAKING, ->cpus_allowed is stable.
- */
+#endif
+
+#ifdef CONFIG_SMP
 static inline
-int select_task_rq(struct rq *rq, struct task_struct *p, int sd_flags, int wake_flags)
+int select_task_rq(struct task_struct *p, int sd_flags, int wake_flags)
 {
-	int cpu = p->sched_class->select_task_rq(rq, p, sd_flags, wake_flags);
-
-	/*
-	 * In order not to call set_task_cpu() on a blocking task we need
-	 * to rely on ttwu() to place the task on a valid ->cpus_allowed
-	 * cpu.
-	 *
-	 * Since this is common to all placement strategies, this lives here.
-	 *
-	 * [ this allows ->select_task() to simply return task_cpu(p) and
-	 *   not worry about this generic constraint ]
-	 */
-	if (unlikely(!cpumask_test_cpu(cpu, &p->cpus_allowed) ||
-		     !cpu_online(cpu)))
-		cpu = select_fallback_rq(task_cpu(p), p);
-
-	return cpu;
+	return p->sched_class->select_task_rq(p, sd_flags, wake_flags);
 }
 #endif
 
@@ -2481,7 +2465,7 @@ static int try_to_wake_up(struct task_struct *p, unsigned int state,
 	}
 	p->state = TASK_WAKING;
 
-	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
+	cpu = select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
 	if (cpu != orig_cpu) {
 		local_irq_save(flags);
 		rq = cpu_rq(cpu);
@@ -2686,7 +2670,7 @@ void sched_fork(struct task_struct *p, int clone_flags)
 		p->sched_class->task_fork(p);
 
 #ifdef CONFIG_SMP
-	cpu = p->sched_class->select_task_rq(p, SD_BALANCE_FORK, 0);
+	cpu = select_task_rq(p, SD_BALANCE_FORK, 0);
 #endif
 	local_irq_save(flags);
 	update_rq_clock(cpu_rq(cpu));
@@ -3225,36 +3209,11 @@ static void double_rq_unlock(struct rq *rq1, struct rq *rq2)
  */
 void sched_exec(void)
 {
-	struct task_struct *p = current;
-	struct migration_req req;
-	unsigned long flags;
-	struct rq *rq;
-	int dest_cpu;
-
-	rq = task_rq_lock(p, &flags);
-	dest_cpu = p->sched_class->select_task_rq(rq, p, SD_BALANCE_EXEC, 0);
-	if (dest_cpu == smp_processor_id())
-		goto unlock;
-
-	/*
-	 * select_task_rq() can race against ->cpus_allowed
-	 */
-	if (cpumask_test_cpu(dest_cpu, &p->cpus_allowed) &&
-	    likely(cpu_active(dest_cpu)) &&
-	    migrate_task(p, dest_cpu, &req)) {
-		/* Need to wait for migration thread (might exit: take ref). */
-		struct task_struct *mt = rq->migration_thread;
-
-		get_task_struct(mt);
-		task_rq_unlock(rq, &flags);
-		wake_up_process(mt);
-		put_task_struct(mt);
-		wait_for_completion(&req.done);
-
-		return;
-	}
-unlock:
-	task_rq_unlock(rq, &flags);
+	int new_cpu, this_cpu = get_cpu();
+	new_cpu = select_task_rq(current, SD_BALANCE_EXEC, 0);
+	put_cpu();
+	if (new_cpu != this_cpu)
+		sched_migrate_task(current, new_cpu);
 }
 
 /*
