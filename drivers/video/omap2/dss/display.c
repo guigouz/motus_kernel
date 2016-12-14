@@ -28,7 +28,7 @@
 #include <linux/list.h>
 #include <linux/platform_device.h>
 
-#include <mach/display.h>
+#include <plat/display.h>
 #include "dss.h"
 
 static LIST_HEAD(display_list);
@@ -277,31 +277,16 @@ static ssize_t display_wss_store(struct device *dev,
 	return size;
 }
 
-#ifdef CONFIG_TVOUT_SHOLEST
-static DEVICE_ATTR(enabled, S_IRWXUGO|S_IWUSR,
-		display_enabled_show, display_enabled_store);
-#else
 static DEVICE_ATTR(enabled, S_IRUGO|S_IWUSR,
 		display_enabled_show, display_enabled_store);
-#endif
 static DEVICE_ATTR(update_mode, S_IRUGO|S_IWUSR,
 		display_upd_mode_show, display_upd_mode_store);
 static DEVICE_ATTR(tear_elim, S_IRUGO|S_IWUSR,
 		display_tear_show, display_tear_store);
-#ifdef CONFIG_TVOUT_SHOLEST
-static DEVICE_ATTR(timings, S_IRWXUGO|S_IWUSR,
-		display_timings_show, display_timings_store);
-#else
 static DEVICE_ATTR(timings, S_IRUGO|S_IWUSR,
 		display_timings_show, display_timings_store);
-#endif
-#ifdef CONFIG_TVOUT_SHOLEST
-static DEVICE_ATTR(rotate, S_IRWXUGO|S_IWUSR,
-		display_rotate_show, display_rotate_store);
-#else
 static DEVICE_ATTR(rotate, S_IRUGO|S_IWUSR,
 		display_rotate_show, display_rotate_store);
-#endif
 static DEVICE_ATTR(mirror, S_IRUGO|S_IWUSR,
 		display_mirror_show, display_mirror_store);
 static DEVICE_ATTR(wss, S_IRUGO|S_IWUSR,
@@ -323,12 +308,6 @@ static void default_get_resolution(struct omap_dss_device *dssdev,
 {
 	*xres = dssdev->panel.timings.x_res;
 	*yres = dssdev->panel.timings.y_res;
-}
-
-static void default_get_size(struct omap_dss_device *dssdev, u16 *w, u16* h)
-{
-	*w = dssdev->panel.timings.w;
-	*h = dssdev->panel.timings.h;
 }
 
 void default_get_overlay_fifo_thresholds(enum omap_plane plane,
@@ -447,7 +426,6 @@ void dss_init_device(struct platform_device *pdev,
 	}
 
 	dssdev->get_resolution = default_get_resolution;
-	dssdev->get_size = default_get_size;
 	dssdev->get_recommended_bpp = default_get_recommended_bpp;
 	dssdev->wait_vsync = default_wait_vsync;
 
@@ -575,6 +553,19 @@ int dss_resume_all_devices(void)
 	struct bus_type *bus = dss_get_bus();
 
 	return bus_for_each_dev(bus, NULL, NULL, dss_resume_device);
+}
+
+static int dss_disable_device(struct device *dev, void *data)
+{
+	struct omap_dss_device *dssdev = to_dss_device(dev);
+	dssdev->disable(dssdev);
+	return 0;
+}
+
+void dss_disable_all_devices(void)
+{
+	struct bus_type *bus = dss_get_bus();
+	bus_for_each_dev(bus, NULL, NULL, dss_disable_device);
 }
 
 

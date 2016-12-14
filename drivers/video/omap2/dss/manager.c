@@ -28,8 +28,8 @@
 #include <linux/spinlock.h>
 #include <linux/jiffies.h>
 
-#include <mach/display.h>
-#include <mach/cpu.h>
+#include <plat/display.h>
+#include <plat/cpu.h>
 
 #include "dss.h"
 
@@ -442,7 +442,7 @@ struct manager_cache_data {
 };
 
 static struct {
-	spinlock_t lock;  /* need comment */
+	spinlock_t lock;
 	struct overlay_cache_data overlay_cache[3];
 	struct manager_cache_data manager_cache[2];
 
@@ -757,8 +757,8 @@ static int configure_overlay(enum omap_plane plane)
 
 		if (dispc_is_overlay_scaled(c)) {
 			/* If the overlay is scaled, the update area has
-			 * already been enlarged to cover the whole overlay.
-			 * We only need to adjust x/y here */
+			 * already been enlarged to cover the whole overlay. We
+			 * only need to adjust x/y here */
 			x = c->pos_x - mc->x;
 			y = c->pos_y - mc->y;
 		} else {
@@ -1287,16 +1287,9 @@ static int omap_dss_mgr_apply(struct omap_overlay_manager *mgr)
 			break;
 #ifdef CONFIG_OMAP2_DSS_DSI
 		case OMAP_DISPLAY_TYPE_DSI:
-			if (dssdev->phy.dsi.xfer_mode == OMAP_DSI_XFER_CMD_MODE)
-				dsi_get_overlay_fifo_thresholds(ovl->id, size,
-						&oc->burst_size, &oc->fifo_low,
-						&oc->fifo_high);
-			else
-				default_get_overlay_fifo_thresholds(ovl->id,
-						size,
-						&oc->burst_size,
-						&oc->fifo_low,
-						&oc->fifo_high);
+			dsi_get_overlay_fifo_thresholds(ovl->id, size,
+					&oc->burst_size, &oc->fifo_low,
+					&oc->fifo_high);
 			break;
 #endif
 		default:
@@ -1322,8 +1315,8 @@ static int omap_dss_mgr_apply(struct omap_overlay_manager *mgr)
 
 static int dss_check_manager(struct omap_overlay_manager *mgr)
 {
-	/* OMAP does not support destination color keying and alpha blending
-	 * simultaneously. */
+	/* OMAP supports only graphics source transparency color key and alpha
+	 * blending simultaneously. See TRM 15.4.2.4.2.2 Alpha Mode */
 
 	if (mgr->info.alpha_enabled && mgr->info.trans_enabled &&
 			mgr->info.trans_key_type != OMAP_DSS_COLOR_KEY_GFX_DST)
@@ -1363,7 +1356,6 @@ static void omap_dss_add_overlay_manager(struct omap_overlay_manager *manager)
 	++num_managers;
 	list_add_tail(&manager->list, &manager_list);
 }
-
 
 int dss_init_overlay_managers(struct platform_device *pdev)
 {
