@@ -47,7 +47,7 @@ static void dccp_v6_hash(struct sock *sk)
 			return;
 		}
 		local_bh_disable();
-		__inet6_hash(sk);
+		__inet6_hash(sk, NULL);
 		local_bh_enable();
 	}
 }
@@ -639,7 +639,7 @@ static struct sock *dccp_v6_request_recv_sock(struct sock *sk,
 	newinet->inet_daddr = newinet->inet_saddr = LOOPBACK4_IPV6;
 	newinet->inet_rcv_saddr = LOOPBACK4_IPV6;
 
-	__inet6_hash(newsk);
+	__inet6_hash(newsk, NULL);
 	__inet_inherit_port(sk, newsk);
 
 	return newsk;
