@@ -44,6 +44,9 @@
 #define MXC_CSPIINT		0x0c
 #define MXC_RESET		0x1c
 
+#define MX3_CSPISTAT		0x14
+#define MX3_CSPISTAT_RR		(1 << 3)
+
 /* generic defines to abstract from the different register layouts */
 #define MXC_INT_RR	(1 << 0) /* Receive data ready interrupt */
 #define MXC_INT_TE	(1 << 1) /* Transmit FIFO empty interrupt */
@@ -513,11 +516,12 @@ static int __init spi_imx_probe(struct platform_device *pdev)
 			continue;
 		ret = gpio_request(spi_imx->chipselect[i], DRIVER_NAME);
 		if (ret) {
-			i--;
-			while (i > 0)
+			while (i > 0) {
+				i--;
 				if (spi_imx->chipselect[i] >= 0)
-					gpio_free(spi_imx->chipselect[i--]);
-			dev_err(&pdev->dev, "can't get cs gpios");
+					gpio_free(spi_imx->chipselect[i]);
+			}
+			dev_err(&pdev->dev, "can't get cs gpios\n");
 			goto out_master_put;
 		}
 	}
@@ -592,6 +596,11 @@ static int __init spi_imx_probe(struct platform_device *pdev)
 
 	if (!cpu_is_mx31() || !cpu_is_mx35())
 		writel(1, spi_imx->base + MXC_RESET);
+
+	/* drain receive buffer */
+	if (cpu_is_mx31() || cpu_is_mx35())
+		while (readl(spi_imx->base + MX3_CSPISTAT) & MX3_CSPISTAT_RR)
+			readl(spi_imx->base + MXC_CSPIRXDATA);
 
 	spi_imx->intctrl(spi_imx, 0);
 
