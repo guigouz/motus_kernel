@@ -2005,13 +2005,8 @@ static void task_fork_fair(struct task_struct *p)
 
 	spin_lock_irqsave(&rq->lock, flags);
 
-	update_rq_clock(rq);
-
-	if (unlikely(task_cpu(p) != this_cpu)) {
-		rcu_read_lock();
+	if (unlikely(task_cpu(p) != this_cpu))
 		__set_task_cpu(p, this_cpu);
-		rcu_read_unlock();
-	}
 
 	update_curr(cfs_rq);
 
@@ -2027,8 +2022,6 @@ static void task_fork_fair(struct task_struct *p)
 		swap(curr->vruntime, se->vruntime);
 		resched_task(rq->curr);
 	}
-
-	se->vruntime -= cfs_rq->min_vruntime;
 
 	spin_unlock_irqrestore(&rq->lock, flags);
 }
