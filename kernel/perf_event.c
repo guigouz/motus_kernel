@@ -36,7 +36,7 @@
 /*
  * Each CPU has a list of per CPU events:
  */
-DEFINE_PER_CPU(struct perf_cpu_context, perf_cpu_context);
+static DEFINE_PER_CPU(struct perf_cpu_context, perf_cpu_context);
 
 int perf_max_events __read_mostly = 1;
 static int perf_reserved_percpu __read_mostly;
@@ -568,7 +568,7 @@ static void __perf_event_disable(void *info)
  * is the current context on this CPU and preemption is disabled,
  * hence we can't get into perf_event_task_sched_out for this context.
  */
-static void perf_event_disable(struct perf_event *event)
+void perf_event_disable(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
 	struct task_struct *task = ctx->task;
@@ -972,7 +972,7 @@ static void __perf_event_enable(void *info)
  * perf_event_for_each_child or perf_event_for_each as described
  * for perf_event_disable.
  */
-static void perf_event_enable(struct perf_event *event)
+void perf_event_enable(struct perf_event *event)
 {
 	struct perf_event_context *ctx = event->ctx;
 	struct task_struct *task = ctx->task;
@@ -1583,7 +1583,6 @@ static void
 __perf_event_init_context(struct perf_event_context *ctx,
 			    struct task_struct *task)
 {
-	memset(ctx, 0, sizeof(*ctx));
 	spin_lock_init(&ctx->lock);
 	mutex_init(&ctx->mutex);
 	INIT_LIST_HEAD(&ctx->group_list);
@@ -1658,7 +1657,7 @@ static struct perf_event_context *find_get_context(pid_t pid, int cpu)
 	}
 
 	if (!ctx) {
-		ctx = kmalloc(sizeof(struct perf_event_context), GFP_KERNEL);
+		ctx = kzalloc(sizeof(struct perf_event_context), GFP_KERNEL);
 		err = -ENOMEM;
 		if (!ctx)
 			goto errout;
@@ -4101,8 +4100,7 @@ static void cpu_clock_perf_event_update(struct perf_event *event)
 	u64 now;
 
 	now = cpu_clock(cpu);
-	prev = atomic64_read(&event->hw.prev_count);
-	atomic64_set(&event->hw.prev_count, now);
+	prev = atomic64_xchg(&event->hw.prev_count, now);
 	atomic64_add(now - prev, &event->count);
 }
 
@@ -5109,7 +5107,7 @@ again:
  */
 int perf_event_init_task(struct task_struct *child)
 {
-	struct perf_event_context *child_ctx, *parent_ctx;
+	struct perf_event_context *child_ctx = NULL, *parent_ctx;
 	struct perf_event_context *cloned_ctx;
 	struct perf_event *event;
 	struct task_struct *parent = current;
@@ -5123,20 +5121,6 @@ int perf_event_init_task(struct task_struct *child)
 
 	if (likely(!parent->perf_event_ctxp))
 		return 0;
-
-	/*
-	 * This is executed from the parent task context, so inherit
-	 * events that have been marked for cloning.
-	 * First allocate and initialize a context for the child.
-	 */
-
-	child_ctx = kmalloc(sizeof(struct perf_event_context), GFP_KERNEL);
-	if (!child_ctx)
-		return -ENOMEM;
-
-	__perf_event_init_context(child_ctx, child);
-	child->perf_event_ctxp = child_ctx;
-	get_task_struct(child);
 
 	/*
 	 * If the parent's context is a clone, pin it so it won't get
@@ -5168,6 +5152,26 @@ int perf_event_init_task(struct task_struct *child)
 			continue;
 		}
 
+		if (!child->perf_event_ctxp) {
+			/*
+			 * This is executed from the parent task context, so
+			 * inherit events that have been marked for cloning.
+			 * First allocate and initialize a context for the
+			 * child.
+			 */
+
+			child_ctx = kzalloc(sizeof(struct perf_event_context),
+					    GFP_KERNEL);
+			if (!child_ctx) {
+				ret = -ENOMEM;
+				goto exit;
+			}
+
+			__perf_event_init_context(child_ctx, child);
+			child->perf_event_ctxp = child_ctx;
+			get_task_struct(child);
+		}
+
 		ret = inherit_group(event, parent, parent_ctx,
 					     child, child_ctx);
 		if (ret) {
@@ -5196,6 +5200,7 @@ int perf_event_init_task(struct task_struct *child)
 		get_ctx(child_ctx->parent_ctx);
 	}
 
+exit:
 	mutex_unlock(&parent_ctx->mutex);
 
 	perf_unpin_context(parent_ctx);
