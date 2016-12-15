@@ -1296,9 +1296,6 @@ retry:
 	expires_next.tv64 = KTIME_MAX;
 
 	spin_lock(&cpu_base->lock);
-	entry_time = now = hrtimer_update_base(cpu_base);
-retry:
-	expires_next.tv64 = KTIME_MAX;
 	/*
 	 * We set expires_next to KTIME_MAX here with cpu_base->lock
 	 * held to prevent that a timer is enqueued in our queue via

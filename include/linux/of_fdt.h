@@ -58,6 +58,8 @@ struct boot_param_header {
 };
 
 /* TBD: Temporary export of fdt globals - remove when code fully merged */
+extern int __initdata dt_root_addr_cells;
+extern int __initdata dt_root_size_cells;
 extern struct boot_param_header *initial_boot_params;
 
 /* For scanning the flat device-tree at boot time */
@@ -69,6 +71,12 @@ extern void *of_get_flat_dt_prop(unsigned long node, const char *name,
 				 unsigned long *size);
 extern int of_flat_dt_is_compatible(unsigned long node, const char *name);
 extern unsigned long of_get_flat_dt_root(void);
+extern void early_init_dt_check_for_initrd(unsigned long node);
+extern u64 dt_mem_next_cell(int s, u32 **cellp);
+
+/* Early flat tree scan hooks */
+extern int early_init_dt_scan_root(unsigned long node, const char *uname,
+				   int depth, void *data);
 
 /* Other Prototypes */
 extern void finish_device_tree(void);

@@ -11,8 +11,12 @@
 
 #include <linux/kernel.h>
 #include <linux/lmb.h>
+#include <linux/initrd.h>
 #include <linux/of.h>
 #include <linux/of_fdt.h>
+
+int __initdata dt_root_addr_cells;
+int __initdata dt_root_size_cells;
 
 struct boot_param_header *initial_boot_params;
 
@@ -367,6 +371,73 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 	}
 	*p += 4;
 	return mem;
+}
+
+#ifdef CONFIG_BLK_DEV_INITRD
+/**
+ * early_init_dt_check_for_initrd - Decode initrd location from flat tree
+ * @node: reference to node containing initrd location ('chosen')
+ */
+void __init early_init_dt_check_for_initrd(unsigned long node)
+{
+	unsigned long len;
+	u32 *prop;
+
+	pr_debug("Looking for initrd properties... ");
+
+	prop = of_get_flat_dt_prop(node, "linux,initrd-start", &len);
+	if (prop) {
+		initrd_start = (unsigned long)
+				__va(of_read_ulong(prop, len/4));
+
+		prop = of_get_flat_dt_prop(node, "linux,initrd-end", &len);
+		if (prop) {
+			initrd_end = (unsigned long)
+				__va(of_read_ulong(prop, len/4));
+			initrd_below_start_ok = 1;
+		} else {
+			initrd_start = 0;
+		}
+	}
+
+	pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n",
+		 initrd_start, initrd_end);
+}
+#else
+inline void early_init_dt_check_for_initrd(unsigned long node)
+{
+}
+#endif /* CONFIG_BLK_DEV_INITRD */
+
+/**
+ * early_init_dt_scan_root - fetch the top level address and size cells
+ */
+int __init early_init_dt_scan_root(unsigned long node, const char *uname,
+				   int depth, void *data)
+{
+	u32 *prop;
+
+	if (depth != 0)
+		return 0;
+
+	prop = of_get_flat_dt_prop(node, "#size-cells", NULL);
+	dt_root_size_cells = (prop == NULL) ? 1 : *prop;
+	pr_debug("dt_root_size_cells = %x\n", dt_root_size_cells);
+
+	prop = of_get_flat_dt_prop(node, "#address-cells", NULL);
+	dt_root_addr_cells = (prop == NULL) ? 2 : *prop;
+	pr_debug("dt_root_addr_cells = %x\n", dt_root_addr_cells);
+
+	/* break now */
+	return 1;
+}
+
+u64 __init dt_mem_next_cell(int s, u32 **cellp)
+{
+	u32 *p = *cellp;
+
+	*cellp = p + s;
+	return of_read_number(p, s);
 }
 
 /**

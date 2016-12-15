@@ -42,9 +42,6 @@
 #include <asm/sections.h>
 #include <asm/pci-bridge.h>
 
-static int __initdata dt_root_addr_cells;
-static int __initdata dt_root_size_cells;
-
 typedef u32 cell_t;
 
 /* export that to outside world */
@@ -113,38 +110,6 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 	return 0;
 }
 
-#ifdef CONFIG_BLK_DEV_INITRD
-static void __init early_init_dt_check_for_initrd(unsigned long node)
-{
-	unsigned long l;
-	u32 *prop;
-
-	pr_debug("Looking for initrd properties... ");
-
-	prop = of_get_flat_dt_prop(node, "linux,initrd-start", &l);
-	if (prop) {
-		initrd_start = (unsigned long)
-					__va((u32)of_read_ulong(prop, l/4));
-
-		prop = of_get_flat_dt_prop(node, "linux,initrd-end", &l);
-		if (prop) {
-			initrd_end = (unsigned long)
-					__va((u32)of_read_ulong(prop, 1/4));
-			initrd_below_start_ok = 1;
-		} else {
-			initrd_start = 0;
-		}
-	}
-
-	pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n",
-					initrd_start, initrd_end);
-}
-#else
-static inline void early_init_dt_check_for_initrd(unsigned long node)
-{
-}
-#endif /* CONFIG_BLK_DEV_INITRD */
-
 static int __init early_init_dt_scan_chosen(unsigned long node,
 				const char *uname, int depth, void *data)
 {
@@ -188,34 +153,6 @@ static int __init early_init_dt_scan_chosen(unsigned long node,
 
 	/* break now */
 	return 1;
-}
-
-static int __init early_init_dt_scan_root(unsigned long node,
-				const char *uname, int depth, void *data)
-{
-	u32 *prop;
-
-	if (depth != 0)
-		return 0;
-
-	prop = of_get_flat_dt_prop(node, "#size-cells", NULL);
-	dt_root_size_cells = (prop == NULL) ? 1 : *prop;
-	pr_debug("dt_root_size_cells = %x\n", dt_root_size_cells);
-
-	prop = of_get_flat_dt_prop(node, "#address-cells", NULL);
-	dt_root_addr_cells = (prop == NULL) ? 2 : *prop;
-	pr_debug("dt_root_addr_cells = %x\n", dt_root_addr_cells);
-
-	/* break now */
-	return 1;
-}
-
-static u64 __init dt_mem_next_cell(int s, cell_t **cellp)
-{
-	cell_t *p = *cellp;
-
-	*cellp = p + s;
-	return of_read_number(p, s);
 }
 
 static int __init early_init_dt_scan_memory(unsigned long node,
