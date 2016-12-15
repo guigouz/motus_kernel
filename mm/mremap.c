@@ -461,6 +461,10 @@ unsigned long do_mremap(unsigned long addr,
 	/* old_len exactly to the end of the area..
 	 */
 	if (old_len == vma->vm_end - addr) {
+		unsigned long max_addr = TASK_SIZE;
+		if (vma->vm_next)
+			max_addr = vma->vm_next->vm_start;
+
 		/* can we just expand the current mapping? */
 		if (vma_expandable(vma, new_len - old_len)) {
 			int pages = (new_len - old_len) >> PAGE_SHIFT;
