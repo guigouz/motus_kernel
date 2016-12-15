@@ -67,8 +67,6 @@ int __initdata iommu_force_on;
 unsigned long tce_alloc_start, tce_alloc_end;
 #endif
 
-typedef u32 cell_t;
-
 extern rwlock_t devtree_lock;	/* temporary while merging */
 
 /* export that to outside world */
@@ -369,18 +367,9 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 	return 0;
 }
 
-static int __init early_init_dt_scan_chosen(unsigned long node,
-					    const char *uname, int depth, void *data)
+void __init early_init_dt_scan_chosen_arch(unsigned long node)
 {
 	unsigned long *lprop;
-	unsigned long l;
-	char *p;
-
-	DBG("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
-
-	if (depth != 1 ||
-	    (strcmp(uname, "chosen") != 0 && strcmp(uname, "chosen@0") != 0))
-		return 0;
 
 #ifdef CONFIG_PPC64
 	/* check if iommu is forced on or off */
@@ -391,17 +380,17 @@ static int __init early_init_dt_scan_chosen(unsigned long node,
 #endif
 
 	/* mem=x on the command line is the preferred mechanism */
- 	lprop = of_get_flat_dt_prop(node, "linux,memory-limit", NULL);
- 	if (lprop)
- 		memory_limit = *lprop;
+	lprop = of_get_flat_dt_prop(node, "linux,memory-limit", NULL);
+	if (lprop)
+		memory_limit = *lprop;
 
 #ifdef CONFIG_PPC64
- 	lprop = of_get_flat_dt_prop(node, "linux,tce-alloc-start", NULL);
- 	if (lprop)
- 		tce_alloc_start = *lprop;
- 	lprop = of_get_flat_dt_prop(node, "linux,tce-alloc-end", NULL);
- 	if (lprop)
- 		tce_alloc_end = *lprop;
+	lprop = of_get_flat_dt_prop(node, "linux,tce-alloc-start", NULL);
+	if (lprop)
+		tce_alloc_start = *lprop;
+	lprop = of_get_flat_dt_prop(node, "linux,tce-alloc-end", NULL);
+	if (lprop)
+		tce_alloc_end = *lprop;
 #endif
 
 #ifdef CONFIG_KEXEC
@@ -413,23 +402,6 @@ static int __init early_init_dt_scan_chosen(unsigned long node,
 	if (lprop)
 		crashk_res.end = crashk_res.start + *lprop - 1;
 #endif
-
-	early_init_dt_check_for_initrd(node);
-
-	/* Retreive command line */
- 	p = of_get_flat_dt_prop(node, "bootargs", &l);
-	if (p != NULL && l > 0)
-		strlcpy(cmd_line, p, min((int)l, COMMAND_LINE_SIZE));
-
-#ifdef CONFIG_CMDLINE
-	if (p == NULL || l == 0 || (l == 1 && (*p) == 0))
-		strlcpy(cmd_line, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
-#endif /* CONFIG_CMDLINE */
-
-	DBG("Command line is: %s\n", cmd_line);
-
-	/* break now */
-	return 1;
 }
 
 #ifdef CONFIG_PPC_PSERIES
@@ -441,22 +413,22 @@ static int __init early_init_dt_scan_chosen(unsigned long node,
  */
 static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 {
-	cell_t *dm, *ls, *usm;
+	__be32 *dm, *ls, *usm;
 	unsigned long l, n, flags;
 	u64 base, size, lmb_size;
 	unsigned int is_kexec_kdump = 0, rngs;
 
 	ls = of_get_flat_dt_prop(node, "ibm,lmb-size", &l);
-	if (ls == NULL || l < dt_root_size_cells * sizeof(cell_t))
+	if (ls == NULL || l < dt_root_size_cells * sizeof(__be32))
 		return 0;
 	lmb_size = dt_mem_next_cell(dt_root_size_cells, &ls);
 
 	dm = of_get_flat_dt_prop(node, "ibm,dynamic-memory", &l);
-	if (dm == NULL || l < sizeof(cell_t))
+	if (dm == NULL || l < sizeof(__be32))
 		return 0;
 
 	n = *dm++;	/* number of entries */
-	if (l < (n * (dt_root_addr_cells + 4) + 1) * sizeof(cell_t))
+	if (l < (n * (dt_root_addr_cells + 4) + 1) * sizeof(__be32))
 		return 0;
 
 	/* check if this is a kexec/kdump kernel. */
@@ -515,7 +487,7 @@ static int __init early_init_dt_scan_memory(unsigned long node,
 					    const char *uname, int depth, void *data)
 {
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
-	cell_t *reg, *endp;
+	__be32 *reg, *endp;
 	unsigned long l;
 
 	/* Look for the ibm,dynamic-reconfiguration-memory node */
@@ -540,7 +512,7 @@ static int __init early_init_dt_scan_memory(unsigned long node,
 	if (reg == NULL)
 		return 0;
 
-	endp = reg + (l / sizeof(cell_t));
+	endp = reg + (l / sizeof(__be32));
 
 	DBG("memory scan node %s, reg size %ld, data: %x %x %x %x,\n",
 	    uname, l, reg[0], reg[1], reg[2], reg[3]);

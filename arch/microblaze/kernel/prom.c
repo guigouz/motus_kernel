@@ -42,8 +42,6 @@
 #include <asm/sections.h>
 #include <asm/pci-bridge.h>
 
-typedef u32 cell_t;
-
 /* export that to outside world */
 struct device_node *of_chosen;
 
@@ -110,56 +108,16 @@ static int __init early_init_dt_scan_cpus(unsigned long node,
 	return 0;
 }
 
-static int __init early_init_dt_scan_chosen(unsigned long node,
-				const char *uname, int depth, void *data)
+void __init early_init_dt_scan_chosen_arch(unsigned long node)
 {
-	unsigned long l;
-	char *p;
-
-	pr_debug("search \"chosen\", depth: %d, uname: %s\n", depth, uname);
-
-	if (depth != 1 ||
-		(strcmp(uname, "chosen") != 0 &&
-				strcmp(uname, "chosen@0") != 0))
-		return 0;
-
-#ifdef CONFIG_KEXEC
-	lprop = (u64 *)of_get_flat_dt_prop(node,
-				"linux,crashkernel-base", NULL);
-	if (lprop)
-		crashk_res.start = *lprop;
-
-	lprop = (u64 *)of_get_flat_dt_prop(node,
-				"linux,crashkernel-size", NULL);
-	if (lprop)
-		crashk_res.end = crashk_res.start + *lprop - 1;
-#endif
-
-	early_init_dt_check_for_initrd(node);
-
-	/* Retreive command line */
-	p = of_get_flat_dt_prop(node, "bootargs", &l);
-	if (p != NULL && l > 0)
-		strlcpy(cmd_line, p, min((int)l, COMMAND_LINE_SIZE));
-
-#ifdef CONFIG_CMDLINE
-#ifndef CONFIG_CMDLINE_FORCE
-	if (p == NULL || l == 0 || (l == 1 && (*p) == 0))
-#endif
-		strlcpy(cmd_line, CONFIG_CMDLINE, COMMAND_LINE_SIZE);
-#endif /* CONFIG_CMDLINE */
-
-	pr_debug("Command line is: %s\n", cmd_line);
-
-	/* break now */
-	return 1;
+	/* No Microblaze specific code here */
 }
 
 static int __init early_init_dt_scan_memory(unsigned long node,
 				const char *uname, int depth, void *data)
 {
 	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
-	cell_t *reg, *endp;
+	__be32 *reg, *endp;
 	unsigned long l;
 
 	/* Look for the ibm,dynamic-reconfiguration-memory node */
@@ -178,13 +136,13 @@ static int __init early_init_dt_scan_memory(unsigned long node,
 	} else if (strcmp(type, "memory") != 0)
 		return 0;
 
-	reg = (cell_t *)of_get_flat_dt_prop(node, "linux,usable-memory", &l);
+	reg = (__be32 *)of_get_flat_dt_prop(node, "linux,usable-memory", &l);
 	if (reg == NULL)
-		reg = (cell_t *)of_get_flat_dt_prop(node, "reg", &l);
+		reg = (__be32 *)of_get_flat_dt_prop(node, "reg", &l);
 	if (reg == NULL)
 		return 0;
 
-	endp = reg + (l / sizeof(cell_t));
+	endp = reg + (l / sizeof(__be32));
 
 	pr_debug("memory scan node %s, reg size %ld, data: %x %x %x %x,\n",
 		uname, l, reg[0], reg[1], reg[2], reg[3]);
