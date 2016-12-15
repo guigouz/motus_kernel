@@ -136,6 +136,7 @@ static const struct key_entry eeepc_keymap[] = {
 	{KE_KEY, 0x13, KEY_MUTE },
 	{KE_KEY, 0x14, KEY_VOLUMEDOWN },
 	{KE_KEY, 0x15, KEY_VOLUMEUP },
+	{KE_KEY, 0x16, KEY_DISPLAY_OFF },
 	{KE_KEY, 0x1a, KEY_COFFEE },
 	{KE_KEY, 0x1b, KEY_ZOOM },
 	{KE_KEY, 0x1c, KEY_PROG2 },
@@ -145,6 +146,8 @@ static const struct key_entry eeepc_keymap[] = {
 	{KE_KEY, 0x30, KEY_SWITCHVIDEOMODE },
 	{KE_KEY, 0x31, KEY_SWITCHVIDEOMODE },
 	{KE_KEY, 0x32, KEY_SWITCHVIDEOMODE },
+	{KE_KEY, 0x37, KEY_F13 }, /* Disable Touchpad */
+	{KE_KEY, 0x38, KEY_F14 },
 	{KE_END, 0},
 };
 
@@ -241,7 +244,8 @@ static int get_acpi(struct eeepc_laptop *eeepc, int cm)
 	return value;
 }
 
-static int acpi_setter_handle(struct eeepc_laptop *eeepc, int cm, acpi_handle *handle)
+static int acpi_setter_handle(struct eeepc_laptop *eeepc, int cm,
+			      acpi_handle *handle)
 {
 	const char *method = cm_setv[cm];
 	acpi_status status;
@@ -252,7 +256,7 @@ static int acpi_setter_handle(struct eeepc_laptop *eeepc, int cm, acpi_handle *h
 		return -ENODEV;
 
 	status = acpi_get_handle(eeepc->handle, (char *)method,
-			         handle);
+				 handle);
 	if (status != AE_OK) {
 		pr_warning("Error finding %s\n", method);
 		return -ENODEV;
@@ -1226,27 +1230,35 @@ static void eeepc_acpi_notify(struct acpi_device *device, u32 event)
 					dev_name(&device->dev), event,
 					count);
 
+	/* Brightness events are special */
 	if (event >= NOTIFY_BRN_MIN && event <= NOTIFY_BRN_MAX) {
-		int old_brightness, new_brightness;
 
-		/* Update backlight device. */
-		old_brightness = eeepc_backlight_notify(eeepc);
+		/* Ignore them completely if the acpi video driver is used */
+		if (eeepc->backlight_device != NULL) {
+			int old_brightness, new_brightness;
 
-		/* Convert brightness event to keypress (obsolescent hack). */
-		new_brightness = event - NOTIFY_BRN_MIN;
+			/* Update the backlight device. */
+			old_brightness = eeepc_backlight_notify(eeepc);
 
-		if (new_brightness < old_brightness) {
-			event = NOTIFY_BRN_MIN; /* brightness down */
-		} else if (new_brightness > old_brightness) {
-			event = NOTIFY_BRN_MAX; /* brightness up */
-		} else {
-			/*
-			 * no change in brightness - already at min/max,
-			 * event will be desired value (or else ignored).
-			 */
+			/* Convert event to keypress (obsolescent hack) */
+			new_brightness = event - NOTIFY_BRN_MIN;
+
+			if (new_brightness < old_brightness) {
+				event = NOTIFY_BRN_MIN; /* brightness down */
+			} else if (new_brightness > old_brightness) {
+				event = NOTIFY_BRN_MAX; /* brightness up */
+			} else {
+				/*
+				* no change in brightness - already at min/max,
+				* event will be desired value (or else ignored)
+				*/
+			}
+			eeepc_input_notify(eeepc, event);
 		}
+	} else {
+		/* Everything else is a bona-fide keypress event */
+		eeepc_input_notify(eeepc, event);
 	}
-	eeepc_input_notify(eeepc, event);
 }
 
 static void cmsg_quirk(struct eeepc_laptop *eeepc, int cm, const char *name)
@@ -1271,7 +1283,8 @@ static void cmsg_quirks(struct eeepc_laptop *eeepc)
 	cmsg_quirk(eeepc, CM_ASL_TPD, "TPD");
 }
 
-static int eeepc_acpi_init(struct eeepc_laptop *eeepc, struct acpi_device *device)
+static int eeepc_acpi_init(struct eeepc_laptop *eeepc,
+			   struct acpi_device *device)
 {
 	unsigned int init_flags;
 	int result;
