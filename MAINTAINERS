@@ -2431,7 +2431,9 @@ HARDWARE MONITORING
 L:	lm-sensors@lm-sensors.org
 W:	http://www.lm-sensors.org/
 S:	Orphan
+F:	Documentation/hwmon/
 F:	drivers/hwmon/
+F:	include/linux/hwmon*.h
 
 HARDWARE RANDOM NUMBER GENERATOR CORE
 M:	Matt Mackall <mpm@selenic.com>
@@ -3342,6 +3344,12 @@ S:	Maintained
 F:	Documentation/hwmon/lis3lv02d
 F:	drivers/hwmon/lis3lv02d.*
 
+LM73 HARDWARE MONITOR DRIVER
+M:	Guillaume Ligneul <guillaume.ligneul@gmail.com>
+L:	lm-sensors@lm-sensors.org
+S:	Maintained
+F:	drivers/hwmon/lm73.c
+
 LM83 HARDWARE MONITOR DRIVER
 M:	Jean Delvare <khali@linux-fr.org>
 L:	lm-sensors@lm-sensors.org
@@ -3924,6 +3932,23 @@ L:	linux-fbdev@vger.kernel.org
 L:	linux-omap@vger.kernel.org
 S:	Maintained
 F:	drivers/video/omap/
+
+OMAP DISPLAY SUBSYSTEM SUPPORT (DSS2)
+M:	Tomi Valkeinen <tomi.valkeinen@nokia.com>
+L:	linux-omap@vger.kernel.org
+L:	linux-fbdev@vger.kernel.org (moderated for non-subscribers)
+S:	Maintained
+F:	drivers/video/omap2/dss/
+F:	drivers/video/omap2/vrfb.c
+F:	drivers/video/omap2/vram.c
+F:	Documentation/arm/OMAP/DSS
+
+OMAP FRAMEBUFFER SUPPORT (FOR DSS2)
+M:	Tomi Valkeinen <tomi.valkeinen@nokia.com>
+L:	linux-omap@vger.kernel.org
+L:	linux-fbdev@vger.kernel.org (moderated for non-subscribers)
+S:	Maintained
+F:	drivers/video/omap2/omapfb/
 
 OMAP MMC SUPPORT
 M:	Jarkko Lavinen <jarkko.lavinen@nokia.com>
