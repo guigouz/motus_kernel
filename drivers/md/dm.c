@@ -460,6 +460,12 @@ static void free_bio_info(struct dm_rq_clone_bio_info *info)
 	mempool_free(info, info->tio->md->io_pool);
 }
 
+static int md_in_flight(struct mapped_device *md)
+{
+	return atomic_read(&md->pending[READ]) +
+	       atomic_read(&md->pending[WRITE]);
+}
+
 static void start_io_acct(struct dm_io *io)
 {
 	struct mapped_device *md = io->md;
@@ -1497,16 +1503,10 @@ static int dm_prep_fn(struct request_queue *q, struct request *rq)
 	return BLKPREP_OK;
 }
 
-/*
- * Returns:
- * 0  : the request has been processed (not requeued)
- * !0 : the request has been requeued
- */
-static int map_request(struct dm_target *ti, struct request *rq,
-		       struct mapped_device *md)
+static void map_request(struct dm_target *ti, struct request *clone,
+			struct mapped_device *md)
 {
-	int r, requeued = 0;
-	struct request *clone = rq->special;
+	int r;
 	struct dm_rq_target_io *tio = clone->end_io_data;
 
 	/*
@@ -1586,9 +1586,7 @@ static void dm_request_fn(struct request_queue *q)
 
 		blk_start_request(rq);
 		spin_unlock(q->queue_lock);
-		if (map_request(ti, rq, md))
-			goto requeued;
-
+		map_request(ti, rq->special, md);
 		spin_lock_irq(q->queue_lock);
 	}
 
@@ -2120,8 +2118,7 @@ static int dm_wait_for_completion(struct mapped_device *md, int interruptible)
 				break;
 			}
 			spin_unlock_irqrestore(q->queue_lock, flags);
-		} else if (!atomic_read(&md->pending[0]) &&
-					!atomic_read(&md->pending[1]))
+		} else if (!md_in_flight(md))
 			break;
 
 		if (interruptible == TASK_INTERRUPTIBLE &&
