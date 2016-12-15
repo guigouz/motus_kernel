@@ -1260,30 +1260,6 @@ static void __run_hrtimer(struct hrtimer *timer, ktime_t *now)
 
 #ifdef CONFIG_HIGH_RES_TIMERS
 
-static int force_clock_reprogram;
-
-/*
- * After 5 iteration's attempts, we consider that hrtimer_interrupt()
- * is hanging, which could happen with something that slows the interrupt
- * such as the tracing. Then we force the clock reprogramming for each future
- * hrtimer interrupts to avoid infinite loops and use the min_delta_ns
- * threshold that we will overwrite.
- * The next tick event will be scheduled to 3 times we currently spend on
- * hrtimer_interrupt(). This gives a good compromise, the cpus will spend
- * 1/4 of their time to process the hrtimer interrupts. This is enough to
- * let it running without serious starvation.
- */
-
-static inline void
-hrtimer_interrupt_hanging(struct clock_event_device *dev,
-			ktime_t try_time)
-{
-	force_clock_reprogram = 1;
-	dev->min_delta_ns = (unsigned long)try_time.tv64 * 3;
-	printk(KERN_WARNING "hrtimer: interrupt too slow, "
-	       "forcing clock min delta to %llu ns\n",
-	       (unsigned long long) dev->min_delta_ns);
-}
 /*
  * High resolution timer interrupt
  * Called with interrupts disabled
@@ -1298,6 +1274,10 @@ void hrtimer_interrupt(struct clock_event_device *dev)
 	BUG_ON(!cpu_base->hres_active);
 	cpu_base->nr_events++;
 	dev->next_event.tv64 = KTIME_MAX;
+
+	entry_time = now = ktime_get();
+retry:
+	expires_next.tv64 = KTIME_MAX;
 
 	spin_lock(&cpu_base->lock);
 	entry_time = now = hrtimer_update_base(cpu_base);
@@ -1376,12 +1356,8 @@ retry:
 	 * We need to prevent that we loop forever in the hrtimer
 	 * interrupt routine. We give it 3 attempts to avoid
 	 * overreacting on some spurious event.
-	 *
-	 * Acquire base lock for updating the offsets and retrieving
-	 * the current time.
 	 */
-	spin_lock(&cpu_base->lock);
-	now = hrtimer_update_base(cpu_base);
+	now = ktime_get();
 	cpu_base->nr_retries++;
 	if (++retries < 3)
 		goto retry;
@@ -1393,7 +1369,6 @@ retry:
 	 */
 	cpu_base->nr_hangs++;
 	cpu_base->hang_detected = 1;
-	spin_unlock(&cpu_base->lock);
 	delta = ktime_sub(now, entry_time);
 	if (delta.tv64 > cpu_base->max_hang_time.tv64)
 		cpu_base->max_hang_time = delta;
