@@ -371,7 +371,9 @@ static unsigned long mremap_to(unsigned long addr,
 	map_flags = MAP_FIXED;
 	if (vma->vm_flags & VM_MAYSHARE)
 		map_flags |= MAP_SHARED;
-
+	ret = arch_mmap_check(new_addr, new_len, map_flags);
+	if (ret)
+		goto out1;
 	ret = get_unmapped_area(vma->vm_file, new_addr, new_len, vma->vm_pgoff +
 				((addr - vma->vm_start) >> PAGE_SHIFT),
 				map_flags);
