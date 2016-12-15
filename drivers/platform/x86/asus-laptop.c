@@ -233,6 +233,7 @@ static void asus_hotk_notify(struct acpi_device *device, u32 event);
 static struct acpi_driver asus_hotk_driver = {
 	.name = ASUS_HOTK_NAME,
 	.class = ASUS_HOTK_CLASS,
+	.owner = THIS_MODULE,
 	.ids = asus_device_ids,
 	.flags = ACPI_DRIVER_ALL_NOTIFY_EVENTS,
 	.ops = {
@@ -1248,9 +1249,6 @@ static int asus_hotk_add(struct acpi_device *device)
 {
 	int result;
 
-	if (!device)
-		return -EINVAL;
-
 	pr_notice("Asus Laptop Support version %s\n",
 	       ASUS_LAPTOP_VERSION);
 
@@ -1314,9 +1312,6 @@ end:
 
 static int asus_hotk_remove(struct acpi_device *device, int type)
 {
-	if (!device || !acpi_driver_data(device))
-		return -EINVAL;
-
 	kfree(hotk->name);
 	kfree(hotk);
 
@@ -1451,9 +1446,6 @@ out:
 static int __init asus_laptop_init(void)
 {
 	int result;
-
-	if (acpi_disabled)
-		return -ENODEV;
 
 	result = acpi_bus_register_driver(&asus_hotk_driver);
 	if (result < 0)
