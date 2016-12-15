@@ -45,13 +45,10 @@
 #include <asm/div64.h>
 #include <asm/sizes.h>
 
-#include <asm/mach/mmc.h>
+#include <mach/mmc.h>
 #include <mach/msm_iomap.h>
 #include <mach/clk.h>
 #include <mach/dma.h>
-#if !defined(CONFIG_MACH_MOT)
-#include <mach/htc_pwrsink.h>
-#endif
 
 #include "msm_sdcc.h"
 
@@ -1092,17 +1089,11 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 
 	switch (ios->power_mode) {
 	case MMC_POWER_OFF:
-#if !defined(CONFIG_MACH_MOT)
-		htc_pwrsink_set(PWRSINK_SDCARD, 0);
-#endif
 		break;
 	case MMC_POWER_UP:
 		pwr |= MCI_PWR_UP;
 		break;
 	case MMC_POWER_ON:
-#if !defined(CONFIG_MACH_MOT)
-		htc_pwrsink_set(PWRSINK_SDCARD, 100);
-#endif
 		pwr |= MCI_PWR_ON;
 		break;
 	}
