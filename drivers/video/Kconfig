@@ -2133,7 +2133,7 @@ config FB_PRE_INIT_FB
 	  the bootloader.
 
 config FB_MSM
-	tristate "MSM Frame Buffer support"
+	tristate "MSM Framebuffer support"
 	depends on FB && ARCH_MSM
 	select FB_BACKLIGHT if FB_MSM_BACKLIGHT
 	select NEW_LEDS
