@@ -41,11 +41,10 @@ sys_mmap2(unsigned long addr, unsigned long len, unsigned long prot,
 
 asmlinkage long
 sys_mmap(unsigned long addr, unsigned long len, unsigned long prot,
-	unsigned long flags, unsigned long fd, off_t offset)
+	unsigned long flags, unsigned long fd, off_t pgoff)
 {
-	if (unlikely(offset & ~PAGE_MASK))
-		return -EINVAL;
-	return sys_mmap_pgoff(addr, len, prot, flags, fd, offset >> PAGE_SHIFT);
+	/* where's the alignment check? */
+	return sys_mmap_pgoff(addr, len, prot, flags, fd, pgoff >> PAGE_SHIFT);
 }
 
 asmlinkage long
@@ -98,10 +97,8 @@ score_execve(struct pt_regs *regs)
 	if (IS_ERR(filename))
 		return error;
 
-	error = do_execve(filename,
-			  (const char __user *const __user *)regs->regs[5],
-			  (const char __user *const __user *)regs->regs[6],
-			  regs);
+	error = do_execve(filename, (char __user *__user*)regs->regs[5],
+			  (char __user *__user *) regs->regs[6], regs);
 
 	putname(filename);
 	return error;
@@ -111,9 +108,7 @@ score_execve(struct pt_regs *regs)
  * Do a system call from kernel instead of calling sys_execve so we
  * end up with proper pt_regs.
  */
-int kernel_execve(const char *filename,
-		  const char *const argv[],
-		  const char *const envp[])
+int kernel_execve(const char *filename, char *const argv[], char *const envp[])
 {
 	register unsigned long __r4 asm("r4") = (unsigned long) filename;
 	register unsigned long __r5 asm("r5") = (unsigned long) argv;
