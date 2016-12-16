@@ -95,11 +95,8 @@ int sysfs_sd_setattr(struct sysfs_dirent *sd, struct iattr * iattr)
 			iattrs->ia_ctime = iattr->ia_ctime;
 		if (ia_valid & ATTR_MODE) {
 			umode_t mode = iattr->ia_mode;
-
-		if (!in_group_p(inode->i_gid) && !capable(CAP_FSETID))
-			mode &= ~S_ISGID;
-		iattrs->ia_mode = sd->s_mode = mode;
-	}
+			iattrs->ia_mode = sd->s_mode = mode;
+		}
 	return 0;
 }
 

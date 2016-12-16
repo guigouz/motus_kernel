@@ -1633,7 +1633,6 @@ static void map_request(struct dm_target *ti, struct request *clone,
 	case DM_MAPIO_REQUEUE:
 		/* The target wants to requeue the I/O */
 		dm_requeue_unmapped_request(clone);
-		requeued = 1;
 		break;
 	default:
 		if (r > 0) {
@@ -1645,8 +1644,6 @@ static void map_request(struct dm_target *ti, struct request *clone,
 		dm_kill_unmapped_request(clone, r);
 		break;
 	}
-
-	return requeued;
 }
 
 /*
@@ -1693,9 +1690,6 @@ static void dm_request_fn(struct request_queue *q)
 	}
 
 	goto out;
-
-requeued:
-	spin_lock_irq(q->queue_lock);
 
 plug_and_out:
 	if (!elv_queue_empty(q))
