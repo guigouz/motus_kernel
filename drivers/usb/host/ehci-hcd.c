@@ -1134,7 +1134,7 @@ MODULE_LICENSE ("GPL");
 
 #ifdef CONFIG_ARCH_OMAP34XX
 #include "ehci-omap.c"
-#define	PLATFORM_DRIVER		ehci_hcd_omap_driver
+#define        PLATFORM_DRIVER         ehci_hcd_omap_driver
 #endif
 
 #ifdef CONFIG_PPC_PS3
