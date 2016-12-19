@@ -1,4 +1,4 @@
-#define DRIVER_VERSION "v2.4"
+#define DRIVER_VERSION "v2.3"
 #define DRIVER_AUTHOR "Bernd Porr, BerndPorr@f2s.com"
 #define DRIVER_DESC "Stirling/ITL USB-DUX -- Bernd.Porr@f2s.com"
 /*
@@ -81,8 +81,6 @@ sampling rate. If you sample two channels you get 4kHz and so on.
  * 2.1:  changed PWM API
  * 2.2:  added firmware kernel request to fix an udev problem
  * 2.3:  corrected a bug in bulk timeouts which were far too short
- * 2.4:  fixed a bug which causes the driver to hang when it ran out of data.
- *       Thanks to Jan-Matthias Braun and Ian to spot the bug and fix it.
  *
  */
 
@@ -534,7 +532,6 @@ static void usbduxsub_ai_IsocIrq(struct urb *urb)
 		}
 	}
 	/* tell comedi that data is there */
-	s->async->events |= COMEDI_CB_BLOCK | COMEDI_CB_EOS;
 	comedi_event(this_usbduxsub->comedidev, s);
 }
 
@@ -983,7 +980,7 @@ static int usbdux_ai_cmdtest(struct comedi_device *dev,
 
 	/*
 	 * step 2: make sure trigger sources are unique and mutually compatible
-	 * note that mutual compatiblity is not an issue here
+	 * note that mutual compatibility is not an issue here
 	 */
 	if (cmd->scan_begin_src != TRIG_FOLLOW &&
 	    cmd->scan_begin_src != TRIG_EXT &&
@@ -1561,7 +1558,7 @@ static int usbdux_ao_cmdtest(struct comedi_device *dev,
 
 	/*
 	 * step 2: make sure trigger sources are unique and mutually compatible
-	 * note that mutual compatiblity is not an issue here
+	 * note that mutual compatibility is not an issue here
 	 */
 	if (cmd->scan_begin_src != TRIG_FOLLOW &&
 	    cmd->scan_begin_src != TRIG_EXT &&
@@ -2331,11 +2328,9 @@ static void usbdux_firmware_request_complete_handler(const struct firmware *fw,
 	if (ret) {
 		dev_err(&usbdev->dev,
 			"Could not upload firmware (err=%d)\n", ret);
-		goto out;
+		return;
 	}
 	comedi_usb_auto_config(usbdev, BOARDNAME);
- out:
-	release_firmware(fw);
 }
 
 /* allocate memory for the urbs and initialise them */
@@ -2586,7 +2581,6 @@ static int usbduxsub_probe(struct usb_interface *uinterf,
 				      FW_ACTION_HOTPLUG,
 				      "usbdux_firmware.bin",
 				      &udev->dev,
-				      GFP_KERNEL,
 				      usbduxsub + index,
 				      usbdux_firmware_request_complete_handler);
 
