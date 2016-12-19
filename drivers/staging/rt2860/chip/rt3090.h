@@ -25,7 +25,7 @@
  *************************************************************************
 
     Module Name:
-	rt_iface.h
+	rt3090.h
 
     Abstract:
 
@@ -34,48 +34,39 @@
     ---------    ----------    ----------------------------------------------
  */
 
-#ifndef __RTMP_IFACE_H__
-#define __RTMP_IFACE_H__
+#ifndef __RT3090_H__
+#define __RT3090_H__
 
-#ifdef RTMP_PCI_SUPPORT
-#include "rtmp_pci.h"
-#endif // RTMP_PCI_SUPPORT //
+#ifdef RT3090
 
+#ifndef RTMP_PCI_SUPPORT
+#error "For RT3090, you should define the compile flag -DRTMP_PCI_SUPPORT"
+#endif
 
-typedef struct _INF_PCI_CONFIG_
-{
-	unsigned long	CSRBaseAddress;     // PCI MMIO Base Address, all access will use
-	unsigned int	irq_num;
-}INF_PCI_CONFIG;
+#ifndef RTMP_MAC_PCI
+#error "For RT3090, you should define the compile flag -DRTMP_MAC_PCI"
+#endif
 
+#ifndef RTMP_RF_RW_SUPPORT
+#error "For RT3090, you should define the compile flag -DRTMP_RF_RW_SUPPORT"
+#endif
 
-typedef struct _INF_USB_CONFIG_
-{
-	UINT8                BulkInEpAddr;		// bulk-in endpoint address
-	UINT8                BulkOutEpAddr[6];	// bulk-out endpoint address
-}INF_USB_CONFIG;
+#ifndef RT30xx
+#error "For RT3090, you should define the compile flag -DRT30xx"
+#endif
 
+#define PCIE_PS_SUPPORT
 
-typedef struct _INF_RBUS_CONFIG_
-{
-	unsigned long		csr_addr;
-	unsigned int		irq;
-}INF_RBUS_CONFIG;
+#include "mac_pci.h"
+#include "rt30xx.h"
 
+//
+// Device ID & Vendor ID, these values should match EEPROM value
+//
+#define NIC3090_PCIe_DEVICE_ID  0x3090		// 1T/1R miniCard
+#define NIC3091_PCIe_DEVICE_ID  0x3091		// 1T/2R miniCard
+#define NIC3092_PCIe_DEVICE_ID  0x3092		// 2T/2R miniCard
 
-typedef enum _RTMP_INF_TYPE_
-{
-	RTMP_DEV_INF_UNKNOWN = 0,
-	RTMP_DEV_INF_PCI = 1,
-	RTMP_DEV_INF_USB = 2,
-	RTMP_DEV_INF_RBUS = 4,
-}RTMP_INF_TYPE;
+#endif // RT3090 //
 
-
-typedef union _RTMP_INF_CONFIG_{
-	struct _INF_PCI_CONFIG_			pciConfig;
-	struct _INF_USB_CONFIG_			usbConfig;
-	struct _INF_RBUS_CONFIG_		rbusConfig;
-}RTMP_INF_CONFIG;
-
-#endif // __RTMP_IFACE_H__ //
+#endif //__RT3090_H__ //
