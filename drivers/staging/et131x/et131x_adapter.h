@@ -100,12 +100,6 @@
 #define LO_MARK_PERCENT_FOR_PSR     15
 #define LO_MARK_PERCENT_FOR_RX      15
 
-/* Macros specific to the private adapter structure */
-#define MP_TCB_RESOURCES_AVAILABLE(_M) ((_M)->TxRing.nBusySend < NUM_TCB)
-#define MP_TCB_RESOURCES_NOT_AVAILABLE(_M) ((_M)->TxRing.nBusySend >= NUM_TCB)
-
-#define MP_SHOULD_FAIL_SEND(_M)   ((_M)->Flags & fMP_ADAPTER_FAIL_SEND_MASK)
-
 /* Counters for error rate monitoring */
 typedef struct _MP_ERR_COUNTERS {
 	u32 PktCountTxPackets;
@@ -203,7 +197,6 @@ struct et131x_adapter {
 	spinlock_t TCBSendQLock;
 	spinlock_t TCBReadyQLock;
 	spinlock_t SendHWLock;
-	spinlock_t SendWaitLock;
 
 	spinlock_t RcvLock;
 	spinlock_t RcvPendLock;
@@ -234,9 +227,6 @@ struct et131x_adapter {
 	u32 RegistryRxMemEnd;	/* Size of internal rx memory */
 	u32 RegistryJumboPacket;	/* Max supported ethernet packet size */
 
-	/* Validation helpers */
-	u8 RegistryNMIDisable;
-	u8 RegistryPhyLoopbk;	/* Enable Phy loopback */
 
 	/* Derived from the registry: */
 	u8 AiForceDpx;		/* duplex setting */
@@ -248,7 +238,6 @@ struct et131x_adapter {
 		NETIF_STATUS_MEDIA_DISCONNECT,
 		NETIF_STATUS_MAX
 	} MediaState;
-	u8 DriverNoPhyAccess;
 
 	/* Minimize init-time */
 	struct timer_list ErrorTimer;
@@ -259,7 +248,7 @@ struct et131x_adapter {
 	MI_BMSR_t Bmsr;
 
 	/* Tx Memory Variables */
-	TX_RING_t TxRing;
+	struct tx_ring tx_ring;
 
 	/* Rx Memory Variables */
 	RX_RING_t RxRing;

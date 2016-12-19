@@ -101,41 +101,27 @@ void ConfigMACRegs1(struct et131x_adapter *etdev)
 	struct _MAC_t __iomem *pMac = &etdev->regs->mac;
 	MAC_STATION_ADDR1_t station1;
 	MAC_STATION_ADDR2_t station2;
-	MAC_IPG_t ipg;
-	MAC_HFDP_t hfdp;
-	MII_MGMT_CFG_t mii_mgmt_cfg;
+	u32 ipg;
 
 	/* First we need to reset everything.  Write to MAC configuration
 	 * register 1 to perform reset.
 	 */
-	writel(0xC00F0000, &pMac->cfg1.value);
+	writel(0xC00F0000, &pMac->cfg1);
 
 	/* Next lets configure the MAC Inter-packet gap register */
-	ipg.bits.non_B2B_ipg_1 = 0x38;		/* 58d */
-	ipg.bits.non_B2B_ipg_2 = 0x58;		/* 88d */
-	ipg.bits.min_ifg_enforce = 0x50;	/* 80d */
-	ipg.bits.B2B_ipg = 0x60;		/* 96d */
-	writel(ipg.value, &pMac->ipg.value);
+	ipg = 0x38005860;		/* IPG1 0x38 IPG2 0x58 B2B 0x60 */
+	ipg |= 0x50 << 8;		/* ifg enforce 0x50 */
+	writel(ipg, &pMac->ipg);
 
 	/* Next lets configure the MAC Half Duplex register */
-	hfdp.bits.alt_beb_trunc = 0xA;
-	hfdp.bits.alt_beb_enable = 0x0;
-	hfdp.bits.bp_no_backoff = 0x0;
-	hfdp.bits.no_backoff = 0x0;
-	hfdp.bits.excess_defer = 0x1;
-	hfdp.bits.rexmit_max = 0xF;
-	hfdp.bits.coll_window = 0x37;		/* 55d */
-	writel(hfdp.value, &pMac->hfdp.value);
+	/* BEB trunc 0xA, Ex Defer, Rexmit 0xF Coll 0x37 */
+	writel(0x00A1F037, &pMac->hfdp);
 
 	/* Next lets configure the MAC Interface Control register */
 	writel(0, &pMac->if_ctrl.value);
 
 	/* Let's move on to setting up the mii management configuration */
-	mii_mgmt_cfg.bits.reset_mii_mgmt = 0;
-	mii_mgmt_cfg.bits.scan_auto_incremt = 0;
-	mii_mgmt_cfg.bits.preamble_suppress = 0;
-	mii_mgmt_cfg.bits.mgmt_clk_reset = 0x7;
-	writel(mii_mgmt_cfg.value, &pMac->mii_mgmt_cfg.value);
+	writel(0x07, &pMac->mii_mgmt_cfg);	/* Clock reset 0x7 */
 
 	/* Next lets configure the MAC Station Address register.  These
 	 * values are read from the EEPROM during initialization and stored
@@ -160,10 +146,10 @@ void ConfigMACRegs1(struct et131x_adapter *etdev)
 	 * Packets larger than (RegistryJumboPacket) that do not contain a
 	 * VLAN ID will be dropped by the Rx function.
 	 */
-	writel(etdev->RegistryJumboPacket + 4, &pMac->max_fm_len.value);
+	writel(etdev->RegistryJumboPacket + 4, &pMac->max_fm_len);
 
 	/* clear out MAC config reset */
-	writel(0, &pMac->cfg1.value);
+	writel(0, &pMac->cfg1);
 }
 
 /**
@@ -174,79 +160,59 @@ void ConfigMACRegs2(struct et131x_adapter *etdev)
 {
 	int32_t delay = 0;
 	struct _MAC_t __iomem *pMac = &etdev->regs->mac;
-	MAC_CFG1_t cfg1;
-	MAC_CFG2_t cfg2;
+	u32 cfg1;
+	u32 cfg2;
 	MAC_IF_CTRL_t ifctrl;
 	TXMAC_CTL_t ctl;
 
 	ctl.value = readl(&etdev->regs->txmac.ctl.value);
-	cfg1.value = readl(&pMac->cfg1.value);
-	cfg2.value = readl(&pMac->cfg2.value);
+	cfg1 = readl(&pMac->cfg1);
+	cfg2 = readl(&pMac->cfg2);
 	ifctrl.value = readl(&pMac->if_ctrl.value);
 
+	/* Set up the if mode bits */
+	cfg2 &= ~0x300;
 	if (etdev->linkspeed == TRUEPHY_SPEED_1000MBPS) {
-		cfg2.bits.if_mode = 0x2;
+		cfg2 |= 0x200;
 		ifctrl.bits.phy_mode = 0x0;
 	} else {
-		cfg2.bits.if_mode = 0x1;
+		cfg2 |= 0x100;
 		ifctrl.bits.phy_mode = 0x1;
 	}
 
 	/* We need to enable Rx/Tx */
-	cfg1.bits.rx_enable = 0x1;
-	cfg1.bits.tx_enable = 0x1;
-
-	/* Set up flow control */
-	cfg1.bits.tx_flow = 0x1;
-
-	if ((etdev->FlowControl == RxOnly) ||
-	    (etdev->FlowControl == Both)) {
-		cfg1.bits.rx_flow = 0x1;
-	} else {
-		cfg1.bits.rx_flow = 0x0;
-	}
-
+	cfg1 |= CFG1_RX_ENABLE|CFG1_TX_ENABLE|CFG1_TX_FLOW;
 	/* Initialize loop back to off */
-	cfg1.bits.loop_back = 0;
-
-	writel(cfg1.value, &pMac->cfg1.value);
+	cfg1 &= ~(CFG1_LOOPBACK|CFG1_RX_FLOW);
+	if (etdev->FlowControl == RxOnly || etdev->FlowControl == Both)
+		cfg1 |= CFG1_RX_FLOW;
+	writel(cfg1, &pMac->cfg1);
 
 	/* Now we need to initialize the MAC Configuration 2 register */
-	cfg2.bits.preamble_len = 0x7;
-	cfg2.bits.huge_frame = 0x0;
-	/* LENGTH FIELD CHECKING bit4: Set this bit to cause the MAC to check
-	 * the frame's length field to ensure it matches the actual data
-	 * field length. Clear this bit if no length field checking is
-	 * desired. Its default is 0.
-	 */
-	cfg2.bits.len_check = 0x1;
+	/* preamble 7, check length, huge frame off, pad crc, crc enable
+	   full duplex off */
+	cfg2 |= 0x7016;
+	cfg2 &= ~0x0021;
 
-	if (etdev->RegistryPhyLoopbk == false) {
-		cfg2.bits.pad_crc = 0x1;
-		cfg2.bits.crc_enable = 0x1;
-	} else {
-		cfg2.bits.pad_crc = 0;
-		cfg2.bits.crc_enable = 0;
-	}
+	/* Turn on duplex if needed */
+	if (etdev->duplex_mode)
+		cfg2 |= 0x01;
 
-	/* 1 - full duplex, 0 - half-duplex */
-	cfg2.bits.full_duplex = etdev->duplex_mode;
 	ifctrl.bits.ghd_mode = !etdev->duplex_mode;
 
 	writel(ifctrl.value, &pMac->if_ctrl.value);
-	writel(cfg2.value, &pMac->cfg2.value);
+	writel(cfg2, &pMac->cfg2);
 
 	do {
 		udelay(10);
 		delay++;
-		cfg1.value = readl(&pMac->cfg1.value);
-	} while ((!cfg1.bits.syncd_rx_en || !cfg1.bits.syncd_tx_en) &&
-								 delay < 100);
+		cfg1 = readl(&pMac->cfg1);
+	} while ((cfg1 & CFG1_WAIT) != CFG1_WAIT && delay < 100);
 
 	if (delay == 100) {
 		dev_warn(&etdev->pdev->dev,
 		    "Syncd bits did not respond correctly cfg1 word 0x%08x\n",
-			cfg1.value);
+			cfg1);
 	}
 
 	/* Enable TXMAC */

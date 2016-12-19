@@ -109,9 +109,6 @@ void et131x_enable_interrupts(struct et131x_adapter *adapter)
 	else
 		mask = INT_MASK_ENABLE_NO_FLOW;
 
-	if (adapter->DriverNoPhyAccess)
-		mask |= ET_INTR_PHY;
-
 	adapter->CachedMaskValue = mask;
 	writel(mask, &adapter->regs->global.int_mask);
 }
@@ -182,15 +179,15 @@ irqreturn_t et131x_isr(int irq, void *dev_id)
 	/* This is our interrupt, so process accordingly */
 
 	if (status & ET_INTR_WATCHDOG) {
-		PMP_TCB pMpTcb = adapter->TxRing.CurrSendHead;
+		struct tcb *tcb = adapter->tx_ring.send_head;
 
-		if (pMpTcb)
-			if (++pMpTcb->PacketStaleCount > 1)
+		if (tcb)
+			if (++tcb->stale > 1)
 				status |= ET_INTR_TXDMA_ISR;
 
 		if (adapter->RxRing.UnfinishedReceives)
 			status |= ET_INTR_RXDMA_XFR_DONE;
-		else if (pMpTcb == NULL)
+		else if (tcb == NULL)
 			writel(0, &adapter->regs->global.watchdog_timer);
 
 		status &= ~ET_INTR_WATCHDOG;
@@ -400,8 +397,7 @@ void et131x_isr_handler(struct work_struct *work)
 
 		/* Let's move on to the TxMac */
 		if (status & ET_INTR_TXMAC) {
-			etdev->TxRing.TxMacErr.value =
-				readl(&iomem->txmac.err.value);
+			u32 err = readl(&iomem->txmac.err.value);
 
 			/*
 			 * When any of the errors occur and TXMAC generates
@@ -415,7 +411,7 @@ void et131x_isr_handler(struct work_struct *work)
 			 */
 			dev_warn(&etdev->pdev->dev,
 				    "TXMAC interrupt, error 0x%08x\n",
-				    etdev->TxRing.TxMacErr.value);
+				    err);
 
 			/* If we are debugging, we want to see this error,
 			 * otherwise we just want the device to be reset and

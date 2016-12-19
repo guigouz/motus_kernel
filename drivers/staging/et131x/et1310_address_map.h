@@ -1308,157 +1308,77 @@ typedef struct _RXMAC_t {				/* Location: */
 /*
  * structure for configuration #1 reg in mac address map.
  * located at address 0x5000
+ *
+ * 31: soft reset
+ * 30: sim reset
+ * 29-20: reserved
+ * 19: reset rx mc
+ * 18: reset tx mc
+ * 17: reset rx func
+ * 16: reset tx fnc
+ * 15-9: reserved
+ * 8: loopback
+ * 7-6: reserved
+ * 5: rx flow
+ * 4: tx flow
+ * 3: syncd rx en
+ * 2: rx enable
+ * 1: syncd tx en
+ * 0: tx enable
  */
-typedef union _MAC_CFG1_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 soft_reset:1;		/* bit 31 */
-		u32 sim_reset:1;		/* bit 30 */
-		u32 reserved3:10;		/* bits 20-29 */
-		u32 reset_rx_mc:1;		/* bit 19 */
-		u32 reset_tx_mc:1;		/* bit 18 */
-		u32 reset_rx_fun:1;	/* bit 17 */
-		u32 reset_tx_fun:1;	/* bit 16 */
-		u32 reserved2:7;		/* bits 9-15 */
-		u32 loop_back:1;		/* bit 8 */
-		u32 reserved1:2;		/* bits 6-7 */
-		u32 rx_flow:1;		/* bit 5 */
-		u32 tx_flow:1;		/* bit 4 */
-		u32 syncd_rx_en:1;		/* bit 3 */
-		u32 rx_enable:1;		/* bit 2 */
-		u32 syncd_tx_en:1;		/* bit 1 */
-		u32 tx_enable:1;		/* bit 0 */
-#else
-		u32 tx_enable:1;		/* bit 0 */
-		u32 syncd_tx_en:1;		/* bit 1 */
-		u32 rx_enable:1;		/* bit 2 */
-		u32 syncd_rx_en:1;		/* bit 3 */
-		u32 tx_flow:1;		/* bit 4 */
-		u32 rx_flow:1;		/* bit 5 */
-		u32 reserved1:2;		/* bits 6-7 */
-		u32 loop_back:1;		/* bit 8 */
-		u32 reserved2:7;		/* bits 9-15 */
-		u32 reset_tx_fun:1;	/* bit 16 */
-		u32 reset_rx_fun:1;	/* bit 17 */
-		u32 reset_tx_mc:1;		/* bit 18 */
-		u32 reset_rx_mc:1;		/* bit 19 */
-		u32 reserved3:10;		/* bits 20-29 */
-		u32 sim_reset:1;		/* bit 30 */
-		u32 soft_reset:1;		/* bit 31 */
-#endif
-	} bits;
-} MAC_CFG1_t, *PMAC_CFG1_t;
+
+#define CFG1_LOOPBACK	0x00000100
+#define CFG1_RX_FLOW	0x00000020
+#define CFG1_TX_FLOW	0x00000010
+#define CFG1_RX_ENABLE	0x00000004
+#define CFG1_TX_ENABLE	0x00000001
+#define CFG1_WAIT	0x0000000A	/* RX & TX syncd */
 
 /*
  * structure for configuration #2 reg in mac address map.
  * located at address 0x5004
+ * 31-16: reserved
+ * 15-12: preamble
+ * 11-10: reserved
+ * 9-8: if mode
+ * 7-6: reserved
+ * 5: huge frame
+ * 4: length check
+ * 3: undefined
+ * 2: pad crc
+ * 1: crc enable
+ * 0: full duplex
  */
-typedef union _MAC_CFG2_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved3:16;		/* bits 16-31 */
-		u32 preamble_len:4;	/* bits 12-15 */
-		u32 reserved2:2;		/* bits 10-11 */
-		u32 if_mode:2;		/* bits 8-9 */
-		u32 reserved1:2;		/* bits 6-7 */
-		u32 huge_frame:1;		/* bit 5 */
-		u32 len_check:1;		/* bit 4 */
-		u32 undefined:1;		/* bit 3 */
-		u32 pad_crc:1;		/* bit 2 */
-		u32 crc_enable:1;		/* bit 1 */
-		u32 full_duplex:1;		/* bit 0 */
-#else
-		u32 full_duplex:1;		/* bit 0 */
-		u32 crc_enable:1;		/* bit 1 */
-		u32 pad_crc:1;		/* bit 2 */
-		u32 undefined:1;		/* bit 3 */
-		u32 len_check:1;		/* bit 4 */
-		u32 huge_frame:1;		/* bit 5 */
-		u32 reserved1:2;		/* bits 6-7 */
-		u32 if_mode:2;		/* bits 8-9 */
-		u32 reserved2:2;		/* bits 10-11 */
-		u32 preamble_len:4;	/* bits 12-15 */
-		u32 reserved3:16;		/* bits 16-31 */
-#endif
-	} bits;
-} MAC_CFG2_t, *PMAC_CFG2_t;
+
 
 /*
  * structure for Interpacket gap reg in mac address map.
  * located at address 0x5008
- */
-typedef union _MAC_IPG_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:1;		/* bit 31 */
-		u32 non_B2B_ipg_1:7;	/* bits 24-30 */
-		u32 undefined2:1;		/* bit 23 */
-		u32 non_B2B_ipg_2:7;	/* bits 16-22 */
-		u32 min_ifg_enforce:8;	/* bits 8-15 */
-		u32 undefined1:1;		/* bit 7 */
-		u32 B2B_ipg:7;		/* bits 0-6 */
-#else
-		u32 B2B_ipg:7;		/* bits 0-6 */
-		u32 undefined1:1;		/* bit 7 */
-		u32 min_ifg_enforce:8;	/* bits 8-15 */
-		u32 non_B2B_ipg_2:7;	/* bits 16-22 */
-		u32 undefined2:1;		/* bit 23 */
-		u32 non_B2B_ipg_1:7;	/* bits 24-30 */
-		u32 reserved:1;		/* bit 31 */
-#endif
-	} bits;
-} MAC_IPG_t, *PMAC_IPG_t;
-
-/*
+ *
+ * 31: reserved
+ * 30-24: non B2B ipg 1
+ * 23: undefined
+ * 22-16: non B2B ipg 2
+ * 15-8: Min ifg enforce
+ * 7-0: B2B ipg
+ *
  * structure for half duplex reg in mac address map.
  * located at address 0x500C
+ * 31-24: reserved
+ * 23-20: Alt BEB trunc
+ * 19: Alt BEB enable
+ * 18: BP no backoff
+ * 17: no backoff
+ * 16: excess defer
+ * 15-12: re-xmit max
+ * 11-10: reserved
+ * 9-0: collision window
  */
-typedef union _MAC_HFDP_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved2:8;		/* bits 24-31 */
-		u32 alt_beb_trunc:4;	/* bits 23-20 */
-		u32 alt_beb_enable:1;	/* bit 19 */
-		u32 bp_no_backoff:1;	/* bit 18 */
-		u32 no_backoff:1;		/* bit 17 */
-		u32 excess_defer:1;	/* bit 16 */
-		u32 rexmit_max:4;		/* bits 12-15 */
-		u32 reserved1:2;		/* bits 10-11 */
-		u32 coll_window:10;	/* bits 0-9 */
-#else
-		u32 coll_window:10;	/* bits 0-9 */
-		u32 reserved1:2;		/* bits 10-11 */
-		u32 rexmit_max:4;		/* bits 12-15 */
-		u32 excess_defer:1;	/* bit 16 */
-		u32 no_backoff:1;		/* bit 17 */
-		u32 bp_no_backoff:1;	/* bit 18 */
-		u32 alt_beb_enable:1;	/* bit 19 */
-		u32 alt_beb_trunc:4;	/* bits 23-20 */
-		u32 reserved2:8;		/* bits 24-31 */
-#endif
-	} bits;
-} MAC_HFDP_t, *PMAC_HFDP_t;
 
 /*
  * structure for Maximum Frame Length reg in mac address map.
- * located at address 0x5010
+ * located at address 0x5010: bits 0-15 hold the length.
  */
-typedef union _MAC_MAX_FM_LEN_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:16;	/* bits 16-31 */
-		u32 max_len:16;	/* bits 0-15 */
-#else
-		u32 max_len:16;	/* bits 0-15 */
-		u32 reserved:16;	/* bits 16-31 */
-#endif
-	} bits;
-} MAC_MAX_FM_LEN_t, *PMAC_MAX_FM_LEN_t;
 
 /*
  * structure for Reserve 1 reg in mac address map.
@@ -1469,139 +1389,64 @@ typedef union _MAC_MAX_FM_LEN_t {
 /*
  * structure for Test reg in mac address map.
  * located at address 0x501C
+ * test: bits 0-2, rest unused
  */
-typedef union _MAC_TEST_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 unused:29;	/* bits 3-31 */
-		u32 mac_test:3;	/* bits 0-2 */
-#else
-		u32 mac_test:3;	/* bits 0-2 */
-		u32 unused:29;	/* bits 3-31 */
-#endif
-	} bits;
-} MAC_TEST_t, *PMAC_TEST_t;
 
 /*
  * structure for MII Management Configuration reg in mac address map.
  * located at address 0x5020
+ *
+ * 31: reset MII mgmt
+ * 30-6: unused
+ * 5: scan auto increment
+ * 4: preamble supress
+ * 3: undefined
+ * 2-0: mgmt clock reset
  */
-typedef union _MII_MGMT_CFG_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reset_mii_mgmt:1;	/* bit 31 */
-		u32 reserved:25;		/* bits 6-30 */
-		u32 scan_auto_incremt:1;	/* bit 5 */
-		u32 preamble_suppress:1;	/* bit 4 */
-		u32 undefined:1;		/* bit 3 */
-		u32 mgmt_clk_reset:3;	/* bits 0-2 */
-#else
-		u32 mgmt_clk_reset:3;	/* bits 0-2 */
-		u32 undefined:1;		/* bit 3 */
-		u32 preamble_suppress:1;	/* bit 4 */
-		u32 scan_auto_incremt:1;	/* bit 5 */
-		u32 reserved:25;		/* bits 6-30 */
-		u32 reset_mii_mgmt:1;	/* bit 31 */
-#endif
-	} bits;
-} MII_MGMT_CFG_t, *PMII_MGMT_CFG_t;
 
 /*
  * structure for MII Management Command reg in mac address map.
  * located at address 0x5024
+ * bit 1: scan cycle
+ * bit 0: read cycle
  */
-typedef union _MII_MGMT_CMD_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:30;	/* bits 2-31 */
-		u32 scan_cycle:1;	/* bit 1 */
-		u32 read_cycle:1;	/* bit 0 */
-#else
-		u32 read_cycle:1;	/* bit 0 */
-		u32 scan_cycle:1;	/* bit 1 */
-		u32 reserved:30;	/* bits 2-31 */
-#endif
-	} bits;
-} MII_MGMT_CMD_t, *PMII_MGMT_CMD_t;
 
 /*
  * structure for MII Management Address reg in mac address map.
  * located at address 0x5028
+ * 31-13: reserved
+ * 12-8: phy addr
+ * 7-5: reserved
+ * 4-0: register
  */
-typedef union _MII_MGMT_ADDR_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved2:19;	/* bit 13-31 */
-		u32 phy_addr:5;	/* bits 8-12 */
-		u32 reserved1:3;	/* bits 5-7 */
-		u32 reg_addr:5;	/* bits 0-4 */
-#else
-		u32 reg_addr:5;	/* bits 0-4 */
-		u32 reserved1:3;	/* bits 5-7 */
-		u32 phy_addr:5;	/* bits 8-12 */
-		u32 reserved2:19;	/* bit 13-31 */
-#endif
-	} bits;
-} MII_MGMT_ADDR_t, *PMII_MGMT_ADDR_t;
+
+#define MII_ADDR(phy,reg)	((phy) << 8 | (reg))
 
 /*
  * structure for MII Management Control reg in mac address map.
  * located at address 0x502C
+ * 31-16: reserved
+ * 15-0: phy control
  */
-typedef union _MII_MGMT_CTRL_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:16;	/* bits 16-31 */
-		u32 phy_ctrl:16;	/* bits 0-15 */
-#else
-		u32 phy_ctrl:16;	/* bits 0-15 */
-		u32 reserved:16;	/* bits 16-31 */
-#endif
-	} bits;
-} MII_MGMT_CTRL_t, *PMII_MGMT_CTRL_t;
 
 /*
  * structure for MII Management Status reg in mac address map.
  * located at address 0x5030
+ * 31-16: reserved
+ * 15-0: phy control
  */
-typedef union _MII_MGMT_STAT_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:16;	/* bits 16-31 */
-		u32 phy_stat:16;	/* bits 0-15 */
-#else
-		u32 phy_stat:16;	/* bits 0-15 */
-		u32 reserved:16;	/* bits 16-31 */
-#endif
-	} bits;
-} MII_MGMT_STAT_t, *PMII_MGMT_STAT_t;
 
 /*
  * structure for MII Management Indicators reg in mac address map.
  * located at address 0x5034
+ * 31-3: reserved
+ * 2: not valid
+ * 1: scanning
+ * 0: busy
  */
-typedef union _MII_MGMT_INDICATOR_t {
-	u32 value;
-	struct {
-#ifdef _BIT_FIELDS_HTOL
-		u32 reserved:29;	/* bits 3-31 */
-		u32 not_valid:1;	/* bit 2 */
-		u32 scanning:1;	/* bit 1 */
-		u32 busy:1;	/* bit 0 */
-#else
-		u32 busy:1;	/* bit 0 */
-		u32 scanning:1;	/* bit 1 */
-		u32 not_valid:1;	/* bit 2 */
-		u32 reserved:29;	/* bits 3-31 */
-#endif
-	} bits;
-} MII_MGMT_INDICATOR_t, *PMII_MGMT_INDICATOR_t;
+
+#define MGMT_BUSY	0x00000001	/* busy */
+#define MGMT_WAIT	0x00000005	/* busy | not valid */
 
 /*
  * structure for Interface Control reg in mac address map.
@@ -1729,20 +1574,20 @@ typedef union _MAC_STATION_ADDR2_t {
  * MAC Module of JAGCore Address Mapping
  */
 typedef struct _MAC_t {					/* Location: */
-	MAC_CFG1_t cfg1;				/*  0x5000 */
-	MAC_CFG2_t cfg2;				/*  0x5004 */
-	MAC_IPG_t ipg;					/*  0x5008 */
-	MAC_HFDP_t hfdp;				/*  0x500C */
-	MAC_MAX_FM_LEN_t max_fm_len;			/*  0x5010 */
+	u32 cfg1;					/*  0x5000 */
+	u32 cfg2;					/*  0x5004 */
+	u32 ipg;					/*  0x5008 */
+	u32 hfdp;					/*  0x500C */
+	u32 max_fm_len;					/*  0x5010 */
 	u32 rsv1;					/*  0x5014 */
 	u32 rsv2;					/*  0x5018 */
-	MAC_TEST_t mac_test;				/*  0x501C */
-	MII_MGMT_CFG_t mii_mgmt_cfg;			/*  0x5020 */
-	MII_MGMT_CMD_t mii_mgmt_cmd;			/*  0x5024 */
-	MII_MGMT_ADDR_t mii_mgmt_addr;			/*  0x5028 */
-	MII_MGMT_CTRL_t mii_mgmt_ctrl;			/*  0x502C */
-	MII_MGMT_STAT_t mii_mgmt_stat;			/*  0x5030 */
-	MII_MGMT_INDICATOR_t mii_mgmt_indicator;	/*  0x5034 */
+	u32 mac_test;					/*  0x501C */
+	u32 mii_mgmt_cfg;				/*  0x5020 */
+	u32 mii_mgmt_cmd;				/*  0x5024 */
+	u32 mii_mgmt_addr;				/*  0x5028 */
+	u32 mii_mgmt_ctrl;				/*  0x502C */
+	u32 mii_mgmt_stat;				/*  0x5030 */
+	u32 mii_mgmt_indicator;				/*  0x5034 */
 	MAC_IF_CTRL_t if_ctrl;				/*  0x5038 */
 	MAC_IF_STAT_t if_stat;				/*  0x503C */
 	MAC_STATION_ADDR1_t station_addr_1;		/*  0x5040 */
