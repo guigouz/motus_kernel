@@ -73,6 +73,7 @@ struct usb_hub {
 
 	unsigned		mA_per_port;	/* current for each child */
 
+	unsigned		init_done:1;
 	unsigned		limited_power:1;
 	unsigned		quiescing:1;
 	unsigned		disconnected:1;
@@ -379,12 +380,13 @@ static void kick_khubd(struct usb_hub *hub)
 {
 	unsigned long	flags;
 
-	/* Suppress autosuspend until khubd runs */
-	atomic_set(&to_usb_interface(hub->intfdev)->pm_usage_cnt, 1);
-
 	spin_lock_irqsave(&hub_event_lock, flags);
 	if (!hub->disconnected && list_empty(&hub->event_list)) {
 		list_add_tail(&hub->event_list, &hub_event_list);
+
+		/* Suppress autosuspend until khubd runs */
+		usb_autopm_get_interface_no_resume(
+				to_usb_interface(hub->intfdev));
 		wake_up(&khubd_wait);
 	}
 	spin_unlock_irqrestore(&hub_event_lock, flags);
@@ -688,7 +690,7 @@ int usb_remove_device(struct usb_device *udev)
 }
 
 enum hub_activation_type {
-	HUB_INIT, HUB_INIT2, HUB_INIT3,
+	HUB_INIT, HUB_INIT2, HUB_INIT3,		/* INITs must come first */
 	HUB_POST_RESET, HUB_RESUME, HUB_RESET_RESUME,
 };
 
@@ -735,8 +737,8 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 					msecs_to_jiffies(delay));
 
 			/* Suppress autosuspend until init is done */
-			atomic_set(&to_usb_interface(hub->intfdev)->
-					pm_usage_cnt, 1);
+			usb_autopm_get_interface_no_resume(
+					to_usb_interface(hub->intfdev));
 			return;		/* Continues at init2: below */
 		} else if (type == HUB_RESET_RESUME) {
 			/* The internal host controller state for the hub device
@@ -862,6 +864,7 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 	}
  init3:
 	hub->quiescing = 0;
+	hub->init_done = 1;
 
 	status = usb_submit_urb(hub->urb, GFP_NOIO);
 	if (status < 0)
@@ -871,6 +874,10 @@ static void hub_activate(struct usb_hub *hub, enum hub_activation_type type)
 
 	/* Scan all ports that need attention */
 	kick_khubd(hub);
+
+	/* Allow autosuspend if it was suppressed */
+	if (type <= HUB_INIT3)
+		usb_autopm_put_interface_async(to_usb_interface(hub->intfdev));
 }
 
 /* Implement the continuations for the delays above */
@@ -898,6 +905,11 @@ static void hub_quiesce(struct usb_hub *hub, enum hub_quiescing_type type)
 	int i;
 
 	cancel_delayed_work_sync(&hub->init_work);
+	if (!hub->init_done) {
+		hub->init_done = 1;
+		usb_autopm_put_interface_no_suspend(
+				to_usb_interface(hub->intfdev));
+	}
 
 	/* khubd and related activity won't re-trigger */
 	hub->quiescing = 1;
@@ -1220,7 +1232,10 @@ static void hub_disconnect(struct usb_interface *intf)
 
 	/* Take the hub off the event list and don't let it be added again */
 	spin_lock_irq(&hub_event_lock);
-	list_del_init(&hub->event_list);
+	if (!list_empty(&hub->event_list)) {
+		list_del_init(&hub->event_list);
+		usb_autopm_put_interface_no_suspend(intf);
+	}
 	hub->disconnected = 1;
 	spin_unlock_irq(&hub_event_lock);
 
@@ -3334,7 +3349,7 @@ static void hub_events(void)
 		 * disconnected while waiting for the lock to succeed. */
 		usb_lock_device(hdev);
 		if (unlikely(hub->disconnected))
-			goto loop;
+			goto loop2;
 
 		/* If the hub has died, clean up after it */
 		if (hdev->state == USB_STATE_NOTATTACHED) {
@@ -3490,11 +3505,15 @@ static void hub_events(void)
 			}
 		}
 
-loop_autopm:
-		/* Allow autosuspend if we're not going to run again */
-		if (list_empty(&hub->event_list))
-			usb_autopm_enable(intf);
-loop:
+ loop_autopm:
+		/* Balance the usb_autopm_get_interface() above */
+		usb_autopm_put_interface_no_suspend(intf);
+ loop:
+		/* Balance the usb_autopm_get_interface_no_resume() in
+		 * kick_khubd() and allow autosuspend.
+		 */
+		usb_autopm_put_interface(intf);
+ loop2:
 		usb_unlock_device(hdev);
 		kref_put(&hub->kref, hub_release);
 
