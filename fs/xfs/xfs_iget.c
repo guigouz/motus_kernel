@@ -299,7 +299,7 @@ xfs_iget_cache_miss(
 	xfs_ino_t		ino,
 	struct xfs_inode	**ipp,
 	int			flags,
-	int			lock_flags) __releases(pag->pag_ici_lock)
+	int			lock_flags)
 {
 	struct xfs_inode	*ip;
 	int			error;
