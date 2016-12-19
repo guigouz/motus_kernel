@@ -124,7 +124,7 @@ static void next_trb(struct xhci_hcd *xhci,
 		*seg = (*seg)->next;
 		*trb = ((*seg)->trbs);
 	} else {
-		(*trb)++;
+		*trb = (*trb)++;
 	}
 }
 
@@ -241,27 +241,10 @@ static int room_on_ring(struct xhci_hcd *xhci, struct xhci_ring *ring,
 	int i;
 	union xhci_trb *enq = ring->enqueue;
 	struct xhci_segment *enq_seg = ring->enq_seg;
-	struct xhci_segment *cur_seg;
-	unsigned int left_on_ring;
 
 	/* Check if ring is empty */
-	if (enq == ring->dequeue) {
-		/* Can't use link trbs */
-		left_on_ring = TRBS_PER_SEGMENT - 1;
-		for (cur_seg = enq_seg->next; cur_seg != enq_seg;
-				cur_seg = cur_seg->next)
-			left_on_ring += TRBS_PER_SEGMENT - 1;
-
-		/* Always need one TRB free in the ring. */
-		left_on_ring -= 1;
-		if (num_trbs > left_on_ring) {
-			xhci_warn(xhci, "Not enough room on ring; "
-					"need %u TRBs, %u TRBs left\n",
-					num_trbs, left_on_ring);
-			return 0;
-		}
+	if (enq == ring->dequeue)
 		return 1;
-	}
 	/* Make sure there's an extra empty TRB available */
 	for (i = 0; i <= num_trbs; ++i) {
 		if (enq == ring->dequeue)
@@ -350,8 +333,7 @@ static struct xhci_segment *find_trb_seg(
 	while (cur_seg->trbs > trb ||
 			&cur_seg->trbs[TRBS_PER_SEGMENT - 1] < trb) {
 		generic_trb = &cur_seg->trbs[TRBS_PER_SEGMENT - 1].generic;
-		if ((generic_trb->field[3] & TRB_TYPE_BITMASK) ==
-				TRB_TYPE(TRB_LINK) &&
+		if (TRB_TYPE(generic_trb->field[3]) == TRB_LINK &&
 				(generic_trb->field[3] & LINK_TOGGLE))
 			*cycle_state = ~(*cycle_state) & 0x1;
 		cur_seg = cur_seg->next;
@@ -391,11 +373,8 @@ void xhci_find_new_dequeue_state(struct xhci_hcd *xhci,
 	state->new_deq_seg = find_trb_seg(cur_td->start_seg,
 			dev->eps[ep_index].stopped_trb,
 			&state->new_cycle_state);
-	if (!state->new_deq_seg) {
-		WARN_ON(1);
-		return;
-	}
-
+	if (!state->new_deq_seg)
+		BUG();
 	/* Dig out the cycle state saved by the xHC during the stop ep cmd */
 	xhci_dbg(xhci, "Finding endpoint context\n");
 	ep_ctx = xhci_get_ep_ctx(xhci, dev->out_ctx, ep_index);
@@ -406,30 +385,14 @@ void xhci_find_new_dequeue_state(struct xhci_hcd *xhci,
 	state->new_deq_seg = find_trb_seg(state->new_deq_seg,
 			state->new_deq_ptr,
 			&state->new_cycle_state);
-	if (!state->new_deq_seg) {
-		WARN_ON(1);
-		return;
-	}
+	if (!state->new_deq_seg)
+		BUG();
 
 	trb = &state->new_deq_ptr->generic;
-	if ((trb->field[3] & TRB_TYPE_BITMASK) == TRB_TYPE(TRB_LINK) &&
+	if (TRB_TYPE(trb->field[3]) == TRB_LINK &&
 				(trb->field[3] & LINK_TOGGLE))
 		state->new_cycle_state = ~(state->new_cycle_state) & 0x1;
 	next_trb(xhci, ep_ring, &state->new_deq_seg, &state->new_deq_ptr);
-
-	/*
-	 * If there is only one segment in a ring, find_trb_seg()'s while loop
-	 * will not run, and it will return before it has a chance to see if it
-	 * needs to toggle the cycle bit.  It can't tell if the stalled transfer
-	 * ended just before the link TRB on a one-segment ring, or if the TD
-	 * wrapped around the top of the ring, because it doesn't have the TD in
-	 * question.  Look for the one-segment case where stalled TRB's address
-	 * is greater than the new dequeue pointer address.
-	 */
-	if (ep_ring->first_seg == ep_ring->first_seg->next &&
-			state->new_deq_ptr < dev->eps[ep_index].stopped_trb)
-		state->new_cycle_state ^= 0x1;
-	xhci_dbg(xhci, "Cycle state = 0x%x\n", state->new_cycle_state);
 
 	/* Don't update the ring cycle state for the producer (us). */
 	xhci_dbg(xhci, "New dequeue segment = %p (virtual)\n",
@@ -614,8 +577,6 @@ static void handle_stopped_endpoint(struct xhci_hcd *xhci,
 		/* Otherwise just ring the doorbell to restart the ring */
 		ring_ep_doorbell(xhci, slot_id, ep_index);
 	}
-	ep->stopped_td = NULL;
-	ep->stopped_trb = NULL;
 
 	/*
 	 * Drop the lock and complete the URBs in the cancelled TD list.
@@ -1076,6 +1037,45 @@ struct xhci_segment *trb_in_td(struct xhci_segment *start_seg,
 	return 0;
 }
 
+static void xhci_cleanup_halted_endpoint(struct xhci_hcd *xhci,
+		unsigned int slot_id, unsigned int ep_index,
+		struct xhci_td *td, union xhci_trb *event_trb)
+{
+	struct xhci_virt_ep *ep = &xhci->devs[slot_id]->eps[ep_index];
+	ep->ep_state |= EP_HALTED;
+	ep->stopped_td = td;
+	ep->stopped_trb = event_trb;
+	xhci_queue_reset_ep(xhci, slot_id, ep_index);
+	xhci_cleanup_stalled_ring(xhci, td->urb->dev, ep_index);
+	xhci_ring_cmd_db(xhci);
+}
+
+/* Check if an error has halted the endpoint ring.  The class driver will
+ * cleanup the halt for a non-default control endpoint if we indicate a stall.
+ * However, a babble and other errors also halt the endpoint ring, and the class
+ * driver won't clear the halt in that case, so we need to issue a Set Transfer
+ * Ring Dequeue Pointer command manually.
+ */
+static int xhci_requires_manual_halt_cleanup(struct xhci_hcd *xhci,
+		struct xhci_ep_ctx *ep_ctx,
+		unsigned int trb_comp_code)
+{
+	/* TRB completion codes that may require a manual halt cleanup */
+	if (trb_comp_code == COMP_TX_ERR ||
+			trb_comp_code == COMP_BABBLE ||
+			trb_comp_code == COMP_SPLIT_ERR)
+		/* The 0.96 spec says a babbling control endpoint
+		 * is not halted. The 0.96 spec says it is.  Some HW
+		 * claims to be 0.95 compliant, but it halts the control
+		 * endpoint anyway.  Check if a babble halted the
+		 * endpoint.
+		 */
+		if ((ep_ctx->ep_info & EP_STATE_MASK) == EP_STATE_HALTED)
+			return 1;
+
+	return 0;
+}
+
 /*
  * If this function returns an error condition, it means it got a Transfer
  * event with a corrupted Slot ID, Endpoint ID, or TRB DMA address.
@@ -1178,6 +1178,7 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		xhci_warn(xhci, "WARN: TRB error on endpoint\n");
 		status = -EILSEQ;
 		break;
+	case COMP_SPLIT_ERR:
 	case COMP_TX_ERR:
 		xhci_warn(xhci, "WARN: transfer error on endpoint\n");
 		status = -EPROTO;
@@ -1191,6 +1192,16 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		status = -ENOSR;
 		break;
 	default:
+		if (trb_comp_code >= 224 && trb_comp_code <= 255) {
+			/* Vendor defined "informational" completion code,
+			 * treat as not-an-error.
+			 */
+			xhci_dbg(xhci, "Vendor defined info completion code %u\n",
+					trb_comp_code);
+			xhci_dbg(xhci, "Treating code as success.\n");
+			status = 0;
+			break;
+		}
 		xhci_warn(xhci, "ERROR Unknown event condition, HC probably busted\n");
 		urb = NULL;
 		goto cleanup;
@@ -1219,15 +1230,14 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			else
 				status = 0;
 			break;
-		case COMP_BABBLE:
-			/* The 0.96 spec says a babbling control endpoint
-			 * is not halted. The 0.96 spec says it is.  Some HW
-			 * claims to be 0.95 compliant, but it halts the control
-			 * endpoint anyway.  Check if a babble halted the
-			 * endpoint.
-			 */
-			if (ep_ctx->ep_info != EP_STATE_HALTED)
+
+		default:
+			if (!xhci_requires_manual_halt_cleanup(xhci,
+						ep_ctx, trb_comp_code))
 				break;
+			xhci_dbg(xhci, "TRB error code %u, "
+					"halted endpoint index = %u\n",
+					trb_comp_code, ep_index);
 			/* else fall through */
 		case COMP_STALL:
 			/* Did we transfer part of the data (middle) phase? */
@@ -1239,20 +1249,9 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			else
 				td->urb->actual_length = 0;
 
-			ep->stopped_td = td;
-			ep->stopped_trb = event_trb;
-
-			xhci_queue_reset_ep(xhci, slot_id, ep_index);
-			xhci_cleanup_stalled_ring(xhci, td->urb->dev, ep_index);
-
-			ep->stopped_td = NULL;
-			ep->stopped_trb = NULL;
-
-			xhci_ring_cmd_db(xhci);
+			xhci_cleanup_halted_endpoint(xhci,
+					slot_id, ep_index, td, event_trb);
 			goto td_cleanup;
-		default:
-			/* Others already handled above */
-			break;
 		}
 		/*
 		 * Did we transfer any data, despite the errors that might have
@@ -1367,10 +1366,8 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 			for (cur_trb = ep_ring->dequeue, cur_seg = ep_ring->deq_seg;
 					cur_trb != event_trb;
 					next_trb(xhci, ep_ring, &cur_seg, &cur_trb)) {
-				if ((cur_trb->generic.field[3] &
-				 TRB_TYPE_BITMASK) != TRB_TYPE(TRB_TR_NOOP) &&
-				    (cur_trb->generic.field[3] &
-				 TRB_TYPE_BITMASK) != TRB_TYPE(TRB_LINK))
+				if (TRB_TYPE(cur_trb->generic.field[3]) != TRB_TR_NOOP &&
+						TRB_TYPE(cur_trb->generic.field[3]) != TRB_LINK)
 					td->urb->actual_length +=
 						TRB_LEN(cur_trb->generic.field[2]);
 			}
@@ -1392,16 +1389,25 @@ static int handle_tx_event(struct xhci_hcd *xhci,
 		ep->stopped_td = td;
 		ep->stopped_trb = event_trb;
 	} else {
-		if (trb_comp_code == COMP_STALL ||
-				trb_comp_code == COMP_BABBLE) {
+		if (trb_comp_code == COMP_STALL) {
 			/* The transfer is completed from the driver's
 			 * perspective, but we need to issue a set dequeue
 			 * command for this stalled endpoint to move the dequeue
 			 * pointer past the TD.  We can't do that here because
-			 * the halt condition must be cleared first.
+			 * the halt condition must be cleared first.  Let the
+			 * USB class driver clear the stall later.
 			 */
 			ep->stopped_td = td;
 			ep->stopped_trb = event_trb;
+		} else if (xhci_requires_manual_halt_cleanup(xhci,
+					ep_ctx, trb_comp_code)) {
+			/* Other types of errors halt the endpoint, but the
+			 * class driver doesn't call usb_reset_endpoint() unless
+			 * the error is -EPIPE.  Clear the halted status in the
+			 * xHCI hardware manually.
+			 */
+			xhci_cleanup_halted_endpoint(xhci,
+					slot_id, ep_index, td, event_trb);
 		} else {
 			/* Update ring dequeue pointer */
 			while (ep_ring->dequeue != td->last_trb)
@@ -1648,13 +1654,12 @@ static unsigned int count_sg_trbs_needed(struct xhci_hcd *xhci, struct urb *urb)
 
 		/* Scatter gather list entries may cross 64KB boundaries */
 		running_total = TRB_MAX_BUFF_SIZE -
-			(sg_dma_address(sg) & (TRB_MAX_BUFF_SIZE - 1));
-		running_total &= TRB_MAX_BUFF_SIZE - 1;
+			(sg_dma_address(sg) & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
 		if (running_total != 0)
 			num_trbs++;
 
 		/* How many more 64KB chunks to transfer, how many more TRBs? */
-		while (running_total < sg_dma_len(sg) && running_total < temp) {
+		while (running_total < sg_dma_len(sg)) {
 			num_trbs++;
 			running_total += TRB_MAX_BUFF_SIZE;
 		}
@@ -1679,11 +1684,11 @@ static unsigned int count_sg_trbs_needed(struct xhci_hcd *xhci, struct urb *urb)
 static void check_trb_math(struct urb *urb, int num_trbs, int running_total)
 {
 	if (num_trbs != 0)
-		dev_err(&urb->dev->dev, "%s - ep %#x - Miscalculated number of "
+		dev_dbg(&urb->dev->dev, "%s - ep %#x - Miscalculated number of "
 				"TRBs, %d left\n", __func__,
 				urb->ep->desc.bEndpointAddress, num_trbs);
 	if (running_total != urb->transfer_buffer_length)
-		dev_err(&urb->dev->dev, "%s - ep %#x - Miscalculated tx length, "
+		dev_dbg(&urb->dev->dev, "%s - ep %#x - Miscalculated tx length, "
 				"queued %#x (%d), asked for %#x (%d)\n",
 				__func__,
 				urb->ep->desc.bEndpointAddress,
@@ -1746,6 +1751,21 @@ int xhci_queue_intr_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	return xhci_queue_bulk_tx(xhci, GFP_ATOMIC, urb, slot_id, ep_index);
 }
 
+/*
+ * The TD size is the number of bytes remaining in the TD (including this TRB),
+ * right shifted by 10.
+ * It must fit in bits 21:17, so it can't be bigger than 31.
+ */
+static u32 xhci_td_remainder(unsigned int remainder)
+{
+	u32 max = (1 << (21 - 17 + 1)) - 1;
+
+	if ((remainder >> 10) >= max)
+		return max << 17;
+	else
+		return (remainder >> 10) << 17;
+}
+
 static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		struct urb *urb, int slot_id, unsigned int ep_index)
 {
@@ -1790,7 +1810,8 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	sg = urb->sg->sg;
 	addr = (u64) sg_dma_address(sg);
 	this_sg_len = sg_dma_len(sg);
-	trb_buff_len = TRB_MAX_BUFF_SIZE - (addr & (TRB_MAX_BUFF_SIZE - 1));
+	trb_buff_len = TRB_MAX_BUFF_SIZE -
+		(addr & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
 	trb_buff_len = min_t(int, trb_buff_len, this_sg_len);
 	if (trb_buff_len > urb->transfer_buffer_length)
 		trb_buff_len = urb->transfer_buffer_length;
@@ -1802,6 +1823,7 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	do {
 		u32 field = 0;
 		u32 length_field = 0;
+		u32 remainder = 0;
 
 		/* Don't change the cycle bit of the first TRB until later */
 		if (first_trb)
@@ -1825,14 +1847,16 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 				(unsigned int) (addr + TRB_MAX_BUFF_SIZE) & ~(TRB_MAX_BUFF_SIZE - 1),
 				(unsigned int) addr + trb_buff_len);
 		if (TRB_MAX_BUFF_SIZE -
-				(addr & (TRB_MAX_BUFF_SIZE - 1)) < trb_buff_len) {
+				(addr & ((1 << TRB_MAX_BUFF_SHIFT) - 1)) < trb_buff_len) {
 			xhci_warn(xhci, "WARN: sg dma xfer crosses 64KB boundaries!\n");
 			xhci_dbg(xhci, "Next boundary at %#x, end dma = %#x\n",
 					(unsigned int) (addr + TRB_MAX_BUFF_SIZE) & ~(TRB_MAX_BUFF_SIZE - 1),
 					(unsigned int) addr + trb_buff_len);
 		}
+		remainder = xhci_td_remainder(urb->transfer_buffer_length -
+				running_total) ;
 		length_field = TRB_LEN(trb_buff_len) |
-			TD_REMAINDER(urb->transfer_buffer_length - running_total) |
+			remainder |
 			TRB_INTR_TARGET(0);
 		queue_trb(xhci, ep_ring, false,
 				lower_32_bits(addr),
@@ -1863,7 +1887,7 @@ static int queue_bulk_sg_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 		}
 
 		trb_buff_len = TRB_MAX_BUFF_SIZE -
-			(addr & (TRB_MAX_BUFF_SIZE - 1));
+			(addr & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
 		trb_buff_len = min_t(int, trb_buff_len, this_sg_len);
 		if (running_total + trb_buff_len > urb->transfer_buffer_length)
 			trb_buff_len =
@@ -1898,8 +1922,7 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	num_trbs = 0;
 	/* How much data is (potentially) left before the 64KB boundary? */
 	running_total = TRB_MAX_BUFF_SIZE -
-		(urb->transfer_dma & (TRB_MAX_BUFF_SIZE - 1));
-	running_total &= TRB_MAX_BUFF_SIZE - 1;
+		(urb->transfer_dma & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
 
 	/* If there's some data on this 64KB chunk, or we have to send a
 	 * zero-length transfer, we need at least one TRB
@@ -1938,14 +1961,15 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* How much data is in the first TRB? */
 	addr = (u64) urb->transfer_dma;
 	trb_buff_len = TRB_MAX_BUFF_SIZE -
-		(urb->transfer_dma & (TRB_MAX_BUFF_SIZE - 1));
-	if (trb_buff_len > urb->transfer_buffer_length)
+		(urb->transfer_dma & ((1 << TRB_MAX_BUFF_SHIFT) - 1));
+	if (urb->transfer_buffer_length < trb_buff_len)
 		trb_buff_len = urb->transfer_buffer_length;
 
 	first_trb = true;
 
 	/* Queue the first TRB, even if it's zero-length */
 	do {
+		u32 remainder = 0;
 		field = 0;
 
 		/* Don't change the cycle bit of the first TRB until later */
@@ -1964,8 +1988,10 @@ int xhci_queue_bulk_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 			td->last_trb = ep_ring->enqueue;
 			field |= TRB_IOC;
 		}
+		remainder = xhci_td_remainder(urb->transfer_buffer_length -
+				running_total);
 		length_field = TRB_LEN(trb_buff_len) |
-			TD_REMAINDER(urb->transfer_buffer_length - running_total) |
+			remainder |
 			TRB_INTR_TARGET(0);
 		queue_trb(xhci, ep_ring, false,
 				lower_32_bits(addr),
@@ -2053,7 +2079,7 @@ int xhci_queue_ctrl_tx(struct xhci_hcd *xhci, gfp_t mem_flags,
 	/* If there's data, queue data TRBs */
 	field = 0;
 	length_field = TRB_LEN(urb->transfer_buffer_length) |
-		TD_REMAINDER(urb->transfer_buffer_length) |
+		xhci_td_remainder(urb->transfer_buffer_length) |
 		TRB_INTR_TARGET(0);
 	if (urb->transfer_buffer_length > 0) {
 		if (setup->bRequestType & USB_DIR_IN)
