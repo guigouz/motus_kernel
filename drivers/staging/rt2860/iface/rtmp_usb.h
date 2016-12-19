@@ -28,27 +28,19 @@
 #ifndef __RTMP_USB_H__
 #define __RTMP_USB_H__
 
-
 #include "../rtusb_io.h"
-
 
 #ifdef LINUX
 #include <linux/usb.h>
-
-typedef struct usb_device	* PUSB_DEV;
-typedef struct urb *purbb_t;
-typedef struct usb_ctrlrequest devctrlrequest;
 #endif // LINUX //
 
-extern UCHAR EpToQueue[6];
-
+extern u8 EpToQueue[6];
 
 #define RXBULKAGGRE_ZISE			12
 #define MAX_TXBULK_LIMIT			(LOCAL_TXBUF_SIZE*(BULKAGGRE_ZISE-1))
 #define MAX_TXBULK_SIZE			(LOCAL_TXBUF_SIZE*BULKAGGRE_ZISE)
 #define MAX_RXBULK_SIZE			(LOCAL_TXBUF_SIZE*RXBULKAGGRE_ZISE)
 #define MAX_MLME_HANDLER_MEMORY 20
-
 
 // Flags for Bulkflags control for bulk out data
 //
@@ -69,7 +61,6 @@ extern UCHAR EpToQueue[6];
 
 // TODO:move to ./ate/include/iface/ate_usb.h
 
-
 #define FREE_HTTX_RING(_pCookie, _pipeId, _txContext)			\
 {										\
 	if ((_txContext)->ENextBulkOutPosition == (_txContext)->CurWritePosition)	\
@@ -78,8 +69,6 @@ extern UCHAR EpToQueue[6];
 	}																	\
 	/*NdisInterlockedDecrement(&(_p)->TxCount); */\
 }
-
-
 
 /******************************************************************************
 
@@ -100,7 +89,7 @@ extern UCHAR EpToQueue[6];
 // unlink urb
 #define RTUSB_UNLINK_URB(pUrb)		usb_kill_urb(pUrb)
 
-extern void dump_urb(struct urb* purb);
+extern void dump_urb(struct urb *purb);
 
 #define InterlockedIncrement		atomic_inc
 #define NdisInterlockedIncrement	atomic_inc
@@ -110,19 +99,15 @@ extern void dump_urb(struct urb* purb);
 
 #endif // LINUX //
 
-
-
 #define NT_SUCCESS(status)			(((status) >=0) ? (TRUE):(FALSE))
-
-
 
 #define USBD_TRANSFER_DIRECTION_OUT		0
 #define USBD_TRANSFER_DIRECTION_IN		0
 #define USBD_SHORT_TRANSFER_OK			0
-#define PURB			purbb_t
+#define PURB			struct urb *
 
-#define PIRP		PVOID
-#define NDIS_OID	UINT
+#define PIRP		void *
+#define NDIS_OID	u32
 #ifndef USB_ST_NOERROR
 #define USB_ST_NOERROR     0
 #endif
@@ -131,19 +116,17 @@ extern void dump_urb(struct urb* purb);
 #define CONTROL_TIMEOUT_JIFFIES ( (100 * OS_HZ) / 1000)
 #define UNLINK_TIMEOUT_MS		3
 
-
-VOID RTUSBBulkOutDataPacketComplete(purbb_t purb, struct pt_regs *pt_regs);
-VOID RTUSBBulkOutMLMEPacketComplete(purbb_t pUrb, struct pt_regs *pt_regs);
-VOID RTUSBBulkOutNullFrameComplete(purbb_t pUrb, struct pt_regs *pt_regs);
-VOID RTUSBBulkOutRTSFrameComplete(purbb_t pUrb, struct pt_regs *pt_regs);
-VOID RTUSBBulkOutPsPollComplete(purbb_t pUrb, struct pt_regs *pt_regs);
-VOID RTUSBBulkRxComplete(purbb_t pUrb, struct pt_regs *pt_regs);
-
+void RTUSBBulkOutDataPacketComplete(struct urb *purb, struct pt_regs *pt_regs);
+void RTUSBBulkOutMLMEPacketComplete(struct urb *pUrb, struct pt_regs *pt_regs);
+void RTUSBBulkOutNullFrameComplete(struct urb *pUrb, struct pt_regs *pt_regs);
+void RTUSBBulkOutRTSFrameComplete(struct urb *pUrb, struct pt_regs *pt_regs);
+void RTUSBBulkOutPsPollComplete(struct urb *pUrb, struct pt_regs *pt_regs);
+void RTUSBBulkRxComplete(struct urb *pUrb, struct pt_regs *pt_regs);
 
 #ifdef KTHREAD_SUPPORT
 #define RTUSBMlmeUp(pAd) \
 	do{								    \
-		RTMP_OS_TASK	*_pTask = &((pAd)->mlmeTask);\
+		struct rt_rtmp_os_task *_pTask = &((pAd)->mlmeTask);\
 		if (_pTask->kthread_task) \
         { \
 			_pTask->kthread_running = TRUE; \
@@ -153,7 +136,7 @@ VOID RTUSBBulkRxComplete(purbb_t pUrb, struct pt_regs *pt_regs);
 #else
 #define RTUSBMlmeUp(pAd)	        \
 	do{								    \
-		RTMP_OS_TASK	*_pTask = &((pAd)->mlmeTask);\
+		struct rt_rtmp_os_task *_pTask = &((pAd)->mlmeTask);\
 		CHECK_PID_LEGALITY(_pTask->taskPID)		    \
 		{ \
 			RTMP_SEM_EVENT_UP(&(_pTask->taskSema)); \
@@ -164,7 +147,7 @@ VOID RTUSBBulkRxComplete(purbb_t pUrb, struct pt_regs *pt_regs);
 #ifdef KTHREAD_SUPPORT
 #define RTUSBCMDUp(pAd) \
 	do{	\
-		RTMP_OS_TASK	*_pTask = &((pAd)->cmdQTask);	\
+		struct rt_rtmp_os_task *_pTask = &((pAd)->cmdQTask);	\
 		{ \
 			_pTask->kthread_running = TRUE; \
 	        wake_up(&_pTask->kthread_q); \
@@ -174,7 +157,7 @@ VOID RTUSBBulkRxComplete(purbb_t pUrb, struct pt_regs *pt_regs);
 #else
 #define RTUSBCMDUp(pAd)	                \
 	do{									    \
-		RTMP_OS_TASK	*_pTask = &((pAd)->cmdQTask);	\
+		struct rt_rtmp_os_task *_pTask = &((pAd)->cmdQTask);	\
 		CHECK_PID_LEGALITY(_pTask->taskPID)	    \
 		{\
 			RTMP_SEM_EVENT_UP(&(_pTask->taskSema)); \
@@ -195,6 +178,5 @@ VOID RTUSBBulkRxComplete(purbb_t pUrb, struct pt_regs *pt_regs);
 
 #define RTMP_IRQ_REQUEST(net_dev)		do{}while(0)
 #define RTMP_IRQ_RELEASE(net_dev)		do{}while(0)
-
 
 #endif // __RTMP_USB_H__ //

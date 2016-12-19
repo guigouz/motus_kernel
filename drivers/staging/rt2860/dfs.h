@@ -36,6 +36,4 @@
     Fonchi    03-12-2007      created
 */
 
-BOOLEAN RadarChannelCheck(
-	IN PRTMP_ADAPTER	pAd,
-	IN UCHAR			Ch);
+BOOLEAN RadarChannelCheck(struct rt_rtmp_adapter *pAd, u8 Ch);

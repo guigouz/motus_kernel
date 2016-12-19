@@ -38,18 +38,12 @@
 #ifndef __RTMP_MCU_H__
 #define __RTMP_MCU_H__
 
+int RtmpAsicEraseFirmware(struct rt_rtmp_adapter *pAd);
 
-INT RtmpAsicEraseFirmware(
-	IN PRTMP_ADAPTER pAd);
+int RtmpAsicLoadFirmware(struct rt_rtmp_adapter *pAd);
 
-NDIS_STATUS RtmpAsicLoadFirmware(
-	IN PRTMP_ADAPTER pAd);
+int RtmpAsicSendCommandToMcu(struct rt_rtmp_adapter *pAd,
+			     u8 Command,
+			     u8 Token, u8 Arg0, u8 Arg1);
 
-INT RtmpAsicSendCommandToMcu(
-	IN PRTMP_ADAPTER pAd,
-	IN UCHAR		 Command,
-	IN UCHAR		 Token,
-	IN UCHAR		 Arg0,
-	IN UCHAR		 Arg1);
-
-#endif // __RTMP_MCU_H__ //
+#endif /* __RTMP_MCU_H__ // */

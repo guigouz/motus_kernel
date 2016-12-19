@@ -39,7 +39,6 @@
 
 #ifdef RT3070
 
-
 #ifndef RTMP_USB_SUPPORT
 #error "For RT3070, you should define the compile flag -DRTMP_USB_SUPPORT"
 #endif
@@ -59,10 +58,10 @@
 #include "mac_usb.h"
 #include "rt30xx.h"
 
-//
-// Device ID & Vendor ID, these values should match EEPROM value
-//
+/* */
+/* Device ID & Vendor ID, these values should match EEPROM value */
+/* */
 
-#endif // RT3070 //
+#endif /* RT3070 // */
 
-#endif //__RT3070_H__ //
+#endif /*__RT3070_H__ // */

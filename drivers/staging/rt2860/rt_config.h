@@ -64,17 +64,8 @@
 #include "rtmp_mcu.h"
 #endif
 
-#undef AP_WSC_INCLUDED
-#undef STA_WSC_INCLUDED
-#undef WSC_INCLUDED
-
-
-
-
-
 #ifdef IGMP_SNOOP_SUPPORT
 #include "igmp_snoop.h"
-#endif // IGMP_SNOOP_SUPPORT //
+#endif /* IGMP_SNOOP_SUPPORT // */
 
-#endif	// __RT_CONFIG_H__
-
+#endif /* __RT_CONFIG_H__ */

@@ -50,60 +50,24 @@
 
 /* Algorithm options */
 #define SHA1_SUPPORT
-#define SHA256_SUPPORT
 
 #ifdef SHA1_SUPPORT
-#define SHA1_BLOCK_SIZE    64 /* 512 bits = 64 bytes */
-#define SHA1_DIGEST_SIZE   20 /* 160 bits = 20 bytes */
-typedef struct _SHA1_CTX_STRUC {
-    UINT32 HashValue[5];  /* 5 = (SHA1_DIGEST_SIZE / 32) */
-    UINT64 MessageLen;    /* total size */
-    UINT8  Block[SHA1_BLOCK_SIZE];
-    UINT   BlockLen;
-} SHA1_CTX_STRUC, *PSHA1_CTX_STRUC;
+#define SHA1_BLOCK_SIZE    64	/* 512 bits = 64 bytes */
+#define SHA1_DIGEST_SIZE   20	/* 160 bits = 20 bytes */
+struct rt_sha1_ctx {
+	u32 HashValue[5];	/* 5 = (SHA1_DIGEST_SIZE / 32) */
+	u64 MessageLen;	/* total size */
+	u8 Block[SHA1_BLOCK_SIZE];
+	u32 BlockLen;
+};
 
-VOID RT_SHA1_Init (
-    IN  SHA1_CTX_STRUC *pSHA_CTX);
-VOID SHA1_Hash (
-    IN  SHA1_CTX_STRUC *pSHA_CTX);
-VOID SHA1_Append (
-    IN  SHA1_CTX_STRUC *pSHA_CTX,
-    IN  const UINT8 Message[],
-    IN  UINT MessageLen);
-VOID SHA1_End (
-    IN  SHA1_CTX_STRUC *pSHA_CTX,
-    OUT UINT8 DigestMessage[]);
-VOID RT_SHA1 (
-    IN  const UINT8 Message[],
-    IN  UINT MessageLen,
-    OUT UINT8 DigestMessage[]);
+void RT_SHA1_Init(struct rt_sha1_ctx *pSHA_CTX);
+void SHA1_Hash(struct rt_sha1_ctx *pSHA_CTX);
+void SHA1_Append(struct rt_sha1_ctx *pSHA_CTX,
+		 IN const u8 Message[], u32 MessageLen);
+void SHA1_End(struct rt_sha1_ctx *pSHA_CTX, u8 DigestMessage[]);
+void RT_SHA1(IN const u8 Message[],
+	     u32 MessageLen, u8 DigestMessage[]);
 #endif /* SHA1_SUPPORT */
-
-#ifdef SHA256_SUPPORT
-#define SHA256_BLOCK_SIZE   64 /* 512 bits = 64 bytes */
-#define SHA256_DIGEST_SIZE  32 /* 256 bits = 32 bytes */
-typedef struct _SHA256_CTX_STRUC {
-    UINT32 HashValue[8];  /* 8 = (SHA256_DIGEST_SIZE / 32) */
-    UINT64 MessageLen;    /* total size */
-    UINT8  Block[SHA256_BLOCK_SIZE];
-    UINT   BlockLen;
-} SHA256_CTX_STRUC, *PSHA256_CTX_STRUC;
-
-VOID SHA256_Init (
-    IN  SHA256_CTX_STRUC *pSHA_CTX);
-VOID SHA256_Hash (
-    IN  SHA256_CTX_STRUC *pSHA_CTX);
-VOID SHA256_Append (
-    IN  SHA256_CTX_STRUC *pSHA_CTX,
-    IN  const UINT8 Message[],
-    IN  UINT MessageLen);
-VOID SHA256_End (
-    IN  SHA256_CTX_STRUC *pSHA_CTX,
-    OUT UINT8 DigestMessage[]);
-VOID RT_SHA256 (
-    IN  const UINT8 Message[],
-    IN  UINT MessageLen,
-    OUT UINT8 DigestMessage[]);
-#endif /* SHA256_SUPPORT */
 
 #endif /* __CRYPT_SHA2_H__ */

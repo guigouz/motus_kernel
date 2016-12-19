@@ -38,7 +38,6 @@
 #ifndef __RTMP_PHY_H__
 #define __RTMP_PHY_H__
 
-
 /*
 	RF sections
 */
@@ -75,31 +74,30 @@
 #define RF_R30			30
 #define RF_R31			31
 
-
-// value domain of pAd->RfIcType
-#define RFIC_2820                   1       // 2.4G 2T3R
-#define RFIC_2850                   2       // 2.4G/5G 2T3R
-#define RFIC_2720                   3       // 2.4G 1T2R
-#define RFIC_2750                   4       // 2.4G/5G 1T2R
-#define RFIC_3020                   5       // 2.4G 1T1R
-#define RFIC_2020                   6       // 2.4G B/G
-#define RFIC_3021                   7       // 2.4G 1T2R
-#define RFIC_3022                   8       // 2.4G 2T2R
-#define RFIC_3052                   9       // 2.4G/5G 2T2R
+/* value domain of pAd->RfIcType */
+#define RFIC_2820                   1	/* 2.4G 2T3R */
+#define RFIC_2850                   2	/* 2.4G/5G 2T3R */
+#define RFIC_2720                   3	/* 2.4G 1T2R */
+#define RFIC_2750                   4	/* 2.4G/5G 1T2R */
+#define RFIC_3020                   5	/* 2.4G 1T1R */
+#define RFIC_2020                   6	/* 2.4G B/G */
+#define RFIC_3021                   7	/* 2.4G 1T2R */
+#define RFIC_3022                   8	/* 2.4G 2T2R */
+#define RFIC_3052                   9	/* 2.4G/5G 2T2R */
 
 /*
 	BBP sections
 */
-#define BBP_R0			0  // version
-#define BBP_R1			1  // TSSI
-#define BBP_R2			2  // TX configure
+#define BBP_R0			0	/* version */
+#define BBP_R1			1	/* TSSI */
+#define BBP_R2			2	/* TX configure */
 #define BBP_R3			3
 #define BBP_R4			4
 #define BBP_R5			5
 #define BBP_R6			6
-#define BBP_R14			14 // RX configure
+#define BBP_R14			14	/* RX configure */
 #define BBP_R16			16
-#define BBP_R17			17 // RX sensibility
+#define BBP_R17			17	/* RX sensibility */
 #define BBP_R18			18
 #define BBP_R21			21
 #define BBP_R22			22
@@ -108,12 +106,12 @@
 #define BBP_R26			26
 #define BBP_R27			27
 #define BBP_R31			31
-#define BBP_R49			49 //TSSI
+#define BBP_R49			49	/*TSSI */
 #define BBP_R50			50
 #define BBP_R51			51
 #define BBP_R52			52
 #define BBP_R55			55
-#define BBP_R62			62 // Rx SQ0 Threshold HIGH
+#define BBP_R62			62	/* Rx SQ0 Threshold HIGH */
 #define BBP_R63			63
 #define BBP_R64			64
 #define BBP_R65			65
@@ -121,7 +119,7 @@
 #define BBP_R67			67
 #define BBP_R68			68
 #define BBP_R69			69
-#define BBP_R70			70 // Rx AGC SQ CCK Xcorr threshold
+#define BBP_R70			70	/* Rx AGC SQ CCK Xcorr threshold */
 #define BBP_R73			73
 #define BBP_R75			75
 #define BBP_R77			77
@@ -135,7 +133,7 @@
 #define BBP_R86			86
 #define BBP_R91			91
 #define BBP_R92			92
-#define BBP_R94			94 // Tx Gain Control
+#define BBP_R94			94	/* Tx Gain Control */
 #define BBP_R103		103
 #define BBP_R105		105
 #define BBP_R106		106
@@ -151,22 +149,22 @@
 #define BBP_R122		122
 #define BBP_R123		123
 #ifdef RT30xx
-#define BBP_R138		138 // add by johnli, RF power sequence setup, ADC dynamic on/off control
-#endif // RT30xx //
+#define BBP_R138		138	/* add by johnli, RF power sequence setup, ADC dynamic on/off control */
+#endif /* RT30xx // */
 
-#define BBPR94_DEFAULT	0x06 // Add 1 value will gain 1db
+#define BBPR94_DEFAULT	0x06	/* Add 1 value will gain 1db */
 
-//
-// BBP & RF are using indirect access. Before write any value into it.
-// We have to make sure there is no outstanding command pending via checking busy bit.
-//
-#define MAX_BUSY_COUNT  100         // Number of retry before failing access BBP & RF indirect register
+/* */
+/* BBP & RF are using indirect access. Before write any value into it. */
+/* We have to make sure there is no outstanding command pending via checking busy bit. */
+/* */
+#define MAX_BUSY_COUNT  100	/* Number of retry before failing access BBP & RF indirect register */
 
-//#define PHY_TR_SWITCH_TIME          5  // usec
+/*#define PHY_TR_SWITCH_TIME          5  // usec */
 
-//#define BBP_R17_LOW_SENSIBILITY     0x50
-//#define BBP_R17_MID_SENSIBILITY     0x41
-//#define BBP_R17_DYNAMIC_UP_BOUND    0x40
+/*#define BBP_R17_LOW_SENSIBILITY     0x50 */
+/*#define BBP_R17_MID_SENSIBILITY     0x41 */
+/*#define BBP_R17_DYNAMIC_UP_BOUND    0x40 */
 
 #define RSSI_FOR_VERY_LOW_SENSIBILITY   -35
 #define RSSI_FOR_LOW_SENSIBILITY		-58
@@ -182,7 +180,7 @@
 	if ((_A)->bPCIclkOff == FALSE)	                \
 	{												\
 		PHY_CSR4_STRUC  _value;                          \
-		ULONG           _busyCnt = 0;                    \
+		unsigned long           _busyCnt = 0;                    \
 											\
 		do {                                            \
 			RTMP_IO_READ32((_A), RF_CSR_CFG0, &_value.word);  \
@@ -196,15 +194,15 @@
 		}                                               \
 	}								\
 }
-#endif // RTMP_MAC_PCI //
+#endif /* RTMP_MAC_PCI // */
 #ifdef RTMP_MAC_USB
 #define RTMP_RF_IO_WRITE32(_A, _V)                 RTUSBWriteRFRegister(_A, _V)
-#endif // RTMP_MAC_USB //
+#endif /* RTMP_MAC_USB // */
 
 #ifdef RT30xx
 #define RTMP_RF_IO_READ8_BY_REG_ID(_A, _I, _pV)    RT30xxReadRFRegister(_A, _I, _pV)
 #define RTMP_RF_IO_WRITE8_BY_REG_ID(_A, _I, _V)    RT30xxWriteRFRegister(_A, _I, _V)
-#endif // RT30xx //
+#endif /* RT30xx // */
 
 /*****************************************************************************
 	BBP register Read/Write marco definitions.
@@ -214,7 +212,7 @@
 #ifdef RTMP_MAC_PCI
 /*
 	basic marco for BBP read operation.
-	_pAd: the data structure pointer of RTMP_ADAPTER
+	_pAd: the data structure pointer of struct rt_rtmp_adapter
 	_bbpID : the bbp register ID
 	_pV: data pointer used to save the value of queried bbp register.
 	_bViaMCU: if we need access the bbp via the MCU.
@@ -250,7 +248,7 @@
 			if ((BbpCsr.field.Busy == IDLE) &&              \
 				(BbpCsr.field.RegNum == _bbpID))                \
 			{                                               \
-				*(_pV) = (UCHAR)BbpCsr.field.Value;         \
+				*(_pV) = (u8)BbpCsr.field.Value;         \
 				break;                                      \
 			}                                               \
 		}                                                   \
@@ -278,19 +276,7 @@
 	But for some chipset which didn't have mcu (e.g., RBUS based chipset), we
 	will use this function too and didn't access the bbp register via the MCU.
 */
-#if 0
-#define RTMP_BBP_IO_READ8_BY_REG_ID(_A, _I, _pV)			\
-	do{														\
-		if ((_A)->bPCIclkOff == FALSE)							\
-		{													\
-			if ((_A)->infType == RTMP_DEV_INF_RBUS)			\
-				RTMP_BBP_IO_READ8((_A), (_I), (_pV), FALSE);	\
-			else												\
-				RTMP_BBP_IO_READ8((_A), (_I), (_pV), TRUE);	\
-		}													\
-	}while(0)
-#else
-// Read BBP register by register's ID. Generate PER to test BA
+/* Read BBP register by register's ID. Generate PER to test BA */
 #define RTMP_BBP_IO_READ8_BY_REG_ID(_A, _I, _pV)						\
 {																		\
 	BBP_CSR_CFG_STRUC	BbpCsr;											\
@@ -327,7 +313,7 @@
 				if ((BbpCsr.field.Busy == IDLE) &&								\
 					(BbpCsr.field.RegNum == _I))								\
 				{																\
-					*(_pV) = (UCHAR)BbpCsr.field.Value;							\
+					*(_pV) = (u8)BbpCsr.field.Value;							\
 					break;														\
 				}																\
 			}																\
@@ -365,7 +351,7 @@
 			if ((BbpCsr.field.Busy == IDLE) &&								\
 				(BbpCsr.field.RegNum == _I))								\
 			{																\
-				*(_pV) = (UCHAR)BbpCsr.field.Value;							\
+				*(_pV) = (u8)BbpCsr.field.Value;							\
 				break;														\
 			}																\
 		}																	\
@@ -381,11 +367,10 @@
 		*(_pV) = (_A)->BbpWriteLatch[_I];								\
 	}																	\
 }
-#endif // 0 //
 
 /*
 	basic marco for BBP write operation.
-	_pAd: the data structure pointer of RTMP_ADAPTER
+	_pAd: the data structure pointer of struct rt_rtmp_adapter
 	_bbpID : the bbp register ID
 	_pV: data used to save the value of queried bbp register.
 	_bViaMCU: if we need access the bbp via the MCU.
@@ -429,7 +414,6 @@
 		}														\
 	}while(0)
 
-
 /*
 	This marco used for the BBP write operation which didn't need via MCU.
 */
@@ -441,23 +425,11 @@
 	But for some chipset which didn't have mcu (e.g., RBUS based chipset), we
 	will use this function too and didn't access the bbp register via the MCU.
 */
-#if 0
-#define RTMP_BBP_IO_WRITE8_BY_REG_ID(_A, _I, _pV)			\
-	do{														\
-		if ((_A)->bPCIclkOff == FALSE)							\
-		{													\
-			if ((_A)->infType == RTMP_DEV_INF_RBUS)			\
-				RTMP_BBP_IO_WRITE8((_A), (_I), (_pV), FALSE);	\
-			else												\
-				RTMP_BBP_IO_WRITE8((_A), (_I), (_pV), TRUE);	\
-		}													\
-	}while(0)
-#else
-// Write BBP register by register's ID & value
+/* Write BBP register by register's ID & value */
 #define RTMP_BBP_IO_WRITE8_BY_REG_ID(_A, _I, _V)						\
 {																		\
 	BBP_CSR_CFG_STRUC	BbpCsr;											\
-	INT					BusyCnt = 0;										\
+	int					BusyCnt = 0;										\
 	BOOLEAN					brc;			\
 	if (_I < MAX_NUM_OF_BBP_LATCH)										\
 	{																	\
@@ -538,22 +510,21 @@
 		DBGPRINT_ERR(("****** BBP_Write_Latch Buffer exceeds max boundry ****** \n"));	\
 	}																		\
 }
-#endif // 0 //
+#endif /* RTMP_MAC_PCI // */
 
-#endif // RTMP_MAC_PCI //
 #ifdef RTMP_MAC_USB
 #define RTMP_BBP_IO_READ8_BY_REG_ID(_A, _I, _pV)   RTUSBReadBBPRegister(_A, _I, _pV)
 #define RTMP_BBP_IO_WRITE8_BY_REG_ID(_A, _I, _V)   RTUSBWriteBBPRegister(_A, _I, _V)
 
 #define BBP_IO_WRITE8_BY_REG_ID(_A, _I, _V)			RTUSBWriteBBPRegister(_A, _I, _V)
 #define BBP_IO_READ8_BY_REG_ID(_A, _I, _pV)		RTUSBReadBBPRegister(_A, _I, _pV)
-#endif // RTMP_MAC_USB //
+#endif /* RTMP_MAC_USB // */
 
 #ifdef RT30xx
 #define RTMP_ASIC_MMPS_DISABLE(_pAd)							\
 	do{															\
-		UCHAR _bbpData;											\
-		UINT32 _macData;											\
+		u32 _macData; \
+		u8 _bbpData = 0; \
 		/* disable MMPS BBP control register */						\
 		RTMP_BBP_IO_READ8_BY_REG_ID(_pAd, BBP_R3, &_bbpData);	\
 		_bbpData &= ~(0x04);	/*bit 2*/								\
@@ -565,11 +536,10 @@
 		RTMP_IO_WRITE32(_pAd, 0x1210, _macData);				\
 	}while(0)
 
-
 #define RTMP_ASIC_MMPS_ENABLE(_pAd)							\
 	do{															\
-		UCHAR _bbpData;											\
-		UINT32 _macData;											\
+		u32 _macData; \
+		u8 _bbpData = 0; \
 		/* enable MMPS BBP control register */						\
 		RTMP_BBP_IO_READ8_BY_REG_ID(_pAd, BBP_R3, &_bbpData);	\
 		_bbpData |= (0x04);	/*bit 2*/								\
@@ -581,6 +551,6 @@
 		RTMP_IO_WRITE32(_pAd, 0x1210, _macData);				\
 	}while(0)
 
-#endif // RT30xx //
+#endif /* RT30xx // */
 
-#endif // __RTMP_PHY_H__ //
+#endif /* __RTMP_PHY_H__ // */

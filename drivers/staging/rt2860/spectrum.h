@@ -31,10 +31,7 @@
 #include "rtmp_type.h"
 #include "spectrum_def.h"
 
-
-CHAR RTMP_GetTxPwr(
-	IN PRTMP_ADAPTER pAd,
-	IN HTTRANSMIT_SETTING HTTxMode);
+char RTMP_GetTxPwr(struct rt_rtmp_adapter *pAd, IN HTTRANSMIT_SETTING HTTxMode);
 
 /*
 	==========================================================================
@@ -48,17 +45,16 @@ CHAR RTMP_GetTxPwr(
 	Return	: None.
 	==========================================================================
  */
-VOID MakeMeasurementReqFrame(
-	IN PRTMP_ADAPTER pAd,
-	OUT PUCHAR pOutBuffer,
-	OUT PULONG pFrameLen,
-	IN UINT8 TotalLen,
-	IN UINT8 Category,
-	IN UINT8 Action,
-	IN UINT8 MeasureToken,
-	IN UINT8 MeasureReqMode,
-	IN UINT8 MeasureReqType,
-	IN UINT8 NumOfRepetitions);
+void MakeMeasurementReqFrame(struct rt_rtmp_adapter *pAd,
+			     u8 *pOutBuffer,
+			     unsigned long *pFrameLen,
+			     u8 TotalLen,
+			     u8 Category,
+			     u8 Action,
+			     u8 MeasureToken,
+			     u8 MeasureReqMode,
+			     u8 MeasureReqType,
+			     u8 NumOfRepetitions);
 
 /*
 	==========================================================================
@@ -72,15 +68,13 @@ VOID MakeMeasurementReqFrame(
 	Return	: None.
 	==========================================================================
  */
-VOID EnqueueMeasurementRep(
-	IN PRTMP_ADAPTER pAd,
-	IN PUCHAR pDA,
-	IN UINT8 DialogToken,
-	IN UINT8 MeasureToken,
-	IN UINT8 MeasureReqMode,
-	IN UINT8 MeasureReqType,
-	IN UINT8 ReportInfoLen,
-	IN PUINT8 pReportInfo);
+void EnqueueMeasurementRep(struct rt_rtmp_adapter *pAd,
+			   u8 *pDA,
+			   u8 DialogToken,
+			   u8 MeasureToken,
+			   u8 MeasureReqMode,
+			   u8 MeasureReqType,
+			   u8 ReportInfoLen, u8 *pReportInfo);
 
 /*
 	==========================================================================
@@ -94,10 +88,7 @@ VOID EnqueueMeasurementRep(
 	Return	: None.
 	==========================================================================
  */
-VOID EnqueueTPCReq(
-	IN PRTMP_ADAPTER pAd,
-	IN PUCHAR pDA,
-	IN UCHAR DialogToken);
+void EnqueueTPCReq(struct rt_rtmp_adapter *pAd, u8 *pDA, u8 DialogToken);
 
 /*
 	==========================================================================
@@ -111,12 +102,9 @@ VOID EnqueueTPCReq(
 	Return	: None.
 	==========================================================================
  */
-VOID EnqueueTPCRep(
-	IN PRTMP_ADAPTER pAd,
-	IN PUCHAR pDA,
-	IN UINT8 DialogToken,
-	IN UINT8 TxPwr,
-	IN UINT8 LinkMargin);
+void EnqueueTPCRep(struct rt_rtmp_adapter *pAd,
+		   u8 *pDA,
+		   u8 DialogToken, u8 TxPwr, u8 LinkMargin);
 
 /*
 	==========================================================================
@@ -132,11 +120,8 @@ VOID EnqueueTPCRep(
 	Return	: None.
 	==========================================================================
  */
-VOID EnqueueChSwAnn(
-	IN PRTMP_ADAPTER pAd,
-	IN PUCHAR pDA,
-	IN UINT8 ChSwMode,
-	IN UINT8 NewCh);
+void EnqueueChSwAnn(struct rt_rtmp_adapter *pAd,
+		    u8 *pDA, u8 ChSwMode, u8 NewCh);
 
 /*
 	==========================================================================
@@ -150,9 +135,7 @@ VOID EnqueueChSwAnn(
 	Return	: None.
 	==========================================================================
  */
-VOID PeerSpectrumAction(
-    IN PRTMP_ADAPTER pAd,
-    IN MLME_QUEUE_ELEM *Elem);
+void PeerSpectrumAction(struct rt_rtmp_adapter *pAd, struct rt_mlme_queue_elem *Elem);
 
 /*
 	==========================================================================
@@ -163,73 +146,44 @@ VOID PeerSpectrumAction(
 	Return	: None.
 	==========================================================================
  */
-INT Set_MeasureReq_Proc(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PSTRING			arg);
+int Set_MeasureReq_Proc(struct rt_rtmp_adapter *pAd, char *arg);
 
-INT Set_TpcReq_Proc(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PSTRING			arg);
+int Set_TpcReq_Proc(struct rt_rtmp_adapter *pAd, char *arg);
 
-INT Set_PwrConstraint(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PSTRING			arg);
+int Set_PwrConstraint(struct rt_rtmp_adapter *pAd, char *arg);
 
+void MeasureReqTabInit(struct rt_rtmp_adapter *pAd);
 
-VOID MeasureReqTabInit(
-	IN PRTMP_ADAPTER pAd);
+void MeasureReqTabExit(struct rt_rtmp_adapter *pAd);
 
-VOID MeasureReqTabExit(
-	IN PRTMP_ADAPTER pAd);
+struct rt_measure_req_entry *MeasureReqLookUp(struct rt_rtmp_adapter *pAd, u8 DialogToken);
 
-PMEASURE_REQ_ENTRY MeasureReqLookUp(
-	IN PRTMP_ADAPTER	pAd,
-	IN UINT8			DialogToken);
+struct rt_measure_req_entry *MeasureReqInsert(struct rt_rtmp_adapter *pAd, u8 DialogToken);
 
-PMEASURE_REQ_ENTRY MeasureReqInsert(
-	IN PRTMP_ADAPTER	pAd,
-	IN UINT8			DialogToken);
+void MeasureReqDelete(struct rt_rtmp_adapter *pAd, u8 DialogToken);
 
-VOID MeasureReqDelete(
-	IN PRTMP_ADAPTER	pAd,
-	IN UINT8			DialogToken);
+void InsertChannelRepIE(struct rt_rtmp_adapter *pAd,
+			u8 *pFrameBuf,
+			unsigned long *pFrameLen,
+			char *pCountry, u8 RegulatoryClass);
 
-VOID InsertChannelRepIE(
-	IN PRTMP_ADAPTER pAd,
-	OUT PUCHAR pFrameBuf,
-	OUT PULONG pFrameLen,
-	IN PSTRING pCountry,
-	IN UINT8 RegulatoryClass);
+void InsertTpcReportIE(struct rt_rtmp_adapter *pAd,
+		       u8 *pFrameBuf,
+		       unsigned long *pFrameLen,
+		       u8 TxPwr, u8 LinkMargin);
 
-VOID InsertTpcReportIE(
-	IN PRTMP_ADAPTER pAd,
-	OUT PUCHAR pFrameBuf,
-	OUT PULONG pFrameLen,
-	IN UINT8 TxPwr,
-	IN UINT8 LinkMargin);
+void InsertDialogToken(struct rt_rtmp_adapter *pAd,
+		       u8 *pFrameBuf,
+		       unsigned long *pFrameLen, u8 DialogToken);
 
-VOID InsertDialogToken(
-	IN PRTMP_ADAPTER pAd,
-	OUT PUCHAR pFrameBuf,
-	OUT PULONG pFrameLen,
-	IN UINT8 DialogToken);
+void TpcReqTabInit(struct rt_rtmp_adapter *pAd);
 
-VOID TpcReqTabInit(
-	IN PRTMP_ADAPTER pAd);
+void TpcReqTabExit(struct rt_rtmp_adapter *pAd);
 
-VOID TpcReqTabExit(
-	IN PRTMP_ADAPTER pAd);
+void NotifyChSwAnnToPeerAPs(struct rt_rtmp_adapter *pAd,
+			    u8 *pRA,
+			    u8 *pTA, u8 ChSwMode, u8 Channel);
 
-VOID NotifyChSwAnnToPeerAPs(
-	IN PRTMP_ADAPTER pAd,
-	IN PUCHAR pRA,
-	IN PUCHAR pTA,
-	IN UINT8 ChSwMode,
-	IN UINT8 Channel);
-
-VOID RguClass_BuildBcnChList(
-	IN PRTMP_ADAPTER pAd,
-	OUT PUCHAR pBuf,
-	OUT	PULONG pBufLen);
-#endif // __SPECTRUM_H__ //
-
+void RguClass_BuildBcnChList(struct rt_rtmp_adapter *pAd,
+			     u8 *pBuf, unsigned long *pBufLen);
+#endif /* __SPECTRUM_H__ // */

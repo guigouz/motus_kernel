@@ -28,7 +28,6 @@ rt2870sta-objs :=		\
 	common/spectrum.o	\
 	common/rtmp_timer.o	\
 	common/rt_channel.o	\
-	common/cmm_profile.o	\
 	common/cmm_asic.o	\
 	sta/assoc.o		\
 	sta/auth.o		\
@@ -39,7 +38,6 @@ rt2870sta-objs :=		\
 	sta/connect.o		\
 	sta/wpa.o		\
 	rt_linux.o		\
-	rt_profile.o		\
 	rt_main_dev.o		\
 	sta_ioctl.o		\
 	common/ba_action.o	\

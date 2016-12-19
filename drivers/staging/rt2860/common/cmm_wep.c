@@ -37,8 +37,7 @@
 
 #include	"../rt_config.h"
 
-UINT FCSTAB_32[256] =
-{
+u32 FCSTAB_32[256] = {
 	0x00000000, 0x77073096, 0xee0e612c, 0x990951ba,
 	0x076dc419, 0x706af48f, 0xe963a535, 0x9e6495a3,
 	0x0edb8832, 0x79dcb8a4, 0xe0d5e91e, 0x97d2d988,
@@ -106,7 +105,7 @@ UINT FCSTAB_32[256] =
 };
 
 /*
-UCHAR   WEPKEY[] = {
+u8   WEPKEY[] = {
 		//IV
 		0x00, 0x11, 0x22,
 		//WEP KEY
@@ -136,33 +135,31 @@ UCHAR   WEPKEY[] = {
 
 	========================================================================
 */
-VOID	RTMPInitWepEngine(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PUCHAR			pKey,
-	IN	UCHAR			KeyId,
-	IN	UCHAR			KeyLen,
-	IN OUT	PUCHAR		pDest)
+void RTMPInitWepEngine(struct rt_rtmp_adapter *pAd,
+		       u8 *pKey,
+		       u8 KeyId, u8 KeyLen, IN u8 *pDest)
 {
-	UINT i;
-	UCHAR   WEPKEY[] = {
-		//IV
+	u32 i;
+	u8 WEPKEY[] = {
+		/*IV */
 		0x00, 0x11, 0x22,
-		//WEP KEY
-		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC
+		/*WEP KEY */
+		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+		    0xAA, 0xBB, 0xCC
 	};
 
-	pAd->PrivateInfo.FCSCRC32 = PPPINITFCS32;   //Init crc32.
+	pAd->PrivateInfo.FCSCRC32 = PPPINITFCS32;	/*Init crc32. */
 
-    {
+	{
 		NdisMoveMemory(WEPKEY + 3, pKey, KeyLen);
 
-        for(i = 0; i < 3; i++)
-			WEPKEY[i] = RandomByte(pAd);   //Call mlme RandomByte() function.
-		ARCFOUR_INIT(&pAd->PrivateInfo.WEPCONTEXT, WEPKEY, KeyLen + 3);  //INIT SBOX, KEYLEN+3(IV)
+		for (i = 0; i < 3; i++)
+			WEPKEY[i] = RandomByte(pAd);	/*Call mlme RandomByte() function. */
+		ARCFOUR_INIT(&pAd->PrivateInfo.WEPCONTEXT, WEPKEY, KeyLen + 3);	/*INIT SBOX, KEYLEN+3(IV) */
 
-		NdisMoveMemory(pDest, WEPKEY, 3);  //Append Init Vector
-    }
-	*(pDest+3) = (KeyId << 6);       //Append KEYID
+		NdisMoveMemory(pDest, WEPKEY, 3);	/*Append Init Vector */
+	}
+	*(pDest + 3) = (KeyId << 6);	/*Append KEYID */
 
 }
 
@@ -187,16 +184,13 @@ VOID	RTMPInitWepEngine(
 
 	========================================================================
 */
-VOID	RTMPEncryptData(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PUCHAR			pSrc,
-	IN	PUCHAR			pDest,
-	IN	UINT			Len)
+void RTMPEncryptData(struct rt_rtmp_adapter *pAd,
+		     u8 *pSrc, u8 *pDest, u32 Len)
 {
-	pAd->PrivateInfo.FCSCRC32 = RTMP_CALC_FCS32(pAd->PrivateInfo.FCSCRC32, pSrc, Len);
+	pAd->PrivateInfo.FCSCRC32 =
+	    RTMP_CALC_FCS32(pAd->PrivateInfo.FCSCRC32, pSrc, Len);
 	ARCFOUR_ENCRYPT(&pAd->PrivateInfo.WEPCONTEXT, pDest, pSrc, Len);
 }
-
 
 /*
 	========================================================================
@@ -217,40 +211,41 @@ VOID	RTMPEncryptData(
 
 	========================================================================
 */
-BOOLEAN	RTMPSoftDecryptWEP(
-	IN PRTMP_ADAPTER	pAd,
-	IN PUCHAR			pData,
-	IN ULONG			DataByteCnt,
-	IN PCIPHER_KEY		pGroupKey)
+BOOLEAN RTMPSoftDecryptWEP(struct rt_rtmp_adapter *pAd,
+			   u8 *pData,
+			   unsigned long DataByteCnt, struct rt_cipher_key *pGroupKey)
 {
-	UINT	trailfcs;
-	UINT    crc32;
-	UCHAR	KeyIdx;
-	UCHAR   WEPKEY[] = {
-		//IV
+	u32 trailfcs;
+	u32 crc32;
+	u8 KeyIdx;
+	u8 WEPKEY[] = {
+		/*IV */
 		0x00, 0x11, 0x22,
-		//WEP KEY
-		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC
+		/*WEP KEY */
+		0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+		    0xAA, 0xBB, 0xCC
 	};
-	UCHAR	*pPayload = (UCHAR *)pData + LENGTH_802_11;
-	ULONG	payload_len = DataByteCnt - LENGTH_802_11;
+	u8 *pPayload = (u8 *) pData + LENGTH_802_11;
+	unsigned long payload_len = DataByteCnt - LENGTH_802_11;
 
-	NdisMoveMemory(WEPKEY, pPayload, 3);    //Get WEP IV
+	NdisMoveMemory(WEPKEY, pPayload, 3);	/*Get WEP IV */
 
 	KeyIdx = (*(pPayload + 3) & 0xc0) >> 6;
 	if (pGroupKey[KeyIdx].KeyLen == 0)
 		return (FALSE);
 
-	NdisMoveMemory(WEPKEY + 3, pGroupKey[KeyIdx].Key, pGroupKey[KeyIdx].KeyLen);
-	ARCFOUR_INIT(&pAd->PrivateInfo.WEPCONTEXT, WEPKEY, pGroupKey[KeyIdx].KeyLen + 3);
-	ARCFOUR_DECRYPT(&pAd->PrivateInfo.WEPCONTEXT, pPayload, pPayload + 4, payload_len - 4);
+	NdisMoveMemory(WEPKEY + 3, pGroupKey[KeyIdx].Key,
+		       pGroupKey[KeyIdx].KeyLen);
+	ARCFOUR_INIT(&pAd->PrivateInfo.WEPCONTEXT, WEPKEY,
+		     pGroupKey[KeyIdx].KeyLen + 3);
+	ARCFOUR_DECRYPT(&pAd->PrivateInfo.WEPCONTEXT, pPayload, pPayload + 4,
+			payload_len - 4);
 	NdisMoveMemory(&trailfcs, pPayload + payload_len - 8, 4);
-	crc32 = RTMP_CALC_FCS32(PPPINITFCS32, pPayload, payload_len - 8);  //Skip last 4 bytes(FCS).
-	crc32 ^= 0xffffffff;             /* complement */
+	crc32 = RTMP_CALC_FCS32(PPPINITFCS32, pPayload, payload_len - 8);	/*Skip last 4 bytes(FCS). */
+	crc32 ^= 0xffffffff;	/* complement */
 
-    if(crc32 != cpu2le32(trailfcs))
-    {
-		DBGPRINT(RT_DEBUG_TRACE, ("! WEP Data CRC Error !\n"));	 //CRC error.
+	if (crc32 != cpu2le32(trailfcs)) {
+		DBGPRINT(RT_DEBUG_TRACE, ("WEP Data CRC Error!\n"));	/*CRC error. */
 		return (FALSE);
 	}
 	return (TRUE);
@@ -260,10 +255,10 @@ BOOLEAN	RTMPSoftDecryptWEP(
 	========================================================================
 
 	Routine	Description:
-		The Stream Cipher Encryption Algorithm "ARCFOUR" initialize
+		The Stream Cipher Encryption Algorithm "struct rt_arcfour" initialize
 
 	Arguments:
-	   Ctx         Pointer to ARCFOUR CONTEXT (SBOX)
+	   Ctx         Pointer to struct rt_arcfour CONTEXT (SBOX)
 		pKey        Pointer to the WEP KEY
 		KeyLen      Indicate the length fo the WEP KEY
 
@@ -276,26 +271,22 @@ BOOLEAN	RTMPSoftDecryptWEP(
 
 	========================================================================
 */
-VOID	ARCFOUR_INIT(
-	IN	PARCFOURCONTEXT	Ctx,
-	IN	PUCHAR			pKey,
-	IN	UINT			KeyLen)
+void ARCFOUR_INIT(struct rt_arcfourcontext *Ctx, u8 *pKey, u32 KeyLen)
 {
-	UCHAR	t, u;
-	UINT	keyindex;
-	UINT	stateindex;
-	PUCHAR	state;
-	UINT	counter;
+	u8 t, u;
+	u32 keyindex;
+	u32 stateindex;
+	u8 *state;
+	u32 counter;
 
 	state = Ctx->STATE;
 	Ctx->X = 0;
 	Ctx->Y = 0;
 	for (counter = 0; counter < 256; counter++)
-		state[counter] = (UCHAR)counter;
+		state[counter] = (u8)counter;
 	keyindex = 0;
 	stateindex = 0;
-	for (counter = 0; counter < 256; counter++)
-	{
+	for (counter = 0; counter < 256; counter++) {
 		t = state[counter];
 		stateindex = (stateindex + pKey[keyindex] + t) & 0xff;
 		u = state[stateindex];
@@ -310,37 +301,36 @@ VOID	ARCFOUR_INIT(
 	========================================================================
 
 	Routine	Description:
-		Get bytes from ARCFOUR CONTEXT (S-BOX)
+		Get bytes from struct rt_arcfour CONTEXT (S-BOX)
 
 	Arguments:
-	   Ctx         Pointer to ARCFOUR CONTEXT (SBOX)
+	   Ctx         Pointer to struct rt_arcfour CONTEXT (SBOX)
 
 	Return Value:
-	   UCHAR  - the value of the ARCFOUR CONTEXT (S-BOX)
+	   u8  - the value of the struct rt_arcfour CONTEXT (S-BOX)
 
 	Note:
 
 	========================================================================
 */
-UCHAR	ARCFOUR_BYTE(
-	IN	PARCFOURCONTEXT		Ctx)
+u8 ARCFOUR_BYTE(struct rt_arcfourcontext *Ctx)
 {
-  UINT x;
-  UINT y;
-  UCHAR sx, sy;
-  PUCHAR state;
+	u32 x;
+	u32 y;
+	u8 sx, sy;
+	u8 *state;
 
-  state = Ctx->STATE;
-  x = (Ctx->X + 1) & 0xff;
-  sx = state[x];
-  y = (sx + Ctx->Y) & 0xff;
-  sy = state[y];
-  Ctx->X = x;
-  Ctx->Y = y;
-  state[y] = sx;
-  state[x] = sy;
+	state = Ctx->STATE;
+	x = (Ctx->X + 1) & 0xff;
+	sx = state[x];
+	y = (sx + Ctx->Y) & 0xff;
+	sy = state[y];
+	Ctx->X = x;
+	Ctx->Y = y;
+	state[y] = sx;
+	state[x] = sy;
 
-  return(state[(sx + sy) & 0xff]);
+	return (state[(sx + sy) & 0xff]);
 
 }
 
@@ -351,7 +341,7 @@ UCHAR	ARCFOUR_BYTE(
 		The Stream Cipher Decryption Algorithm
 
 	Arguments:
-		Ctx         Pointer to ARCFOUR CONTEXT (SBOX)
+		Ctx         Pointer to struct rt_arcfour CONTEXT (SBOX)
 		pDest			Pointer to the Destination
 		pSrc        Pointer to the Source data
 		Len         Indicate the length of the Source data
@@ -363,13 +353,10 @@ UCHAR	ARCFOUR_BYTE(
 
 	========================================================================
 */
-VOID	ARCFOUR_DECRYPT(
-	IN	PARCFOURCONTEXT	Ctx,
-	IN	PUCHAR			pDest,
-	IN	PUCHAR			pSrc,
-	IN	UINT			Len)
+void ARCFOUR_DECRYPT(struct rt_arcfourcontext *Ctx,
+		     u8 *pDest, u8 *pSrc, u32 Len)
 {
-	UINT i;
+	u32 i;
 
 	for (i = 0; i < Len; i++)
 		pDest[i] = pSrc[i] ^ ARCFOUR_BYTE(Ctx);
@@ -382,7 +369,7 @@ VOID	ARCFOUR_DECRYPT(
 		The Stream Cipher Encryption Algorithm
 
 	Arguments:
-		Ctx         Pointer to ARCFOUR CONTEXT (SBOX)
+		Ctx         Pointer to struct rt_arcfour CONTEXT (SBOX)
 		pDest			Pointer to the Destination
 		pSrc        Pointer to the Source data
 		Len         Indicate the length of the Source dta
@@ -396,13 +383,10 @@ VOID	ARCFOUR_DECRYPT(
 
 	========================================================================
 */
-VOID	ARCFOUR_ENCRYPT(
-	IN	PARCFOURCONTEXT	Ctx,
-	IN	PUCHAR			pDest,
-	IN	PUCHAR			pSrc,
-	IN	UINT			Len)
+void ARCFOUR_ENCRYPT(struct rt_arcfourcontext *Ctx,
+		     u8 *pDest, u8 *pSrc, u32 Len)
 {
-	UINT i;
+	u32 i;
 
 	for (i = 0; i < Len; i++)
 		pDest[i] = pSrc[i] ^ ARCFOUR_BYTE(Ctx);
@@ -415,30 +399,25 @@ VOID	ARCFOUR_ENCRYPT(
 		The Stream Cipher Encryption Algorithm which conform to the special requirement to encrypt  GTK.
 
 	Arguments:
-		Ctx         Pointer to ARCFOUR CONTEXT (SBOX)
+		Ctx         Pointer to struct rt_arcfour CONTEXT (SBOX)
 		pDest			Pointer to the Destination
 		pSrc        Pointer to the Source data
 		Len         Indicate the length of the Source dta
 
-
 	========================================================================
 */
 
-VOID	WPAARCFOUR_ENCRYPT(
-	IN	PARCFOURCONTEXT	Ctx,
-	IN	PUCHAR			pDest,
-	IN	PUCHAR			pSrc,
-	IN	UINT			Len)
+void WPAARCFOUR_ENCRYPT(struct rt_arcfourcontext *Ctx,
+			u8 *pDest, u8 *pSrc, u32 Len)
 {
-	UINT i;
-        //discard first 256 bytes
+	u32 i;
+	/*discard first 256 bytes */
 	for (i = 0; i < 256; i++)
-            ARCFOUR_BYTE(Ctx);
+		ARCFOUR_BYTE(Ctx);
 
 	for (i = 0; i < Len; i++)
 		pDest[i] = pSrc[i] ^ ARCFOUR_BYTE(Ctx);
 }
-
 
 /*
 	========================================================================
@@ -452,7 +431,7 @@ VOID	WPAARCFOUR_ENCRYPT(
 		Len         the length of the data
 
 	Return Value:
-		UINT - FCS 32 bits
+		u32 - FCS 32 bits
 
 	IRQL = DISPATCH_LEVEL
 
@@ -460,17 +439,13 @@ VOID	WPAARCFOUR_ENCRYPT(
 
 	========================================================================
 */
-UINT	RTMP_CALC_FCS32(
-	IN	UINT	Fcs,
-	IN	PUCHAR	Cp,
-	IN	INT		Len)
+u32 RTMP_CALC_FCS32(u32 Fcs, u8 *Cp, int Len)
 {
 	while (Len--)
-	   Fcs = (((Fcs) >> 8) ^ FCSTAB_32[((Fcs) ^ (*Cp++)) & 0xff]);
+		Fcs = (((Fcs) >> 8) ^ FCSTAB_32[((Fcs) ^ (*Cp++)) & 0xff]);
 
 	return (Fcs);
 }
-
 
 /*
 	========================================================================
@@ -488,12 +463,11 @@ UINT	RTMP_CALC_FCS32(
 
 	========================================================================
 */
-VOID	RTMPSetICV(
-	IN	PRTMP_ADAPTER	pAd,
-	IN	PUCHAR	pDest)
+void RTMPSetICV(struct rt_rtmp_adapter *pAd, u8 *pDest)
 {
-	pAd->PrivateInfo.FCSCRC32 ^= 0xffffffff;             /* complement */
+	pAd->PrivateInfo.FCSCRC32 ^= 0xffffffff;	/* complement */
 	pAd->PrivateInfo.FCSCRC32 = cpu2le32(pAd->PrivateInfo.FCSCRC32);
 
-	ARCFOUR_ENCRYPT(&pAd->PrivateInfo.WEPCONTEXT, pDest, (PUCHAR) &pAd->PrivateInfo.FCSCRC32, 4);
+	ARCFOUR_ENCRYPT(&pAd->PrivateInfo.WEPCONTEXT, pDest,
+			(u8 *)& pAd->PrivateInfo.FCSCRC32, 4);
 }
