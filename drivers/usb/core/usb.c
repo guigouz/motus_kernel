@@ -130,14 +130,9 @@ struct usb_host_interface *usb_altnum_to_altsetting(
 }
 EXPORT_SYMBOL_GPL(usb_altnum_to_altsetting);
 
-struct find_interface_arg {
-	int minor;
-	struct device_driver *drv;
-};
-
 static int __find_interface(struct device *dev, void *data)
 {
-	struct find_interface_arg *arg = data;
+	int *minor = data;
 	struct usb_interface *intf;
 
 	if (!is_usb_interface(dev))
@@ -146,7 +141,9 @@ static int __find_interface(struct device *dev, void *data)
 	if (dev->driver != arg->drv)
 		return 0;
 	intf = to_usb_interface(dev);
-	return intf->minor == arg->minor;
+	if (intf->minor != -1 && intf->minor == *minor)
+		return 1;
+	return 0;
 }
 
 /**
@@ -155,18 +152,14 @@ static int __find_interface(struct device *dev, void *data)
  * @minor: the minor number of the desired device
  *
  * This walks the bus device list and returns a pointer to the interface
- * with the matching minor and driver.  Note, this only works for devices
- * that share the USB major number.
+ * with the matching minor.  Note, this only works for devices that share the
+ * USB major number.
  */
 struct usb_interface *usb_find_interface(struct usb_driver *drv, int minor)
 {
-	struct find_interface_arg argb;
 	struct device *dev;
 
-	argb.minor = minor;
-	argb.drv = &drv->drvwrap.driver;
-
-	dev = bus_find_device(&usb_bus_type, NULL, &argb, __find_interface);
+	dev = bus_find_device(&usb_bus_type, NULL, &minor, __find_interface);
 
 	/* Drop reference count from bus_find_device */
 	put_device(dev);
