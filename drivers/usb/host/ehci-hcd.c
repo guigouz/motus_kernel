@@ -618,6 +618,8 @@ static int ehci_init(struct usb_hcd *hcd)
 	}
 	ehci->command = temp;
 
+	/* Accept arbitrarily long scatter-gather lists */
+	hcd->self.sg_tablesize = ~0;
 	return 0;
 }
 
