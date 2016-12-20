@@ -167,19 +167,24 @@ struct usb_host_interface *usb_altnum_to_altsetting(
 }
 EXPORT_SYMBOL_GPL(usb_altnum_to_altsetting);
 
+struct find_interface_arg {
+	int minor;
+	struct usb_interface *interface;
+};
+
 static int __find_interface(struct device *dev, void *data)
 {
-	int *minor = data;
+	struct find_interface_arg *arg = data;
 	struct usb_interface *intf;
 
 	if (!is_usb_interface(dev))
 		return 0;
 
-	if (dev->driver != arg->drv)
-		return 0;
 	intf = to_usb_interface(dev);
-	if (intf->minor != -1 && intf->minor == *minor)
+	if (intf->minor != -1 && intf->minor == arg->minor) {
+		arg->interface = intf;
 		return 1;
+	}
 	return 0;
 }
 
