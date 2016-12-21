@@ -505,8 +505,6 @@ static void do_tty_hangup(struct work_struct *work)
 	if (!tty)
 		return;
 
-	/* inuse_filps is protected by the single kernel lock */
-	lock_kernel();
 
 	spin_lock(&redirect_lock);
 	if (redirect && redirect->private_data == tty) {
@@ -515,7 +513,11 @@ static void do_tty_hangup(struct work_struct *work)
 	}
 	spin_unlock(&redirect_lock);
 
+	/* inuse_filps is protected by the single kernel lock */
+	lock_kernel();
 	check_tty_count(tty, "do_tty_hangup");
+	unlock_kernel();
+
 	file_list_lock();
 	/* This breaks for file handles being sent over AF_UNIX sockets ? */
 	list_for_each_entry(filp, &tty->tty_files, f_u.fu_list) {
@@ -529,6 +531,7 @@ static void do_tty_hangup(struct work_struct *work)
 	}
 	file_list_unlock();
 
+	lock_kernel();
 	tty_ldisc_hangup(tty);
 
 	read_lock(&tasklist_lock);
@@ -707,6 +710,8 @@ void disassociate_ctty(int on_exit)
 	struct tty_struct *tty;
 	struct pid *tty_pgrp = NULL;
 
+	if (!current->signal->leader)
+		return;
 
 	tty = get_current_tty();
 	if (tty) {
@@ -772,8 +777,7 @@ void no_tty(void)
 {
 	struct task_struct *tsk = current;
 	lock_kernel();
-	if (tsk->signal->leader)
-		disassociate_ctty(0);
+	disassociate_ctty(0);
 	unlock_kernel();
 	proc_clear_tty(tsk);
 }
@@ -1347,9 +1351,7 @@ struct tty_struct *tty_init_dev(struct tty_driver *driver, int idx,
 	 * If we fail here just call release_tty to clean up.  No need
 	 * to decrement the use counts, as release_tty doesn't care.
 	 */
-	lock_kernel();
 	retval = tty_ldisc_setup(tty, tty->link);
-	unlock_kernel();
 	if (retval)
 		goto release_mem_out;
 	return tty;
