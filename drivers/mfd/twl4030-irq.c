@@ -296,7 +296,7 @@ static int twl4030_irq_thread(void *data)
 		/* Wait for IRQ, then read PIH irq status (also blocking) */
 		wait_for_completion_interruptible(&irq_event);
 
-		ret = twl4030_i2c_read_u8(TWL4030_MODULE_PIH, &pih_isr,
+		ret = twl_i2c_read_u8(TWL4030_MODULE_PIH, &pih_isr,
 					  REG_PIH_ISR_P1);
 		if (ret) {
 			pr_warning("twl4030: I2C error %d reading PIH ISR\n",
@@ -396,7 +396,7 @@ static int twl4030_init_sih_modules(unsigned line)
 		if (sih->irq_lines <= line)
 			continue;
 
-		status = twl4030_i2c_write(sih->module, buf,
+		status = twl_i2c_write(sih->module, buf,
 				sih->mask[line].imr_offset, sih->bytes_ixr);
 		if (status < 0)
 			pr_err("twl4030: err %d initializing %s %s\n",
@@ -410,7 +410,7 @@ static int twl4030_init_sih_modules(unsigned line)
 		 * And for PWR_INT it's not documented...
 		 */
 		if (sih->set_cor) {
-			status = twl4030_i2c_write_u8(sih->module,
+			status = twl_i2c_write_u8(sih->module,
 					TWL4030_SIH_CTRL_COR_MASK,
 					sih->control_offset);
 			if (status < 0)
@@ -438,14 +438,14 @@ static int twl4030_init_sih_modules(unsigned line)
 		 * uncommon with PWR_INT.PWRON.
 		 */
 		for (j = 0; j < 2; j++) {
-			status = twl4030_i2c_read(sih->module, rxbuf,
+			status = twl_i2c_read(sih->module, rxbuf,
 				sih->mask[line].isr_offset, sih->bytes_ixr);
 			if (status < 0)
 				pr_err("twl4030: err %d initializing %s %s\n",
 					status, sih->name, "ISR");
 
 			if (!sih->set_cor)
-				status = twl4030_i2c_write(sih->module, buf,
+				status = twl_i2c_write(sih->module, buf,
 					sih->mask[line].isr_offset,
 					sih->bytes_ixr);
 			/* else COR=1 means read sufficed.
@@ -514,7 +514,7 @@ static void twl4030_sih_do_mask(struct work_struct *work)
 		return;
 
 	/* write the whole mask ... simpler than subsetting it */
-	status = twl4030_i2c_write(sih->module, imr.bytes,
+	status = twl_i2c_write(sih->module, imr.bytes,
 			sih->mask[irq_line].imr_offset, sih->bytes_ixr);
 	if (status)
 		pr_err("twl4030: %s, %s --> %d\n", __func__,
@@ -545,7 +545,7 @@ static void twl4030_sih_do_edge(struct work_struct *work)
 	 * any processor on the other IRQ line, EDR registers are
 	 * shared.
 	 */
-	status = twl4030_i2c_read(sih->module, bytes + 1,
+	status = twl_i2c_read(sih->module, bytes + 1,
 			sih->edr_offset, sih->bytes_edr);
 	if (status) {
 		pr_err("twl4030: %s, %s --> %d\n", __func__,
@@ -579,7 +579,7 @@ static void twl4030_sih_do_edge(struct work_struct *work)
 	}
 
 	/* Write */
-	status = twl4030_i2c_write(sih->module, bytes,
+	status = twl_i2c_write(sih->module, bytes,
 			sih->edr_offset, sih->bytes_edr);
 	if (status)
 		pr_err("twl4030: %s, %s --> %d\n", __func__,
@@ -664,7 +664,7 @@ static inline int sih_read_isr(const struct sih *sih)
 	/* FIXME need retry-on-error ... */
 
 	isr.word = 0;
-	status = twl4030_i2c_read(sih->module, isr.bytes,
+	status = twl_i2c_read(sih->module, isr.bytes,
 			sih->mask[irq_line].isr_offset, sih->bytes_ixr);
 
 	return (status < 0) ? status : le32_to_cpu(isr.word);
@@ -778,7 +778,7 @@ int twl4030_sih_setup(int module)
 /* FIXME pass in which interrupt line we'll use ... */
 #define twl_irq_line	0
 
-int twl_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
+int twl4030_init_irq(int irq_num, unsigned irq_base, unsigned irq_end)
 {
 	static struct irq_chip	twl4030_irq_chip;
 
@@ -858,7 +858,7 @@ fail:
 	return status;
 }
 
-int twl_exit_irq(void)
+int twl4030_exit_irq(void)
 {
 	/* FIXME undo twl_init_irq() */
 	if (twl4030_irq_base) {
@@ -868,7 +868,7 @@ int twl_exit_irq(void)
 	return 0;
 }
 
-int twl_init_chip_irq(const char *chip)
+int twl4030_init_chip_irq(const char *chip)
 {
 	if (!strcmp(chip, "twl5031")) {
 		sih_modules = sih_modules_twl5031;

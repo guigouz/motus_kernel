@@ -22,8 +22,8 @@
  *
  */
 
-#ifndef __TWL4030_H_
-#define __TWL4030_H_
+#ifndef __TWL_H_
+#define __TWL_H_
 
 #include <linux/types.h>
 #include <linux/input/matrix_keypad.h>
@@ -72,20 +72,101 @@
 #define TWL4030_MODULE_RTC		0x16
 #define TWL4030_MODULE_SECURED_REG	0x17
 
+#define TWL_MODULE_USB		TWL4030_MODULE_USB
+#define TWL_MODULE_AUDIO_VOICE	TWL4030_MODULE_AUDIO_VOICE
+#define TWL_MODULE_PIH		TWL4030_MODULE_PIH
+#define TWL_MODULE_MADC		TWL4030_MODULE_MADC
+#define TWL_MODULE_MAIN_CHARGE	TWL4030_MODULE_MAIN_CHARGE
+#define TWL_MODULE_PM_MASTER	TWL4030_MODULE_PM_MASTER
+#define TWL_MODULE_PM_RECEIVER	TWL4030_MODULE_PM_RECEIVER
+#define TWL_MODULE_RTC		TWL4030_MODULE_RTC
+
+#define GPIO_INTR_OFFSET	0
+#define KEYPAD_INTR_OFFSET	1
+#define BCI_INTR_OFFSET		2
+#define MADC_INTR_OFFSET	3
+#define USB_INTR_OFFSET		4
+#define BCI_PRES_INTR_OFFSET	9
+#define USB_PRES_INTR_OFFSET	10
+#define RTC_INTR_OFFSET		11
+
+/*
+ * Offset from TWL6030_IRQ_BASE / pdata->irq_base
+ */
+#define PWR_INTR_OFFSET		0
+#define HOTDIE_INTR_OFFSET	12
+#define SMPSLDO_INTR_OFFSET	13
+#define BATDETECT_INTR_OFFSET	14
+#define SIMDETECT_INTR_OFFSET	15
+#define MMCDETECT_INTR_OFFSET	16
+#define GASGAUGE_INTR_OFFSET	17
+#define USBOTG_INTR_OFFSET	4
+#define CHARGER_INTR_OFFSET	2
+#define RSV_INTR_OFFSET		0
+
+/* INT register offsets */
+#define REG_INT_STS_A			0x00
+#define REG_INT_STS_B			0x01
+#define REG_INT_STS_C			0x02
+
+#define REG_INT_MSK_LINE_A		0x03
+#define REG_INT_MSK_LINE_B		0x04
+#define REG_INT_MSK_LINE_C		0x05
+
+#define REG_INT_MSK_STS_A		0x06
+#define REG_INT_MSK_STS_B		0x07
+#define REG_INT_MSK_STS_C		0x08
+
+/* MASK INT REG GROUP A */
+#define TWL6030_PWR_INT_MASK 		0x07
+#define TWL6030_RTC_INT_MASK 		0x18
+#define TWL6030_HOTDIE_INT_MASK 	0x20
+#define TWL6030_SMPSLDOA_INT_MASK	0xC0
+
+/* MASK INT REG GROUP B */
+#define TWL6030_SMPSLDOB_INT_MASK 	0x01
+#define TWL6030_BATDETECT_INT_MASK 	0x02
+#define TWL6030_SIMDETECT_INT_MASK 	0x04
+#define TWL6030_MMCDETECT_INT_MASK 	0x08
+#define TWL6030_GPADC_INT_MASK 		0x60
+#define TWL6030_GASGAUGE_INT_MASK 	0x80
+
+/* MASK INT REG GROUP C */
+#define TWL6030_USBOTG_INT_MASK  	0x0F
+#define TWL6030_CHARGER_CTRL_INT_MASK 	0x10
+#define TWL6030_CHARGER_FAULT_INT_MASK 	0x60
+
+
+#define TWL4030_CLASS_ID 		0x4030
+#define TWL6030_CLASS_ID 		0x6030
+unsigned int twl_rev(void);
+#define GET_TWL_REV (twl_rev())
+#define TWL_CLASS_IS(class, id)			\
+static inline int twl_class_is_ ##class(void)	\
+{						\
+	return ((id) == (GET_TWL_REV)) ? 1 : 0;	\
+}
+
+TWL_CLASS_IS(4030, TWL4030_CLASS_ID)
+TWL_CLASS_IS(6030, TWL6030_CLASS_ID)
+
 /*
  * Read and write single 8-bit registers
  */
-int twl4030_i2c_write_u8(u8 mod_no, u8 val, u8 reg);
-int twl4030_i2c_read_u8(u8 mod_no, u8 *val, u8 reg);
+int twl_i2c_write_u8(u8 mod_no, u8 val, u8 reg);
+int twl_i2c_read_u8(u8 mod_no, u8 *val, u8 reg);
 
 /*
  * Read and write several 8-bit registers at once.
  *
- * IMPORTANT:  For twl4030_i2c_write(), allocate num_bytes + 1
+ * IMPORTANT:  For twl_i2c_write(), allocate num_bytes + 1
  * for the value, and populate your data starting at offset 1.
  */
-int twl4030_i2c_write(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
-int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
+int twl_i2c_write(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
+int twl_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
+
+int twl6030_interrupt_unmask(u8 bit_mask, u8 offset);
+int twl6030_interrupt_mask(u8 bit_mask, u8 offset);
 
 /*----------------------------------------------------------------------*/
 
