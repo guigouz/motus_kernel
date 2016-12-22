@@ -4028,6 +4028,7 @@ static inline void unregister_as_ext2(void)
 {
 	unregister_filesystem(&ext2_fs_type);
 }
+MODULE_ALIAS("ext2");
 #else
 static inline void register_as_ext2(void) { }
 static inline void unregister_as_ext2(void) { }
@@ -4054,6 +4055,7 @@ static inline void unregister_as_ext3(void)
 {
 	unregister_filesystem(&ext3_fs_type);
 }
+MODULE_ALIAS("ext3");
 #else
 static inline void register_as_ext3(void) { }
 static inline void unregister_as_ext3(void) { }

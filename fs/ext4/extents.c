@@ -3307,8 +3307,8 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
 	 */
 	if (path[depth].p_ext == NULL && depth != 0) {
 		ext4_error(inode->i_sb, __func__, "bad extent address "
-			   "inode: %lu, iblock: %lu, depth: %d",
-			   inode->i_ino, (unsigned long) iblock, depth);
+			   "inode: %lu, iblock: %d, depth: %d",
+			   inode->i_ino, iblock, depth);
 		err = -EIO;
 		goto out2;
 	}
