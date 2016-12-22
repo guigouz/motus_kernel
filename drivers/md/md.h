@@ -282,11 +282,13 @@ struct mddev_s
 	struct bitmap                   *bitmap; /* the bitmap for the device */
 	struct {
 		struct file		*file; /* the bitmap file */
-		long			offset; /* offset from superblock of
+		loff_t			offset; /* offset from superblock of
 						 * start of bitmap. May be
 						 * negative, but not '0'
+						 * For external metadata, offset
+						 * from start of device. 
 						 */
-		long			default_offset; /* this is the offset to use when
+		loff_t			default_offset; /* this is the offset to use when
 							 * hot-adding a bitmap.  It should
 							 * eventually be settable by sysfs.
 							 */
@@ -294,6 +296,7 @@ struct mddev_s
 		unsigned long		chunksize;
 		unsigned long		daemon_sleep; /* how many seconds between updates? */
 		unsigned long		max_write_behind; /* write-behind mode */
+		int			external;
 	} bitmap_info;
 
 	struct list_head		all_mddevs;
@@ -370,7 +373,7 @@ struct md_sysfs_entry {
 	ssize_t (*show)(mddev_t *, char *);
 	ssize_t (*store)(mddev_t *, const char *, size_t);
 };
-
+extern struct attribute_group md_bitmap_group;
 
 static inline char * mdname (mddev_t * mddev)
 {
@@ -461,6 +464,8 @@ extern void md_wait_for_blocked_rdev(mdk_rdev_t *rdev, mddev_t *mddev);
 extern void md_set_array_sectors(mddev_t *mddev, sector_t array_sectors);
 extern int md_check_no_bitmap(mddev_t *mddev);
 extern int md_integrity_register(mddev_t *mddev);
-void md_integrity_add_rdev(mdk_rdev_t *rdev, mddev_t *mddev);
+extern void md_integrity_add_rdev(mdk_rdev_t *rdev, mddev_t *mddev);
+extern int strict_strtoul_scaled(const char *cp, unsigned long *res, int scale);
+extern void restore_bitmap_write_access(struct file *file);
 
 #endif /* _MD_MD_H */
