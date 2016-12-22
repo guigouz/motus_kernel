@@ -280,16 +280,21 @@ struct mddev_s
 	unsigned int                    max_write_behind; /* 0 = sync */
 
 	struct bitmap                   *bitmap; /* the bitmap for the device */
-	struct file			*bitmap_file; /* the bitmap file */
-	long				bitmap_offset; /* offset from superblock of
-							* start of bitmap. May be
-							* negative, but not '0'
-							*/
-	long				default_bitmap_offset; /* this is the offset to use when
-								* hot-adding a bitmap.  It should
-								* eventually be settable by sysfs.
-								*/
-	struct mutex			bitmap_mutex;
+	struct {
+		struct file		*file; /* the bitmap file */
+		long			offset; /* offset from superblock of
+						 * start of bitmap. May be
+						 * negative, but not '0'
+						 */
+		long			default_offset; /* this is the offset to use when
+							 * hot-adding a bitmap.  It should
+							 * eventually be settable by sysfs.
+							 */
+		struct mutex		mutex;
+		unsigned long		chunksize;
+		unsigned long		daemon_sleep; /* how many seconds between updates? */
+		unsigned long		max_write_behind; /* write-behind mode */
+	} bitmap_info;
 
 	struct list_head		all_mddevs;
 
