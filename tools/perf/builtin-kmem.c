@@ -12,7 +12,6 @@
 #include "util/trace-event.h"
 
 #include "util/debug.h"
-#include "util/data_map.h"
 
 #include <linux/rbtree.h>
 
@@ -312,7 +311,7 @@ process_raw_event(event_t *raw_event __used, void *data,
 	}
 }
 
-static int process_sample_event(event_t *event)
+static int process_sample_event(event_t *event, struct perf_session *session)
 {
 	struct sample_data data;
 	struct thread *thread;
@@ -330,7 +329,7 @@ static int process_sample_event(event_t *event)
 		(void *)(long)data.ip,
 		(long long)data.period);
 
-	thread = threads__findnew(event->ip.pid);
+	thread = perf_session__findnew(session, event->ip.pid);
 	if (thread == NULL) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			 event->header.type);
@@ -345,7 +344,7 @@ static int process_sample_event(event_t *event)
 	return 0;
 }
 
-static int sample_type_check(u64 type)
+static int sample_type_check(u64 type, struct perf_session *session __used)
 {
 	sample_type = type;
 
@@ -359,27 +358,11 @@ static int sample_type_check(u64 type)
 	return 0;
 }
 
-static struct perf_file_handler file_handler = {
+static struct perf_event_ops event_ops = {
 	.process_sample_event	= process_sample_event,
 	.process_comm_event	= event__process_comm,
 	.sample_type_check	= sample_type_check,
 };
-
-static int read_events(void)
-{
-	int err;
-	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0);
-
-	if (session == NULL)
-		return -ENOMEM;
-
-	register_idle_thread();
-	register_perf_file_handler(&file_handler);
-
-	err = perf_session__process_events(session, 0, &event__cwdlen, &event__cwd);
-	perf_session__delete(session);
-	return err;
-}
 
 static double fragmentation(unsigned long n_req, unsigned long n_alloc)
 {
@@ -389,7 +372,8 @@ static double fragmentation(unsigned long n_req, unsigned long n_alloc)
 		return 100.0 - (100.0 * n_req / n_alloc);
 }
 
-static void __print_result(struct rb_root *root, int n_lines, int is_caller)
+static void __print_result(struct rb_root *root, struct perf_session *session,
+			   int n_lines, int is_caller)
 {
 	struct rb_node *next;
 
@@ -410,7 +394,7 @@ static void __print_result(struct rb_root *root, int n_lines, int is_caller)
 		if (is_caller) {
 			addr = data->call_site;
 			if (!raw_ip)
-				sym = map_groups__find_function(kmaps, addr, NULL);
+				sym = map_groups__find_function(&session->kmaps, session, addr, NULL);
 		} else
 			addr = data->ptr;
 
@@ -451,12 +435,12 @@ static void print_summary(void)
 	printf("Cross CPU allocations: %lu/%lu\n", nr_cross_allocs, nr_allocs);
 }
 
-static void print_result(void)
+static void print_result(struct perf_session *session)
 {
 	if (caller_flag)
-		__print_result(&root_caller_sorted, caller_lines, 1);
+		__print_result(&root_caller_sorted, session, caller_lines, 1);
 	if (alloc_flag)
-		__print_result(&root_alloc_sorted, alloc_lines, 0);
+		__print_result(&root_alloc_sorted, session, alloc_lines, 0);
 	print_summary();
 }
 
@@ -524,12 +508,21 @@ static void sort_result(void)
 
 static int __cmd_kmem(void)
 {
-	setup_pager();
-	read_events();
-	sort_result();
-	print_result();
+	int err;
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY,
+							 0, NULL);
+	if (session == NULL)
+		return -ENOMEM;
 
-	return 0;
+	setup_pager();
+	err = perf_session__process_events(session, &event_ops);
+	if (err != 0)
+		goto out_delete;
+	sort_result();
+	print_result(session);
+out_delete:
+	perf_session__delete(session);
+	return err;
 }
 
 static const char * const kmem_usage[] = {

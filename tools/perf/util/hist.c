@@ -1,9 +1,6 @@
 #include "hist.h"
-
-struct rb_root hist;
-struct rb_root collapse_hists;
-struct rb_root output_hists;
-int callchain;
+#include "session.h"
+#include "sort.h"
 
 struct callchain_param	callchain_param = {
 	.mode	= CHAIN_GRAPH_REL,
@@ -14,11 +11,12 @@ struct callchain_param	callchain_param = {
  * histogram, sorted on item, collects counts
  */
 
-struct hist_entry *__hist_entry__add(struct addr_location *al,
-				     struct symbol *sym_parent,
-				     u64 count, bool *hit)
+struct hist_entry *__perf_session__add_hist_entry(struct perf_session *self,
+						  struct addr_location *al,
+						  struct symbol *sym_parent,
+						  u64 count, bool *hit)
 {
-	struct rb_node **p = &hist.rb_node;
+	struct rb_node **p = &self->hists.rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *he;
 	struct hist_entry entry = {
@@ -54,7 +52,7 @@ struct hist_entry *__hist_entry__add(struct addr_location *al,
 		return NULL;
 	*he = entry;
 	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, &hist);
+	rb_insert_color(&he->rb_node, &self->hists);
 	*hit = false;
 	return he;
 }
@@ -102,9 +100,9 @@ void hist_entry__free(struct hist_entry *he)
  * collapse the histogram
  */
 
-void collapse__insert_entry(struct hist_entry *he)
+static void collapse__insert_entry(struct rb_root *root, struct hist_entry *he)
 {
-	struct rb_node **p = &collapse_hists.rb_node;
+	struct rb_node **p = &root->rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *iter;
 	int64_t cmp;
@@ -128,38 +126,46 @@ void collapse__insert_entry(struct hist_entry *he)
 	}
 
 	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, &collapse_hists);
+	rb_insert_color(&he->rb_node, root);
 }
 
-void collapse__resort(void)
+void perf_session__collapse_resort(struct perf_session *self)
 {
+	struct rb_root tmp;
 	struct rb_node *next;
 	struct hist_entry *n;
 
 	if (!sort__need_collapse)
 		return;
 
-	next = rb_first(&hist);
+	tmp = RB_ROOT;
+	next = rb_first(&self->hists);
+
 	while (next) {
 		n = rb_entry(next, struct hist_entry, rb_node);
 		next = rb_next(&n->rb_node);
 
-		rb_erase(&n->rb_node, &hist);
-		collapse__insert_entry(n);
+		rb_erase(&n->rb_node, &self->hists);
+		collapse__insert_entry(&tmp, n);
 	}
+
+	self->hists = tmp;
 }
 
 /*
  * reverse the map, sort on count.
  */
 
-void output__insert_entry(struct hist_entry *he, u64 min_callchain_hits)
+static void perf_session__insert_output_hist_entry(struct perf_session *self,
+						   struct rb_root *root,
+						   struct hist_entry *he,
+						   u64 min_callchain_hits)
 {
-	struct rb_node **p = &output_hists.rb_node;
+	struct rb_node **p = &root->rb_node;
 	struct rb_node *parent = NULL;
 	struct hist_entry *iter;
 
-	if (callchain)
+	if (self->use_callchain)
 		callchain_param.sort(&he->sorted_chain, &he->callchain,
 				      min_callchain_hits, &callchain_param);
 
@@ -174,29 +180,30 @@ void output__insert_entry(struct hist_entry *he, u64 min_callchain_hits)
 	}
 
 	rb_link_node(&he->rb_node, parent, p);
-	rb_insert_color(&he->rb_node, &output_hists);
+	rb_insert_color(&he->rb_node, root);
 }
 
-void output__resort(u64 total_samples)
+void perf_session__output_resort(struct perf_session *self, u64 total_samples)
 {
+	struct rb_root tmp;
 	struct rb_node *next;
 	struct hist_entry *n;
-	struct rb_root *tree = &hist;
 	u64 min_callchain_hits;
 
 	min_callchain_hits =
 		total_samples * (callchain_param.min_percent / 100);
 
-	if (sort__need_collapse)
-		tree = &collapse_hists;
-
-	next = rb_first(tree);
+	tmp = RB_ROOT;
+	next = rb_first(&self->hists);
 
 	while (next) {
 		n = rb_entry(next, struct hist_entry, rb_node);
 		next = rb_next(&n->rb_node);
 
-		rb_erase(&n->rb_node, tree);
-		output__insert_entry(n, min_callchain_hits);
+		rb_erase(&n->rb_node, &self->hists);
+		perf_session__insert_output_hist_entry(self, &tmp, n,
+						       min_callchain_hits);
 	}
+
+	self->hists = tmp;
 }

@@ -27,7 +27,6 @@
 #include "util/parse-options.h"
 #include "util/parse-events.h"
 
-#include "util/data_map.h"
 #include "util/thread.h"
 #include "util/sort.h"
 #include "util/hist.h"
@@ -39,8 +38,8 @@ static char		*dso_list_str, *comm_list_str, *sym_list_str,
 static struct strlist	*dso_list, *comm_list, *sym_list;
 
 static int		force;
+static bool		use_callchain;
 
-static int		full_paths;
 static int		show_nr_samples;
 
 static int		show_threads;
@@ -52,8 +51,6 @@ static char		*pretty_printing_style = default_pretty_printing_style;
 static int		exclude_other = 1;
 
 static char		callchain_default_opt[] = "fractal,0.5";
-
-static struct perf_session *session;
 
 static u64		sample_type;
 
@@ -316,8 +313,9 @@ hist_entry_callchain__fprintf(FILE *fp, struct hist_entry *self,
 	return ret;
 }
 
-static size_t
-hist_entry__fprintf(FILE *fp, struct hist_entry *self, u64 total_samples)
+static size_t hist_entry__fprintf(FILE *fp, struct hist_entry *self,
+				  struct perf_session *session,
+				  u64 total_samples)
 {
 	struct sort_entry *se;
 	size_t ret;
@@ -349,7 +347,7 @@ hist_entry__fprintf(FILE *fp, struct hist_entry *self, u64 total_samples)
 
 	ret += fprintf(fp, "\n");
 
-	if (callchain) {
+	if (session->use_callchain) {
 		int left_margin = 0;
 
 		if (sort__first_dimension == SORT_COMM) {
@@ -418,6 +416,7 @@ static int call__match(struct symbol *sym)
 }
 
 static struct symbol **resolve_callchain(struct thread *thread,
+					 struct perf_session *session,
 					 struct ip_callchain *chain,
 					 struct symbol **parent)
 {
@@ -425,7 +424,7 @@ static struct symbol **resolve_callchain(struct thread *thread,
 	struct symbol **syms = NULL;
 	unsigned int i;
 
-	if (callchain) {
+	if (session->use_callchain) {
 		syms = calloc(chain->nr, sizeof(*syms));
 		if (!syms) {
 			fprintf(stderr, "Can't allocate memory for symbols\n");
@@ -451,13 +450,13 @@ static struct symbol **resolve_callchain(struct thread *thread,
 			continue;
 		}
 
-		thread__find_addr_location(thread, cpumode, MAP__FUNCTION,
-					   ip, &al, NULL);
+		thread__find_addr_location(thread, session, cpumode,
+					   MAP__FUNCTION, ip, &al, NULL);
 		if (al.sym != NULL) {
 			if (sort__has_parent && !*parent &&
 			    call__match(al.sym))
 				*parent = al.sym;
-			if (!callchain)
+			if (!session->use_callchain)
 				break;
 			syms[i] = al.sym;
 		}
@@ -470,24 +469,25 @@ static struct symbol **resolve_callchain(struct thread *thread,
  * collect histogram counts
  */
 
-static int hist_entry__add(struct addr_location *al,
-			   struct ip_callchain *chain, u64 count)
+static int perf_session__add_hist_entry(struct perf_session *self,
+					struct addr_location *al,
+					struct ip_callchain *chain, u64 count)
 {
 	struct symbol **syms = NULL, *parent = NULL;
 	bool hit;
 	struct hist_entry *he;
 
-	if ((sort__has_parent || callchain) && chain)
-		syms = resolve_callchain(al->thread, chain, &parent);
+	if ((sort__has_parent || self->use_callchain) && chain)
+		syms = resolve_callchain(al->thread, self, chain, &parent);
 
-	he = __hist_entry__add(al, parent, count, &hit);
+	he = __perf_session__add_hist_entry(self, al, parent, count, &hit);
 	if (he == NULL)
 		return -ENOMEM;
 
 	if (hit)
 		he->count += count;
 
-	if (callchain) {
+	if (self->use_callchain) {
 		if (!hit)
 			callchain_init(&he->callchain);
 		append_chain(&he->callchain, chain, syms);
@@ -497,7 +497,8 @@ static int hist_entry__add(struct addr_location *al,
 	return 0;
 }
 
-static size_t output__fprintf(FILE *fp, u64 total_samples)
+static size_t perf_session__fprintf_hist_entries(struct perf_session *self,
+						 u64 total_samples, FILE *fp)
 {
 	struct hist_entry *pos;
 	struct sort_entry *se;
@@ -569,9 +570,9 @@ static size_t output__fprintf(FILE *fp, u64 total_samples)
 	fprintf(fp, "#\n");
 
 print_entries:
-	for (nd = rb_first(&output_hists); nd; nd = rb_next(nd)) {
+	for (nd = rb_first(&self->hists); nd; nd = rb_next(nd)) {
 		pos = rb_entry(nd, struct hist_entry, rb_node);
-		ret += hist_entry__fprintf(fp, pos, total_samples);
+		ret += hist_entry__fprintf(fp, pos, self, total_samples);
 	}
 
 	if (sort_order == default_sort_order &&
@@ -604,7 +605,7 @@ static int validate_chain(struct ip_callchain *chain, event_t *event)
 	return 0;
 }
 
-static int process_sample_event(event_t *event)
+static int process_sample_event(event_t *event, struct perf_session *session)
 {
 	struct sample_data data;
 	int cpumode;
@@ -640,7 +641,7 @@ static int process_sample_event(event_t *event)
 		}
 	}
 
-	thread = threads__findnew(data.pid);
+	thread = perf_session__findnew(session, data.pid);
 	if (thread == NULL) {
 		pr_debug("problem processing %d event, skipping it.\n",
 			event->header.type);
@@ -654,7 +655,7 @@ static int process_sample_event(event_t *event)
 
 	cpumode = event->header.misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
-	thread__find_addr_location(thread, cpumode,
+	thread__find_addr_location(thread, session, cpumode,
 				   MAP__FUNCTION, data.ip, &al, NULL);
 	/*
 	 * We have to do this here as we may have a dso with no symbol hit that
@@ -673,7 +674,7 @@ static int process_sample_event(event_t *event)
 	if (sym_list && al.sym && !strlist__has_entry(sym_list, al.sym->name))
 		return 0;
 
-	if (hist_entry__add(&al, data.callchain, data.period)) {
+	if (perf_session__add_hist_entry(session, &al, data.callchain, data.period)) {
 		pr_debug("problem incrementing symbol count, skipping event\n");
 		return -1;
 	}
@@ -683,9 +684,9 @@ static int process_sample_event(event_t *event)
 	return 0;
 }
 
-static int process_comm_event(event_t *event)
+static int process_comm_event(event_t *event, struct perf_session *session)
 {
-	struct thread *thread = threads__findnew(event->comm.pid);
+	struct thread *thread = perf_session__findnew(session, event->comm.pid);
 
 	dump_printf(": %s:%d\n", event->comm.comm, event->comm.pid);
 
@@ -698,7 +699,7 @@ static int process_comm_event(event_t *event)
 	return 0;
 }
 
-static int process_read_event(event_t *event)
+static int process_read_event(event_t *event, struct perf_session *session __used)
 {
 	struct perf_event_attr *attr;
 
@@ -721,7 +722,7 @@ static int process_read_event(event_t *event)
 	return 0;
 }
 
-static int sample_type_check(u64 type)
+static int sample_type_check(u64 type, struct perf_session *session)
 {
 	sample_type = type;
 
@@ -732,14 +733,14 @@ static int sample_type_check(u64 type)
 					" perf record without -g?\n");
 			return -1;
 		}
-		if (callchain) {
+		if (session->use_callchain) {
 			fprintf(stderr, "selected -g but no callchain data."
 					" Did you call perf record without"
 					" -g?\n");
 			return -1;
 		}
-	} else if (callchain_param.mode != CHAIN_NONE && !callchain) {
-			callchain = 1;
+	} else if (callchain_param.mode != CHAIN_NONE && !session->use_callchain) {
+			session->use_callchain = true;
 			if (register_callchain_param(&callchain_param) < 0) {
 				fprintf(stderr, "Can't register callchain"
 						" params\n");
@@ -750,7 +751,7 @@ static int sample_type_check(u64 type)
 	return 0;
 }
 
-static struct perf_file_handler file_handler = {
+static struct perf_event_ops event_ops = {
 	.process_sample_event	= process_sample_event,
 	.process_mmap_event	= event__process_mmap,
 	.process_comm_event	= process_comm_event,
@@ -764,23 +765,19 @@ static struct perf_file_handler file_handler = {
 
 static int __cmd_report(void)
 {
-	struct thread *idle;
 	int ret;
+	struct perf_session *session;
 
-	session = perf_session__new(input_name, O_RDONLY, force);
+	session = perf_session__new(input_name, O_RDONLY, force, &symbol_conf);
 	if (session == NULL)
 		return -ENOMEM;
 
-	idle = register_idle_thread();
-	thread__comm_adjust(idle);
+	session->use_callchain = use_callchain;
 
 	if (show_threads)
 		perf_read_values_init(&show_threads_values);
 
-	register_perf_file_handler(&file_handler);
-
-	ret = perf_session__process_events(session, full_paths,
-					   &event__cwdlen, &event__cwd);
+	ret = perf_session__process_events(session, &event_ops);
 	if (ret)
 		goto out_delete;
 
@@ -790,14 +787,14 @@ static int __cmd_report(void)
 	}
 
 	if (verbose > 3)
-		threads__fprintf(stdout);
+		perf_session__fprintf(session, stdout);
 
 	if (verbose > 2)
 		dsos__fprintf(stdout);
 
-	collapse__resort();
-	output__resort(event__stats.total);
-	output__fprintf(stdout, event__stats.total);
+	perf_session__collapse_resort(session);
+	perf_session__output_resort(session, event__stats.total);
+	perf_session__fprintf_hist_entries(session, event__stats.total, stdout);
 
 	if (show_threads)
 		perf_read_values_destroy(&show_threads_values);
@@ -813,7 +810,7 @@ parse_callchain_opt(const struct option *opt __used, const char *arg,
 	char *tok;
 	char *endptr;
 
-	callchain = 1;
+	use_callchain = true;
 
 	if (!arg)
 		return 0;
@@ -834,7 +831,7 @@ parse_callchain_opt(const struct option *opt __used, const char *arg,
 
 	else if (!strncmp(tok, "none", strlen(arg))) {
 		callchain_param.mode = CHAIN_NONE;
-		callchain = 0;
+		use_callchain = true;
 
 		return 0;
 	}
@@ -885,7 +882,7 @@ static const struct option options[] = {
 		   "pretty printing style key: normal raw"),
 	OPT_STRING('s', "sort", &sort_order, "key[,key2...]",
 		   "sort by key(s): pid, comm, dso, symbol, parent"),
-	OPT_BOOLEAN('P', "full-paths", &full_paths,
+	OPT_BOOLEAN('P', "full-paths", &event_ops.full_paths,
 		    "Don't shorten the pathnames taking into account the cwd"),
 	OPT_STRING('p', "parent", &parent_pattern, "regex",
 		   "regex filter to identify parent, see: '--sort parent'"),

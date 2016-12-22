@@ -48,27 +48,38 @@ out_close:
 	return -1;
 }
 
-struct perf_session *perf_session__new(const char *filename, int mode, bool force)
+struct perf_session *perf_session__new(const char *filename, int mode,
+				       bool force, struct symbol_conf *conf)
 {
-	size_t len = strlen(filename) + 1;
+	size_t len = filename ? strlen(filename) + 1 : 0;
 	struct perf_session *self = zalloc(sizeof(*self) + len);
 
 	if (self == NULL)
 		goto out;
 
 	if (perf_header__init(&self->header) < 0)
-		goto out_delete;
+		goto out_free;
 
 	memcpy(self->filename, filename, len);
+	self->threads = RB_ROOT;
+	self->last_match = NULL;
+	self->mmap_window = 32;
+	self->cwd = NULL;
+	self->cwdlen = 0;
+	map_groups__init(&self->kmaps);
 
-	if (mode == O_RDONLY && perf_session__open(self, force) < 0) {
-		perf_session__delete(self);
-		self = NULL;
-	}
+	if (perf_session__create_kernel_maps(self, conf) < 0)
+		goto out_delete;
+
+	if (mode == O_RDONLY && perf_session__open(self, force) < 0)
+		goto out_delete;
 out:
 	return self;
-out_delete:
+out_free:
 	free(self);
+	return NULL;
+out_delete:
+	perf_session__delete(self);
 	return NULL;
 }
 
@@ -76,5 +87,6 @@ void perf_session__delete(struct perf_session *self)
 {
 	perf_header__exit(&self->header);
 	close(self->fd);
+	free(self->cwd);
 	free(self);
 }
