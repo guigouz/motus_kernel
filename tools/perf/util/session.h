@@ -6,7 +6,9 @@
 #include "thread.h"
 #include <linux/rbtree.h>
 
+struct ip_callchain;
 struct thread;
+struct symbol;
 struct symbol_conf;
 
 struct perf_session {
@@ -17,6 +19,7 @@ struct perf_session {
 	struct rb_root		threads;
 	struct thread		*last_match;
 	struct rb_root		hists;
+	u64			sample_type;
 	int			fd;
 	int			cwdlen;
 	char			*cwd;
@@ -37,8 +40,7 @@ struct perf_event_ops {
 	event_op	process_read_event;
 	event_op	process_throttle_event;
 	event_op	process_unthrottle_event;
-	int		(*sample_type_check)(u64 sample_type,
-					     struct perf_session *session);
+	int		(*sample_type_check)(struct perf_session *session);
 	unsigned long	total_unknown;
 	bool		full_paths;
 };
@@ -49,6 +51,11 @@ void perf_session__delete(struct perf_session *self);
 
 int perf_session__process_events(struct perf_session *self,
 				 struct perf_event_ops *event_ops);
+
+struct symbol **perf_session__resolve_callchain(struct perf_session *self,
+						struct thread *thread,
+						struct ip_callchain *chain,
+						struct symbol **parent);
 
 int perf_header__read_build_ids(int input, u64 offset, u64 file_size);
 
