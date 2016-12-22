@@ -131,9 +131,9 @@ struct ftrace_event_call {
 	void			*mod;
 	void			*data;
 
-	atomic_t		profile_count;
-	int			(*profile_enable)(void);
-	void			(*profile_disable)(void);
+	int			profile_count;
+	int			(*profile_enable)(struct ftrace_event_call *);
+	void			(*profile_disable)(struct ftrace_event_call *);
 };
 
 #define FTRACE_MAX_PROFILE_SIZE	2048
