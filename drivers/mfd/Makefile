@@ -19,6 +19,7 @@ obj-$(CONFIG_MFD_WM8400)	+= wm8400-core.o
 wm831x-objs			:= wm831x-core.o wm831x-irq.o wm831x-otp.o
 obj-$(CONFIG_MFD_WM831X)	+= wm831x.o
 wm8350-objs			:= wm8350-core.o wm8350-regmap.o wm8350-gpio.o
+wm8350-objs			+= wm8350-irq.o
 obj-$(CONFIG_MFD_WM8350)	+= wm8350.o
 obj-$(CONFIG_MFD_WM8350_I2C)	+= wm8350-i2c.o
 
@@ -68,3 +69,6 @@ obj-$(CONFIG_MFD_CPCAP)		+= cpcap.o
 obj-$(CONFIG_PMIC8058)		+= pmic8058.o
 obj-$(CONFIG_AB3100_CORE)	+= ab3100-core.o
 obj-$(CONFIG_AB3100_OTP)	+= ab3100-otp.o
+obj-$(CONFIG_AB4500_CORE)	+= ab4500-core.o
+obj-$(CONFIG_MFD_88PM8607)	+= 88pm8607.o
+obj-$(CONFIG_PMIC_ADP5520)	+= adp5520.o

@@ -61,13 +61,16 @@
 #define TWL4030_MODULE_PWMA		0x0E
 #define TWL4030_MODULE_PWMB		0x0F
 
+#define TWL5031_MODULE_ACCESSORY	0x10
+#define TWL5031_MODULE_INTERRUPTS	0x11
+
 /* Slave 3 (i2c address 0x4b) */
-#define TWL4030_MODULE_BACKUP		0x10
-#define TWL4030_MODULE_INT		0x11
-#define TWL4030_MODULE_PM_MASTER	0x12
-#define TWL4030_MODULE_PM_RECEIVER	0x13
-#define TWL4030_MODULE_RTC		0x14
-#define TWL4030_MODULE_SECURED_REG	0x15
+#define TWL4030_MODULE_BACKUP		0x12
+#define TWL4030_MODULE_INT		0x13
+#define TWL4030_MODULE_PM_MASTER	0x14
+#define TWL4030_MODULE_PM_RECEIVER	0x15
+#define TWL4030_MODULE_RTC		0x16
+#define TWL4030_MODULE_SECURED_REG	0x17
 
 /*
  * Read and write single 8-bit registers
@@ -221,6 +224,38 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 
 /*----------------------------------------------------------------------*/
 
+/*
+ * Accessory Interrupts
+ */
+#define TWL5031_ACIIMR_LSB		0x05
+#define TWL5031_ACIIMR_MSB		0x06
+#define TWL5031_ACIIDR_LSB		0x07
+#define TWL5031_ACIIDR_MSB		0x08
+#define TWL5031_ACCISR1			0x0F
+#define TWL5031_ACCIMR1			0x10
+#define TWL5031_ACCISR2			0x11
+#define TWL5031_ACCIMR2			0x12
+#define TWL5031_ACCSIR			0x13
+#define TWL5031_ACCEDR1			0x14
+#define TWL5031_ACCSIHCTRL		0x15
+
+/*----------------------------------------------------------------------*/
+
+/*
+ * Battery Charger Controller
+ */
+
+#define TWL5031_INTERRUPTS_BCIISR1	0x0
+#define TWL5031_INTERRUPTS_BCIIMR1	0x1
+#define TWL5031_INTERRUPTS_BCIISR2	0x2
+#define TWL5031_INTERRUPTS_BCIIMR2	0x3
+#define TWL5031_INTERRUPTS_BCISIR	0x4
+#define TWL5031_INTERRUPTS_BCIEDR1	0x5
+#define TWL5031_INTERRUPTS_BCIEDR2	0x6
+#define TWL5031_INTERRUPTS_BCISIHCTRL	0x7
+
+/*----------------------------------------------------------------------*/
+
 /* Power bus message definitions */
 
 /* The TWL4030/5030 splits its power-management resources (the various
@@ -250,6 +285,7 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 
 #define RES_TYPE_ALL		0x7
 
+/* Resource states */
 #define RES_STATE_WRST		0xF
 #define RES_STATE_ACTIVE	0xE
 #define RES_STATE_SLEEP		0x8
@@ -311,6 +347,10 @@ int twl4030_i2c_read(u8 mod_no, u8 *value, u8 reg, unsigned num_bytes);
 	((devgrp) << 13 | 0 << 12 | (id) << 4 | (state))
 
 /*----------------------------------------------------------------------*/
+
+struct twl4030_clock_init_data {
+	bool ck32k_lowpwr_enable;
+};
 
 struct twl4030_bci_platform_data {
 	int *battery_tmp_tbl;
@@ -391,12 +431,15 @@ struct twl4030_resconfig {
 	u8 devgroup;	/* Processor group that Power resource belongs to */
 	u8 type;	/* Power resource addressed, 6 / broadcast message */
 	u8 type2;	/* Power resource addressed, 3 / broadcast message */
+	u8 remap_off;	/* off state remapping */
+	u8 remap_sleep;	/* sleep state remapping */
 };
 
 struct twl4030_power_data {
 	struct twl4030_script **scripts;
 	unsigned num;
 	struct twl4030_resconfig *resource_config;
+#define TWL4030_RESCONFIG_UNDEF	((u8)-1)
 };
 
 extern void twl4030_power_init(struct twl4030_power_data *triton2_scripts);
@@ -421,6 +464,7 @@ struct twl4030_codec_data {
 
 struct twl4030_platform_data {
 	unsigned				irq_base, irq_end;
+	struct twl4030_clock_init_data		*clock;
 	struct twl4030_bci_platform_data	*bci;
 	struct twl4030_gpio_platform_data	*gpio;
 	struct twl4030_madc_platform_data	*madc;
