@@ -23,7 +23,7 @@ void __spin_lock_init(spinlock_t *lock, const char *name,
 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
 	lockdep_init_map(&lock->dep_map, name, key, 0);
 #endif
-	lock->raw_lock = (raw_spinlock_t)__RAW_SPIN_LOCK_UNLOCKED;
+	lock->raw_lock = (arch_spinlock_t)__ARCH_SPIN_LOCK_UNLOCKED;
 	lock->magic = SPINLOCK_MAGIC;
 	lock->owner = SPINLOCK_OWNER_INIT;
 	lock->owner_cpu = -1;
@@ -106,7 +106,7 @@ static void __spin_lock_debug(spinlock_t *lock)
 
 	for (;;) {
 		for (i = 0; i < loops; i++) {
-			if (__raw_spin_trylock(&lock->raw_lock))
+			if (arch_spin_trylock(&lock->raw_lock))
 				return;
 			__delay(1);
 		}
@@ -128,14 +128,14 @@ static void __spin_lock_debug(spinlock_t *lock)
 void _raw_spin_lock(spinlock_t *lock)
 {
 	debug_spin_lock_before(lock);
-	if (unlikely(!__raw_spin_trylock(&lock->raw_lock)))
+	if (unlikely(!arch_spin_trylock(&lock->raw_lock)))
 		__spin_lock_debug(lock);
 	debug_spin_lock_after(lock);
 }
 
 int _raw_spin_trylock(spinlock_t *lock)
 {
-	int ret = __raw_spin_trylock(&lock->raw_lock);
+	int ret = arch_spin_trylock(&lock->raw_lock);
 
 	if (ret)
 		debug_spin_lock_after(lock);
@@ -151,7 +151,7 @@ int _raw_spin_trylock(spinlock_t *lock)
 void _raw_spin_unlock(spinlock_t *lock)
 {
 	debug_spin_unlock(lock);
-	__raw_spin_unlock(&lock->raw_lock);
+	arch_spin_unlock(&lock->raw_lock);
 }
 
 static void rwlock_bug(rwlock_t *lock, const char *msg)

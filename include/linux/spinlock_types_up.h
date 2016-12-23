@@ -16,15 +16,15 @@
 
 typedef struct {
 	volatile unsigned int slock;
-} raw_spinlock_t;
+} arch_spinlock_t;
 
-#define __RAW_SPIN_LOCK_UNLOCKED { 1 }
+#define __ARCH_SPIN_LOCK_UNLOCKED { 1 }
 
 #else
 
-typedef struct { } raw_spinlock_t;
+typedef struct { } arch_spinlock_t;
 
-#define __RAW_SPIN_LOCK_UNLOCKED { }
+#define __ARCH_SPIN_LOCK_UNLOCKED { }
 
 #endif
 

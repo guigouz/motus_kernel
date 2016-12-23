@@ -25,7 +25,7 @@
 #include <asm/smp.h>
 #include <asm/firmware.h>
 
-void __spin_yield(raw_spinlock_t *lock)
+void __spin_yield(arch_spinlock_t *lock)
 {
 	unsigned int lock_value, holder_cpu, yield_count;
 
@@ -82,7 +82,7 @@ void __rw_yield(raw_rwlock_t *rw)
 }
 #endif
 
-void __raw_spin_unlock_wait(raw_spinlock_t *lock)
+void arch_spin_unlock_wait(arch_spinlock_t *lock)
 {
 	while (lock->slock) {
 		HMT_low();
@@ -92,4 +92,4 @@ void __raw_spin_unlock_wait(raw_spinlock_t *lock)
 	HMT_medium();
 }
 
-EXPORT_SYMBOL(__raw_spin_unlock_wait);
+EXPORT_SYMBOL(arch_spin_unlock_wait);

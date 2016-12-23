@@ -7,9 +7,9 @@
 
 typedef struct {
 	volatile int slock;
-} raw_spinlock_t;
+} arch_spinlock_t;
 
-#define __RAW_SPIN_LOCK_UNLOCKED	{ 1 }
+#define __ARCH_SPIN_LOCK_UNLOCKED	{ 1 }
 
 typedef struct {
 	volatile int lock;
