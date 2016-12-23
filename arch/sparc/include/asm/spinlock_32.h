@@ -65,7 +65,7 @@ static inline void arch_spin_unlock(arch_spinlock_t *lock)
  * Sort of like atomic_t's on Sparc, but even more clever.
  *
  *	------------------------------------
- *	| 24-bit counter           | wlock |  raw_rwlock_t
+ *	| 24-bit counter           | wlock |  arch_rwlock_t
  *	------------------------------------
  *	 31                       8 7     0
  *
@@ -76,9 +76,9 @@ static inline void arch_spin_unlock(arch_spinlock_t *lock)
  *
  * Unfortunately this scheme limits us to ~16,000,000 cpus.
  */
-static inline void arch_read_lock(raw_rwlock_t *rw)
+static inline void __arch_read_lock(arch_rwlock_t *rw)
 {
-	register raw_rwlock_t *lp asm("g1");
+	register arch_rwlock_t *lp asm("g1");
 	lp = rw;
 	__asm__ __volatile__(
 	"mov	%%o7, %%g4\n\t"
@@ -89,16 +89,16 @@ static inline void arch_read_lock(raw_rwlock_t *rw)
 	: "g2", "g4", "memory", "cc");
 }
 
-#define __raw_read_lock(lock) \
+#define arch_read_lock(lock) \
 do {	unsigned long flags; \
 	local_irq_save(flags); \
-	arch_read_lock(lock); \
+	__arch_read_lock(lock); \
 	local_irq_restore(flags); \
 } while(0)
 
-static inline void arch_read_unlock(raw_rwlock_t *rw)
+static inline void __arch_read_unlock(arch_rwlock_t *rw)
 {
-	register raw_rwlock_t *lp asm("g1");
+	register arch_rwlock_t *lp asm("g1");
 	lp = rw;
 	__asm__ __volatile__(
 	"mov	%%o7, %%g4\n\t"
@@ -109,16 +109,16 @@ static inline void arch_read_unlock(raw_rwlock_t *rw)
 	: "g2", "g4", "memory", "cc");
 }
 
-#define __raw_read_unlock(lock) \
+#define arch_read_unlock(lock) \
 do {	unsigned long flags; \
 	local_irq_save(flags); \
-	arch_read_unlock(lock); \
+	__arch_read_unlock(lock); \
 	local_irq_restore(flags); \
 } while(0)
 
-static inline void __raw_write_lock(raw_rwlock_t *rw)
+static inline void arch_write_lock(arch_rwlock_t *rw)
 {
-	register raw_rwlock_t *lp asm("g1");
+	register arch_rwlock_t *lp asm("g1");
 	lp = rw;
 	__asm__ __volatile__(
 	"mov	%%o7, %%g4\n\t"
@@ -130,7 +130,7 @@ static inline void __raw_write_lock(raw_rwlock_t *rw)
 	*(volatile __u32 *)&lp->lock = ~0U;
 }
 
-static inline int __raw_write_trylock(raw_rwlock_t *rw)
+static inline int arch_write_trylock(arch_rwlock_t *rw)
 {
 	unsigned int val;
 
@@ -150,9 +150,9 @@ static inline int __raw_write_trylock(raw_rwlock_t *rw)
 	return (val == 0);
 }
 
-static inline int arch_read_trylock(raw_rwlock_t *rw)
+static inline int __arch_read_trylock(arch_rwlock_t *rw)
 {
-	register raw_rwlock_t *lp asm("g1");
+	register arch_rwlock_t *lp asm("g1");
 	register int res asm("o0");
 	lp = rw;
 	__asm__ __volatile__(
@@ -165,27 +165,27 @@ static inline int arch_read_trylock(raw_rwlock_t *rw)
 	return res;
 }
 
-#define __raw_read_trylock(lock) \
+#define arch_read_trylock(lock) \
 ({	unsigned long flags; \
 	int res; \
 	local_irq_save(flags); \
-	res = arch_read_trylock(lock); \
+	res = __arch_read_trylock(lock); \
 	local_irq_restore(flags); \
 	res; \
 })
 
-#define __raw_write_unlock(rw)	do { (rw)->lock = 0; } while(0)
+#define arch_write_unlock(rw)	do { (rw)->lock = 0; } while(0)
 
 #define arch_spin_lock_flags(lock, flags) arch_spin_lock(lock)
-#define __raw_read_lock_flags(rw, flags)   __raw_read_lock(rw)
-#define __raw_write_lock_flags(rw, flags)  __raw_write_lock(rw)
+#define arch_read_lock_flags(rw, flags)   arch_read_lock(rw)
+#define arch_write_lock_flags(rw, flags)  arch_write_lock(rw)
 
 #define arch_spin_relax(lock)	cpu_relax()
 #define arch_read_relax(lock)	cpu_relax()
 #define arch_write_relax(lock)	cpu_relax()
 
-#define __raw_read_can_lock(rw) (!((rw)->lock & 0xff))
-#define __raw_write_can_lock(rw) (!(rw)->lock)
+#define arch_read_can_lock(rw) (!((rw)->lock & 0xff))
+#define arch_write_can_lock(rw) (!(rw)->lock)
 
 #endif /* !(__ASSEMBLY__) */
 

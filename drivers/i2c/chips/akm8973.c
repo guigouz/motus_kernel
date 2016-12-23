@@ -39,10 +39,6 @@
 #define DEBUG 0
 #define MAX_FAILURE_COUNT 10
 
-static unsigned short normal_i2c[] = { I2C_CLIENT_END };
-
-I2C_CLIENT_INSMOD;
-
 static struct i2c_client *this_client;
 
 struct akm8973_data {
@@ -933,7 +929,7 @@ exit_check_functionality_failed:
 	return err;
 }
 
-static int akm8973_detect(struct i2c_client *client, int kind,
+static int akm8973_detect(struct i2c_client *client,
 			  struct i2c_board_info *info)
 {
 #if DEBUG
@@ -969,7 +965,6 @@ static struct i2c_driver akm8973_driver = {
 		   .name = "akm8973",
 		   },
 	.detect = akm8973_detect,
-	.address_data = &addr_data,
 };
 
 static int __init akm8973_init(void)

@@ -140,13 +140,13 @@ static inline void arch_spin_unlock_wait(arch_spinlock_t *lock)
 	__ticket_spin_unlock_wait(lock);
 }
 
-#define __raw_read_can_lock(rw)		(*(volatile int *)(rw) >= 0)
-#define __raw_write_can_lock(rw)	(*(volatile int *)(rw) == 0)
+#define arch_read_can_lock(rw)		(*(volatile int *)(rw) >= 0)
+#define arch_write_can_lock(rw)	(*(volatile int *)(rw) == 0)
 
 #ifdef ASM_SUPPORTED
 
 static __always_inline void
-__raw_read_lock_flags(raw_rwlock_t *lock, unsigned long flags)
+arch_read_lock_flags(arch_rwlock_t *lock, unsigned long flags)
 {
 	__asm__ __volatile__ (
 		"tbit.nz p6, p0 = %1,%2\n"
@@ -169,15 +169,15 @@ __raw_read_lock_flags(raw_rwlock_t *lock, unsigned long flags)
 		: "p6", "p7", "r2", "memory");
 }
 
-#define __raw_read_lock(lock) __raw_read_lock_flags(lock, 0)
+#define arch_read_lock(lock) arch_read_lock_flags(lock, 0)
 
 #else /* !ASM_SUPPORTED */
 
-#define __raw_read_lock_flags(rw, flags) __raw_read_lock(rw)
+#define arch_read_lock_flags(rw, flags) arch_read_lock(rw)
 
-#define __raw_read_lock(rw)								\
+#define arch_read_lock(rw)								\
 do {											\
-	raw_rwlock_t *__read_lock_ptr = (rw);						\
+	arch_rwlock_t *__read_lock_ptr = (rw);						\
 											\
 	while (unlikely(ia64_fetchadd(1, (int *) __read_lock_ptr, acq) < 0)) {		\
 		ia64_fetchadd(-1, (int *) __read_lock_ptr, rel);			\
@@ -188,16 +188,16 @@ do {											\
 
 #endif /* !ASM_SUPPORTED */
 
-#define __raw_read_unlock(rw)					\
+#define arch_read_unlock(rw)					\
 do {								\
-	raw_rwlock_t *__read_lock_ptr = (rw);			\
+	arch_rwlock_t *__read_lock_ptr = (rw);			\
 	ia64_fetchadd(-1, (int *) __read_lock_ptr, rel);	\
 } while (0)
 
 #ifdef ASM_SUPPORTED
 
 static __always_inline void
-__raw_write_lock_flags(raw_rwlock_t *lock, unsigned long flags)
+arch_write_lock_flags(arch_rwlock_t *lock, unsigned long flags)
 {
 	__asm__ __volatile__ (
 		"tbit.nz p6, p0 = %1, %2\n"
@@ -221,9 +221,9 @@ __raw_write_lock_flags(raw_rwlock_t *lock, unsigned long flags)
 		: "ar.ccv", "p6", "p7", "r2", "r29", "memory");
 }
 
-#define __raw_write_lock(rw) __raw_write_lock_flags(rw, 0)
+#define arch_write_lock(rw) arch_write_lock_flags(rw, 0)
 
-#define __raw_write_trylock(rw)							\
+#define arch_write_trylock(rw)							\
 ({										\
 	register long result;							\
 										\
@@ -235,7 +235,7 @@ __raw_write_lock_flags(raw_rwlock_t *lock, unsigned long flags)
 	(result == 0);								\
 })
 
-static inline void __raw_write_unlock(raw_rwlock_t *x)
+static inline void arch_write_unlock(arch_rwlock_t *x)
 {
 	u8 *y = (u8 *)x;
 	barrier();
@@ -244,9 +244,9 @@ static inline void __raw_write_unlock(raw_rwlock_t *x)
 
 #else /* !ASM_SUPPORTED */
 
-#define __raw_write_lock_flags(l, flags) __raw_write_lock(l)
+#define arch_write_lock_flags(l, flags) arch_write_lock(l)
 
-#define __raw_write_lock(l)								\
+#define arch_write_lock(l)								\
 ({											\
 	__u64 ia64_val, ia64_set_val = ia64_dep_mi(-1, 0, 31, 1);			\
 	__u32 *ia64_write_lock_ptr = (__u32 *) (l);					\
@@ -257,7 +257,7 @@ static inline void __raw_write_unlock(raw_rwlock_t *x)
 	} while (ia64_val);								\
 })
 
-#define __raw_write_trylock(rw)						\
+#define arch_write_trylock(rw)						\
 ({									\
 	__u64 ia64_val;							\
 	__u64 ia64_set_val = ia64_dep_mi(-1, 0, 31,1);			\
@@ -265,7 +265,7 @@ static inline void __raw_write_unlock(raw_rwlock_t *x)
 	(ia64_val == 0);						\
 })
 
-static inline void __raw_write_unlock(raw_rwlock_t *x)
+static inline void arch_write_unlock(arch_rwlock_t *x)
 {
 	barrier();
 	x->write_lock = 0;
@@ -273,10 +273,10 @@ static inline void __raw_write_unlock(raw_rwlock_t *x)
 
 #endif /* !ASM_SUPPORTED */
 
-static inline int __raw_read_trylock(raw_rwlock_t *x)
+static inline int arch_read_trylock(arch_rwlock_t *x)
 {
 	union {
-		raw_rwlock_t lock;
+		arch_rwlock_t lock;
 		__u32 word;
 	} old, new;
 	old.lock = new.lock = *x;
