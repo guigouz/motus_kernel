@@ -487,7 +487,7 @@ static int __cmd_annotate(void)
 		dsos__fprintf(stdout);
 
 	perf_session__collapse_resort(session);
-	perf_session__output_resort(session, event__total[0]);
+	perf_session__output_resort(session, session->event_total[0]);
 	perf_session__find_annotations(session);
 out_delete:
 	perf_session__delete(session);
@@ -521,21 +521,6 @@ static const struct option options[] = {
 	OPT_END()
 };
 
-static void setup_sorting(void)
-{
-	char *tmp, *tok, *str = strdup(sort_order);
-
-	for (tok = strtok_r(str, ", ", &tmp);
-			tok; tok = strtok_r(NULL, ", ", &tmp)) {
-		if (sort_dimension__add(tok) < 0) {
-			error("Unknown --sort key: `%s'", tok);
-			usage_with_options(annotate_usage, options);
-		}
-	}
-
-	free(str);
-}
-
 int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 {
 	if (symbol__init(&symbol_conf) < 0)
@@ -543,7 +528,7 @@ int cmd_annotate(int argc, const char **argv, const char *prefix __used)
 
 	argc = parse_options(argc, argv, options, annotate_usage, 0);
 
-	setup_sorting();
+	setup_sorting(annotate_usage, options);
 
 	if (argc) {
 		/*

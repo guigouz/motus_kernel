@@ -52,7 +52,7 @@ static int		exclude_other = 1;
 
 static char		callchain_default_opt[] = "fractal,0.5";
 
-struct symbol_conf	symbol_conf;
+static struct symbol_conf	symbol_conf;
 
 
 static size_t
@@ -619,8 +619,7 @@ static int process_sample_event(event_t *event, struct perf_session *session)
 		return -1;
 	}
 
-	event__stats.total += data.period;
-
+	session->events_stats.total += data.period;
 	return 0;
 }
 
@@ -731,8 +730,8 @@ static int __cmd_report(void)
 		dsos__fprintf(stdout);
 
 	perf_session__collapse_resort(session);
-	perf_session__output_resort(session, event__stats.total);
-	perf_session__fprintf_hist_entries(session, event__stats.total, stdout);
+	perf_session__output_resort(session, session->events_stats.total);
+	perf_session__fprintf_hist_entries(session, session->events_stats.total, stdout);
 
 	if (show_threads)
 		perf_read_values_destroy(&show_threads_values);
@@ -844,21 +843,6 @@ static const struct option options[] = {
 	OPT_END()
 };
 
-static void setup_sorting(void)
-{
-	char *tmp, *tok, *str = strdup(sort_order);
-
-	for (tok = strtok_r(str, ", ", &tmp);
-			tok; tok = strtok_r(NULL, ", ", &tmp)) {
-		if (sort_dimension__add(tok) < 0) {
-			error("Unknown --sort key: `%s'", tok);
-			usage_with_options(report_usage, options);
-		}
-	}
-
-	free(str);
-}
-
 static void setup_list(struct strlist **list, const char *list_str,
 		       struct sort_entry *se, const char *list_name,
 		       FILE *fp)
@@ -885,7 +869,7 @@ int cmd_report(int argc, const char **argv, const char *prefix __used)
 
 	argc = parse_options(argc, argv, options, report_usage, 0);
 
-	setup_sorting();
+	setup_sorting(report_usage, options);
 
 	if (parent_pattern != default_parent_pattern) {
 		sort_dimension__add("parent");
