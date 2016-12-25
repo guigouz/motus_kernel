@@ -27,7 +27,10 @@
 #include <linux/input/sh_keysc.h>
 #include <linux/mfd/sh_mobile_sdhi.h>
 #include <video/sh_mobile_lcdc.h>
+#include <sound/sh_fsi.h>
 #include <media/sh_mobile_ceu.h>
+#include <media/tw9910.h>
+#include <media/mt9t112.h>
 #include <asm/heartbeat.h>
 #include <asm/sh_eth.h>
 #include <asm/clock.h>
@@ -342,6 +345,12 @@ static struct platform_device ceu1_device = {
 };
 
 /* I2C device */
+static struct i2c_board_info i2c0_devices[] = {
+	{
+		I2C_BOARD_INFO("da7210", 0x1a),
+	},
+};
+
 static struct i2c_board_info i2c1_devices[] = {
 	{
 		I2C_BOARD_INFO("r2025sd", 0x32),
@@ -565,6 +574,181 @@ static struct platform_device msiof0_device = {
 
 #endif
 
+/* I2C Video/Camera */
+static struct i2c_board_info i2c_camera[] = {
+	{
+		I2C_BOARD_INFO("tw9910", 0x45),
+	},
+	{
+		/* 1st camera */
+		I2C_BOARD_INFO("mt9t112", 0x3c),
+	},
+	{
+		/* 2nd camera */
+		I2C_BOARD_INFO("mt9t112", 0x3c),
+	},
+};
+
+/* tw9910 */
+static int tw9910_power(struct device *dev, int mode)
+{
+	int val = mode ? 0 : 1;
+
+	gpio_set_value(GPIO_PTU2, val);
+	if (mode)
+		mdelay(100);
+
+	return 0;
+}
+
+static struct tw9910_video_info tw9910_info = {
+	.buswidth	= SOCAM_DATAWIDTH_8,
+	.mpout		= TW9910_MPO_FIELD,
+};
+
+static struct soc_camera_link tw9910_link = {
+	.i2c_adapter_id	= 0,
+	.bus_id		= 1,
+	.power		= tw9910_power,
+	.board_info	= &i2c_camera[0],
+	.module_name	= "tw9910",
+	.priv		= &tw9910_info,
+};
+
+/* mt9t112 */
+static int mt9t112_power1(struct device *dev, int mode)
+{
+	gpio_set_value(GPIO_PTA3, mode);
+	if (mode)
+		mdelay(100);
+
+	return 0;
+}
+
+static struct mt9t112_camera_info mt9t112_info1 = {
+	.flags = MT9T112_FLAG_PCLK_RISING_EDGE | MT9T112_FLAG_DATAWIDTH_8,
+	.divider = { 0x49, 0x6, 0, 6, 0, 9, 9, 6, 0 }, /* for 24MHz */
+};
+
+static struct soc_camera_link mt9t112_link1 = {
+	.i2c_adapter_id	= 0,
+	.power		= mt9t112_power1,
+	.bus_id		= 0,
+	.board_info	= &i2c_camera[1],
+	.module_name	= "mt9t112",
+	.priv		= &mt9t112_info1,
+};
+
+static int mt9t112_power2(struct device *dev, int mode)
+{
+	gpio_set_value(GPIO_PTA4, mode);
+	if (mode)
+		mdelay(100);
+
+	return 0;
+}
+
+static struct mt9t112_camera_info mt9t112_info2 = {
+	.flags = MT9T112_FLAG_PCLK_RISING_EDGE | MT9T112_FLAG_DATAWIDTH_8,
+	.divider = { 0x49, 0x6, 0, 6, 0, 9, 9, 6, 0 }, /* for 24MHz */
+};
+
+static struct soc_camera_link mt9t112_link2 = {
+	.i2c_adapter_id	= 1,
+	.power		= mt9t112_power2,
+	.bus_id		= 1,
+	.board_info	= &i2c_camera[2],
+	.module_name	= "mt9t112",
+	.priv		= &mt9t112_info2,
+};
+
+static struct platform_device camera_devices[] = {
+	{
+		.name	= "soc-camera-pdrv",
+		.id	= 0,
+		.dev	= {
+			.platform_data = &tw9910_link,
+		},
+	},
+	{
+		.name	= "soc-camera-pdrv",
+		.id	= 1,
+		.dev	= {
+			.platform_data = &mt9t112_link1,
+		},
+	},
+	{
+		.name	= "soc-camera-pdrv",
+		.id	= 2,
+		.dev	= {
+			.platform_data = &mt9t112_link2,
+		},
+	},
+};
+
+/* FSI */
+/*
+ * FSI-B use external clock which came from da7210.
+ * So, we should change parent of fsi
+ */
+#define FCLKBCR		0xa415000c
+static void fsimck_init(struct clk *clk)
+{
+	u32 status = ctrl_inl(clk->enable_reg);
+
+	/* use external clock */
+	status &= ~0x000000ff;
+	status |= 0x00000080;
+
+	ctrl_outl(status, clk->enable_reg);
+}
+
+static struct clk_ops fsimck_clk_ops = {
+	.init = fsimck_init,
+};
+
+static struct clk fsimckb_clk = {
+	.name		= "fsimckb_clk",
+	.id		= -1,
+	.ops		= &fsimck_clk_ops,
+	.enable_reg	= (void __iomem *)FCLKBCR,
+	.rate		= 0, /* unknown */
+};
+
+struct sh_fsi_platform_info fsi_info = {
+	.portb_flags = SH_FSI_BRS_INV |
+		       SH_FSI_OUT_SLAVE_MODE |
+		       SH_FSI_IN_SLAVE_MODE |
+		       SH_FSI_OFMT(I2S) |
+		       SH_FSI_IFMT(I2S),
+};
+
+static struct resource fsi_resources[] = {
+	[0] = {
+		.name	= "FSI",
+		.start	= 0xFE3C0000,
+		.end	= 0xFE3C021d,
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start  = 108,
+		.flags  = IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device fsi_device = {
+	.name		= "sh_fsi",
+	.id		= 0,
+	.num_resources	= ARRAY_SIZE(fsi_resources),
+	.resource	= fsi_resources,
+	.dev	= {
+		.platform_data	= &fsi_info,
+	},
+	.archdata = {
+		.hwblk_id = HWBLK_SPU, /* FSI needs SPU hwblk */
+	},
+};
+
 static struct platform_device *ecovec_devices[] __initdata = {
 	&heartbeat_device,
 	&nor_flash_device,
@@ -581,6 +765,10 @@ static struct platform_device *ecovec_devices[] __initdata = {
 #else
 	&msiof0_device,
 #endif
+	&camera_devices[0],
+	&camera_devices[1],
+	&camera_devices[2],
+	&fsi_device,
 };
 
 #define EEPROM_ADDR 0x50
@@ -636,6 +824,8 @@ extern char ecovec24_sdram_leave_end;
 
 static int __init arch_setup(void)
 {
+	struct clk *clk;
+
 	/* register board specific self-refresh code */
 	sh_mobile_register_self_refresh(SUSP_SH_STANDBY | SUSP_SH_SF,
 					&ecovec24_sdram_enter_start,
@@ -893,7 +1083,42 @@ static int __init arch_setup(void)
 	spi_register_board_info(spi_bus, ARRAY_SIZE(spi_bus));
 #endif
 
+	/* enable Video */
+	gpio_request(GPIO_PTU2, NULL);
+	gpio_direction_output(GPIO_PTU2, 1);
+
+	/* enable Camera */
+	gpio_request(GPIO_PTA3, NULL);
+	gpio_request(GPIO_PTA4, NULL);
+	gpio_direction_output(GPIO_PTA3, 0);
+	gpio_direction_output(GPIO_PTA4, 0);
+
+	/* enable FSI */
+	gpio_request(GPIO_FN_FSIMCKB,    NULL);
+	gpio_request(GPIO_FN_FSIIBSD,    NULL);
+	gpio_request(GPIO_FN_FSIOBSD,    NULL);
+	gpio_request(GPIO_FN_FSIIBBCK,   NULL);
+	gpio_request(GPIO_FN_FSIIBLRCK,  NULL);
+	gpio_request(GPIO_FN_FSIOBBCK,   NULL);
+	gpio_request(GPIO_FN_FSIOBLRCK,  NULL);
+	gpio_request(GPIO_FN_CLKAUDIOBO, NULL);
+
+	/* change parent of FSI B */
+	clk = clk_get(NULL, "fsib_clk");
+	clk_register(&fsimckb_clk);
+	clk_set_parent(clk, &fsimckb_clk);
+	clk_set_rate(clk, 11000);
+	clk_set_rate(&fsimckb_clk, 11000);
+	clk_put(clk);
+
+	gpio_request(GPIO_PTU0, NULL);
+	gpio_direction_output(GPIO_PTU0, 0);
+	mdelay(20);
+
 	/* enable I2C device */
+	i2c_register_board_info(0, i2c0_devices,
+				ARRAY_SIZE(i2c0_devices));
+
 	i2c_register_board_info(1, i2c1_devices,
 				ARRAY_SIZE(i2c1_devices));
 
