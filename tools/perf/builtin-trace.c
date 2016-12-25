@@ -12,7 +12,9 @@
 static char const		*script_name;
 static char const		*generate_script_lang;
 
-static int default_start_script(const char *script __attribute((unused)))
+static int default_start_script(const char *script __unused,
+				int argc __unused,
+				const char **argv __unused)
 {
 	return 0;
 }
@@ -22,7 +24,7 @@ static int default_stop_script(void)
 	return 0;
 }
 
-static int default_generate_script(const char *outfile __attribute ((unused)))
+static int default_generate_script(const char *outfile __unused)
 {
 	return 0;
 }
@@ -272,6 +274,244 @@ static int parse_scriptname(const struct option *opt __used,
 	return 0;
 }
 
+#define for_each_lang(scripts_dir, lang_dirent, lang_next)		\
+	while (!readdir_r(scripts_dir, &lang_dirent, &lang_next) &&	\
+	       lang_next)						\
+		if (lang_dirent.d_type == DT_DIR &&			\
+		    (strcmp(lang_dirent.d_name, ".")) &&		\
+		    (strcmp(lang_dirent.d_name, "..")))
+
+#define for_each_script(lang_dir, script_dirent, script_next)		\
+	while (!readdir_r(lang_dir, &script_dirent, &script_next) &&	\
+	       script_next)						\
+		if (script_dirent.d_type != DT_DIR)
+
+
+#define RECORD_SUFFIX			"-record"
+#define REPORT_SUFFIX			"-report"
+
+struct script_desc {
+	struct list_head	node;
+	char			*name;
+	char			*half_liner;
+	char			*args;
+};
+
+LIST_HEAD(script_descs);
+
+static struct script_desc *script_desc__new(const char *name)
+{
+	struct script_desc *s = zalloc(sizeof(*s));
+
+	if (s != NULL)
+		s->name = strdup(name);
+
+	return s;
+}
+
+static void script_desc__delete(struct script_desc *s)
+{
+	free(s->name);
+	free(s);
+}
+
+static void script_desc__add(struct script_desc *s)
+{
+	list_add_tail(&s->node, &script_descs);
+}
+
+static struct script_desc *script_desc__find(const char *name)
+{
+	struct script_desc *s;
+
+	list_for_each_entry(s, &script_descs, node)
+		if (strcasecmp(s->name, name) == 0)
+			return s;
+	return NULL;
+}
+
+static struct script_desc *script_desc__findnew(const char *name)
+{
+	struct script_desc *s = script_desc__find(name);
+
+	if (s)
+		return s;
+
+	s = script_desc__new(name);
+	if (!s)
+		goto out_delete_desc;
+
+	script_desc__add(s);
+
+	return s;
+
+out_delete_desc:
+	script_desc__delete(s);
+
+	return NULL;
+}
+
+static char *ends_with(char *str, const char *suffix)
+{
+	size_t suffix_len = strlen(suffix);
+	char *p = str;
+
+	if (strlen(str) > suffix_len) {
+		p = str + strlen(str) - suffix_len;
+		if (!strncmp(p, suffix, suffix_len))
+			return p;
+	}
+
+	return NULL;
+}
+
+static char *ltrim(char *str)
+{
+	int len = strlen(str);
+
+	while (len && isspace(*str)) {
+		len--;
+		str++;
+	}
+
+	return str;
+}
+
+static int read_script_info(struct script_desc *desc, const char *filename)
+{
+	char line[BUFSIZ], *p;
+	FILE *fp;
+
+	fp = fopen(filename, "r");
+	if (!fp)
+		return -1;
+
+	while (fgets(line, sizeof(line), fp)) {
+		p = ltrim(line);
+		if (strlen(p) == 0)
+			continue;
+		if (*p != '#')
+			continue;
+		p++;
+		if (strlen(p) && *p == '!')
+			continue;
+
+		p = ltrim(p);
+		if (strlen(p) && p[strlen(p) - 1] == '\n')
+			p[strlen(p) - 1] = '\0';
+
+		if (!strncmp(p, "description:", strlen("description:"))) {
+			p += strlen("description:");
+			desc->half_liner = strdup(ltrim(p));
+			continue;
+		}
+
+		if (!strncmp(p, "args:", strlen("args:"))) {
+			p += strlen("args:");
+			desc->args = strdup(ltrim(p));
+			continue;
+		}
+	}
+
+	fclose(fp);
+
+	return 0;
+}
+
+static int list_available_scripts(const struct option *opt __used,
+				  const char *s __used, int unset __used)
+{
+	struct dirent *script_next, *lang_next, script_dirent, lang_dirent;
+	char scripts_path[MAXPATHLEN];
+	DIR *scripts_dir, *lang_dir;
+	char script_path[MAXPATHLEN];
+	char lang_path[MAXPATHLEN];
+	struct script_desc *desc;
+	char first_half[BUFSIZ];
+	char *script_root;
+	char *str;
+
+	snprintf(scripts_path, MAXPATHLEN, "%s/scripts", perf_exec_path());
+
+	scripts_dir = opendir(scripts_path);
+	if (!scripts_dir)
+		return -1;
+
+	for_each_lang(scripts_dir, lang_dirent, lang_next) {
+		snprintf(lang_path, MAXPATHLEN, "%s/%s/bin", scripts_path,
+			 lang_dirent.d_name);
+		lang_dir = opendir(lang_path);
+		if (!lang_dir)
+			continue;
+
+		for_each_script(lang_dir, script_dirent, script_next) {
+			script_root = strdup(script_dirent.d_name);
+			str = ends_with(script_root, REPORT_SUFFIX);
+			if (str) {
+				*str = '\0';
+				desc = script_desc__findnew(script_root);
+				snprintf(script_path, MAXPATHLEN, "%s/%s",
+					 lang_path, script_dirent.d_name);
+				read_script_info(desc, script_path);
+			}
+			free(script_root);
+		}
+	}
+
+	fprintf(stdout, "List of available trace scripts:\n");
+	list_for_each_entry(desc, &script_descs, node) {
+		sprintf(first_half, "%s %s", desc->name,
+			desc->args ? desc->args : "");
+		fprintf(stdout, "  %-36s %s\n", first_half,
+			desc->half_liner ? desc->half_liner : "");
+	}
+
+	exit(0);
+}
+
+static char *get_script_path(const char *script_root, const char *suffix)
+{
+	struct dirent *script_next, *lang_next, script_dirent, lang_dirent;
+	char scripts_path[MAXPATHLEN];
+	char script_path[MAXPATHLEN];
+	DIR *scripts_dir, *lang_dir;
+	char lang_path[MAXPATHLEN];
+	char *str, *__script_root;
+	char *path = NULL;
+
+	snprintf(scripts_path, MAXPATHLEN, "%s/scripts", perf_exec_path());
+
+	scripts_dir = opendir(scripts_path);
+	if (!scripts_dir)
+		return NULL;
+
+	for_each_lang(scripts_dir, lang_dirent, lang_next) {
+		snprintf(lang_path, MAXPATHLEN, "%s/%s/bin", scripts_path,
+			 lang_dirent.d_name);
+		lang_dir = opendir(lang_path);
+		if (!lang_dir)
+			continue;
+
+		for_each_script(lang_dir, script_dirent, script_next) {
+			__script_root = strdup(script_dirent.d_name);
+			str = ends_with(__script_root, suffix);
+			if (str) {
+				*str = '\0';
+				if (strcmp(__script_root, script_root))
+					continue;
+				snprintf(script_path, MAXPATHLEN, "%s/%s",
+					 lang_path, script_dirent.d_name);
+				path = strdup(script_path);
+				free(__script_root);
+				break;
+			}
+			free(__script_root);
+		}
+	}
+
+	return path;
+}
+
 static const char * const annotate_usage[] = {
 	"perf trace [<options>] <command>",
 	NULL
@@ -282,8 +522,10 @@ static const struct option options[] = {
 		    "dump raw trace in ASCII"),
 	OPT_BOOLEAN('v', "verbose", &verbose,
 		    "be more verbose (show symbol address, etc)"),
-	OPT_BOOLEAN('l', "latency", &latency_format,
+	OPT_BOOLEAN('L', "Latency", &latency_format,
 		    "show latency attributes (irqs/preemption disabled, etc)"),
+	OPT_CALLBACK_NOOPT('l', "list", NULL, NULL, "list available scripts",
+			   list_available_scripts),
 	OPT_CALLBACK('s', "script", NULL, "name",
 		     "script file name (lang:script name, script name, or *)",
 		     parse_scriptname),
@@ -295,22 +537,54 @@ static const struct option options[] = {
 
 int cmd_trace(int argc, const char **argv, const char *prefix __used)
 {
-	int err;
 	struct perf_session *session;
+	const char *suffix = NULL;
+	const char **__argv;
+	char *script_path;
+	int i, err;
+
+	if (argc >= 2 && strncmp(argv[1], "rec", strlen("rec")) == 0) {
+		if (argc < 3) {
+			fprintf(stderr,
+				"Please specify a record script\n");
+			return -1;
+		}
+		suffix = RECORD_SUFFIX;
+	}
+
+	if (argc >= 2 && strncmp(argv[1], "rep", strlen("rep")) == 0) {
+		if (argc < 3) {
+			fprintf(stderr,
+				"Please specify a report script\n");
+			return -1;
+		}
+		suffix = REPORT_SUFFIX;
+	}
+
+	if (suffix) {
+		script_path = get_script_path(argv[2], suffix);
+		if (!script_path) {
+			fprintf(stderr, "script not found\n");
+			return -1;
+		}
+
+		__argv = malloc((argc + 1) * sizeof(const char *));
+		__argv[0] = "/bin/sh";
+		__argv[1] = script_path;
+		for (i = 3; i < argc; i++)
+			__argv[i - 1] = argv[i];
+		__argv[argc - 1] = NULL;
+
+		execvp("/bin/sh", (char **)__argv);
+		exit(-1);
+	}
 
 	symbol__init(0);
 
 	setup_scripting();
 
-	argc = parse_options(argc, argv, options, annotate_usage, 0);
-	if (argc) {
-		/*
-		 * Special case: if there's an argument left then assume tha
-		 * it's a symbol filter:
-		 */
-		if (argc > 1)
-			usage_with_options(annotate_usage, options);
-	}
+	argc = parse_options(argc, argv, options, annotate_usage,
+			     PARSE_OPT_STOP_AT_NON_OPTION);
 
 	setup_pager();
 
@@ -350,7 +624,7 @@ int cmd_trace(int argc, const char **argv, const char *prefix __used)
 	}
 
 	if (script_name) {
-		err = scripting_ops->start_script(script_name);
+		err = scripting_ops->start_script(script_name, argc, argv);
 		if (err)
 			goto out;
 	}
