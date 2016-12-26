@@ -2,7 +2,9 @@
 #include "event.h"
 #include "debug.h"
 #include "session.h"
+#include "sort.h"
 #include "string.h"
+#include "strlist.h"
 #include "thread.h"
 
 static pid_t event__synthesize_comm(pid_t pid, int full,
@@ -187,13 +189,41 @@ void event__synthesize_threads(int (*process)(event_t *event,
 	closedir(proc);
 }
 
+static void thread__comm_adjust(struct thread *self)
+{
+	char *comm = self->comm;
+
+	if (!symbol_conf.col_width_list_str && !symbol_conf.field_sep &&
+	    (!symbol_conf.comm_list ||
+	     strlist__has_entry(symbol_conf.comm_list, comm))) {
+		unsigned int slen = strlen(comm);
+
+		if (slen > comms__col_width) {
+			comms__col_width = slen;
+			threads__col_width = slen + 6;
+		}
+	}
+}
+
+static int thread__set_comm_adjust(struct thread *self, const char *comm)
+{
+	int ret = thread__set_comm(self, comm);
+
+	if (ret)
+		return ret;
+
+	thread__comm_adjust(self);
+
+	return 0;
+}
+
 int event__process_comm(event_t *self, struct perf_session *session)
 {
 	struct thread *thread = perf_session__findnew(session, self->comm.pid);
 
 	dump_printf(": %s:%d\n", self->comm.comm, self->comm.pid);
 
-	if (thread == NULL || thread__set_comm(thread, self->comm.comm)) {
+	if (thread == NULL || thread__set_comm_adjust(thread, self->comm.comm)) {
 		dump_printf("problem processing PERF_RECORD_COMM, skipping event.\n");
 		return -1;
 	}
@@ -299,6 +329,19 @@ try_again:
 	}
 }
 
+static void dso__calc_col_width(struct dso *self)
+{
+	if (!symbol_conf.col_width_list_str && !symbol_conf.field_sep &&
+	    (!symbol_conf.dso_list ||
+	     strlist__has_entry(symbol_conf.dso_list, self->name))) {
+		unsigned int slen = strlen(self->name);
+		if (slen > dsos__col_width)
+			dsos__col_width = slen;
+	}
+
+	self->slen_calculated = 1;
+}
+
 int event__preprocess_sample(const event_t *self, struct perf_session *session,
 			     struct addr_location *al, symbol_filter_t filter)
 {
@@ -308,6 +351,10 @@ int event__preprocess_sample(const event_t *self, struct perf_session *session,
 	if (thread == NULL)
 		return -1;
 
+	if (symbol_conf.comm_list &&
+	    !strlist__has_entry(symbol_conf.comm_list, thread->comm))
+		goto out_filtered;
+
 	dump_printf(" ... thread: %s:%d\n", thread->comm, thread->pid);
 
 	thread__find_addr_location(thread, session, cpumode, MAP__FUNCTION,
@@ -315,6 +362,29 @@ int event__preprocess_sample(const event_t *self, struct perf_session *session,
 	dump_printf(" ...... dso: %s\n",
 		    al->map ? al->map->dso->long_name :
 			al->level == 'H' ? "[hypervisor]" : "<not found>");
+	/*
+	 * We have to do this here as we may have a dso with no symbol hit that
+	 * has a name longer than the ones with symbols sampled.
+	 */
+	if (al->map && !sort_dso.elide && !al->map->dso->slen_calculated)
+		dso__calc_col_width(al->map->dso);
+
+	if (symbol_conf.dso_list &&
+	    (!al->map || !al->map->dso ||
+	     !(strlist__has_entry(symbol_conf.dso_list, al->map->dso->short_name) ||
+	       (al->map->dso->short_name != al->map->dso->long_name &&
+		strlist__has_entry(symbol_conf.dso_list, al->map->dso->long_name)))))
+		goto out_filtered;
+
+	if (symbol_conf.sym_list && al->sym &&
+	    !strlist__has_entry(symbol_conf.sym_list, al->sym->name))
+		goto out_filtered;
+
+	al->filtered = false;
+	return 0;
+
+out_filtered:
+	al->filtered = true;
 	return 0;
 }
 

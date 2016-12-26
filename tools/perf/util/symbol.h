@@ -49,19 +49,32 @@ struct symbol {
 	char		name[0];
 };
 
+struct strlist;
+
 struct symbol_conf {
 	unsigned short	priv_size;
 	bool		try_vmlinux_path,
 			use_modules,
-			sort_by_name;
-	const char	*vmlinux_name;
+			sort_by_name,
+			show_nr_samples,
+			use_callchain,
+			exclude_other;
+	const char	*vmlinux_name,
+			*field_sep;
+	char            *dso_list_str,
+			*comm_list_str,
+			*sym_list_str,
+			*col_width_list_str;
+       struct strlist	*dso_list,
+			*comm_list,
+			*sym_list;
 };
 
-extern unsigned int symbol__priv_size;
+extern struct symbol_conf symbol_conf;
 
 static inline void *symbol__priv(struct symbol *self)
 {
-	return ((void *)self) - symbol__priv_size;
+	return ((void *)self) - symbol_conf.priv_size;
 }
 
 struct addr_location {
@@ -70,6 +83,7 @@ struct addr_location {
 	struct symbol *sym;
 	u64	      addr;
 	char	      level;
+	bool	      filtered;
 };
 
 struct dso {
@@ -119,9 +133,8 @@ int sysfs__read_build_id(const char *filename, void *bf, size_t size);
 bool dsos__read_build_ids(void);
 int build_id__sprintf(u8 *self, int len, char *bf);
 
-int symbol__init(struct symbol_conf *conf);
-int perf_session__create_kernel_maps(struct perf_session *self,
-				     struct symbol_conf *conf);
+int symbol__init(void);
+int perf_session__create_kernel_maps(struct perf_session *self);
 
 extern struct list_head dsos__user, dsos__kernel;
 extern struct dso *vdso;

@@ -1050,8 +1050,7 @@ static struct perf_event_ops event_ops = {
 
 static int __cmd_timechart(void)
 {
-	struct perf_session *session = perf_session__new(input_name, O_RDONLY,
-							 0, NULL);
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0);
 	int ret;
 
 	if (session == NULL)
@@ -1138,10 +1137,10 @@ static const struct option options[] = {
 
 int cmd_timechart(int argc, const char **argv, const char *prefix __used)
 {
-	symbol__init(0);
-
 	argc = parse_options(argc, argv, options, timechart_usage,
 			PARSE_OPT_STOP_AT_NON_OPTION);
+
+	symbol__init();
 
 	if (argc && !strncmp(argv[0], "rec", 3))
 		return __cmd_record(argc, argv);

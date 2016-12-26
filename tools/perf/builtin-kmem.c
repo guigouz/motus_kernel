@@ -505,8 +505,7 @@ static void sort_result(void)
 static int __cmd_kmem(void)
 {
 	int err;
-	struct perf_session *session = perf_session__new(input_name, O_RDONLY,
-							 0, NULL);
+	struct perf_session *session = perf_session__new(input_name, O_RDONLY, 0);
 	if (session == NULL)
 		return -ENOMEM;
 
@@ -767,12 +766,12 @@ static int __cmd_record(int argc, const char **argv)
 
 int cmd_kmem(int argc, const char **argv, const char *prefix __used)
 {
-	symbol__init(0);
-
 	argc = parse_options(argc, argv, kmem_options, kmem_usage, 0);
 
 	if (!argc)
 		usage_with_options(kmem_usage, kmem_options);
+
+	symbol__init();
 
 	if (!strncmp(argv[0], "rec", 3)) {
 		return __cmd_record(argc, argv);

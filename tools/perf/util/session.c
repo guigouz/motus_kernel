@@ -49,8 +49,7 @@ out_close:
 	return -1;
 }
 
-struct perf_session *perf_session__new(const char *filename, int mode,
-				       bool force, struct symbol_conf *conf)
+struct perf_session *perf_session__new(const char *filename, int mode, bool force)
 {
 	size_t len = filename ? strlen(filename) + 1 : 0;
 	struct perf_session *self = zalloc(sizeof(*self) + len);
@@ -69,7 +68,7 @@ struct perf_session *perf_session__new(const char *filename, int mode,
 	self->cwdlen = 0;
 	map_groups__init(&self->kmaps);
 
-	if (perf_session__create_kernel_maps(self, conf) < 0)
+	if (perf_session__create_kernel_maps(self) < 0)
 		goto out_delete;
 
 	if (mode == O_RDONLY && perf_session__open(self, force) < 0)
@@ -109,7 +108,7 @@ struct symbol **perf_session__resolve_callchain(struct perf_session *self,
 	struct symbol **syms = NULL;
 	unsigned int i;
 
-	if (self->use_callchain) {
+	if (symbol_conf.use_callchain) {
 		syms = calloc(chain->nr, sizeof(*syms));
 		if (!syms) {
 			fprintf(stderr, "Can't allocate memory for symbols\n");
@@ -141,7 +140,7 @@ struct symbol **perf_session__resolve_callchain(struct perf_session *self,
 			if (sort__has_parent && !*parent &&
 			    symbol__match_parent_regex(al.sym))
 				*parent = al.sym;
-			if (!self->use_callchain)
+			if (!symbol_conf.use_callchain)
 				break;
 			syms[i] = al.sym;
 		}

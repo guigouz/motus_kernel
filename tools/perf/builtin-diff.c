@@ -21,8 +21,6 @@ static char	   const *input_old = "perf.data.old",
 static int	   force;
 static bool 	   show_percent;
 
-struct symbol_conf symbol_conf;
-
 static int perf_session__add_hist_entry(struct perf_session *self,
 					struct addr_location *al, u64 count)
 {
@@ -51,6 +49,9 @@ static int diff__process_sample_event(event_t *event, struct perf_session *sessi
 			   event->header.type);
 		return -1;
 	}
+
+	if (al.filtered)
+		return 0;
 
 	event__parse_sample(event, session->sample_type, &data);
 
@@ -184,10 +185,14 @@ blank:		memset(displacement, ' ', sizeof(displacement));
 	printed = fprintf(fp, "%4lu %5.5s ", pos, displacement);
 
 	if (show_percent) {
-		double old_percent = (old_count * 100) / pair_session->events_stats.total,
-		       new_percent = (self->count * 100) / session->events_stats.total;
-		double diff = old_percent - new_percent;
+		double old_percent = 0, new_percent = 0, diff;
 
+		if (pair_session->events_stats.total > 0)
+			old_percent = (old_count * 100) / pair_session->events_stats.total;
+		if (session->events_stats.total > 0)
+			new_percent = (self->count * 100) / session->events_stats.total;
+
+		diff = old_percent - new_percent;
 		if (verbose)
 			printed += fprintf(fp, " %3.2f%% %3.2f%%", old_percent, new_percent);
 
@@ -226,8 +231,8 @@ static int __cmd_diff(void)
 	int ret, i;
 	struct perf_session *session[2];
 
-	session[0] = perf_session__new(input_old, O_RDONLY, force, &symbol_conf);
-	session[1] = perf_session__new(input_new, O_RDONLY, force, &symbol_conf);
+	session[0] = perf_session__new(input_old, O_RDONLY, force);
+	session[1] = perf_session__new(input_new, O_RDONLY, force);
 	if (session[0] == NULL || session[1] == NULL)
 		return -ENOMEM;
 
@@ -262,16 +267,17 @@ static const struct option options[] = {
 		    "Don't shorten the pathnames taking into account the cwd"),
 	OPT_BOOLEAN('P', "full-paths", &event_ops.full_paths,
 		    "Don't shorten the pathnames taking into account the cwd"),
+	OPT_STRING('d', "dsos", &symbol_conf.dso_list_str, "dso[,dso...]",
+		   "only consider symbols in these dsos"),
+	OPT_STRING('C', "comms", &symbol_conf.comm_list_str, "comm[,comm...]",
+		   "only consider symbols in these comms"),
+	OPT_STRING('S', "symbols", &symbol_conf.sym_list_str, "symbol[,symbol...]",
+		   "only consider these symbols"),
 	OPT_END()
 };
 
 int cmd_diff(int argc, const char **argv, const char *prefix __used)
 {
-	if (symbol__init(&symbol_conf) < 0)
-		return -1;
-
-	setup_sorting(diff_usage, options);
-
 	argc = parse_options(argc, argv, options, diff_usage, 0);
 	if (argc) {
 		if (argc > 2)
@@ -283,6 +289,10 @@ int cmd_diff(int argc, const char **argv, const char *prefix __used)
 			input_new = argv[0];
 	}
 
+	if (symbol__init() < 0)
+		return -1;
+
+	setup_sorting(diff_usage, options);
 	setup_pager();
 	return __cmd_diff();
 }
