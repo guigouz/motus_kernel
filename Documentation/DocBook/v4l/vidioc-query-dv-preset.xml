@@ -1,12 +1,12 @@
-<refentry id="vidioc-querystd">
+<refentry id="vidioc-query-dv-preset">
   <refmeta>
-    <refentrytitle>ioctl VIDIOC_QUERYSTD</refentrytitle>
+    <refentrytitle>ioctl VIDIOC_QUERY_DV_PRESET</refentrytitle>
     &manvol;
   </refmeta>
 
   <refnamediv>
-    <refname>VIDIOC_QUERYSTD</refname>
-    <refpurpose>Sense the video standard received by the current
+    <refname>VIDIOC_QUERY_DV_PRESET</refname>
+    <refpurpose>Sense the DV preset received by the current
 input</refpurpose>
   </refnamediv>
 
@@ -16,7 +16,7 @@ input</refpurpose>
 	<funcdef>int <function>ioctl</function></funcdef>
 	<paramdef>int <parameter>fd</parameter></paramdef>
 	<paramdef>int <parameter>request</parameter></paramdef>
-	<paramdef>v4l2_std_id *<parameter>argp</parameter></paramdef>
+	<paramdef>&v4l2-dv-preset; *<parameter>argp</parameter></paramdef>
       </funcprototype>
     </funcsynopsis>
   </refsynopsisdiv>
@@ -34,7 +34,7 @@ input</refpurpose>
       <varlistentry>
 	<term><parameter>request</parameter></term>
 	<listitem>
-	  <para>VIDIOC_QUERYSTD</para>
+	  <para>VIDIOC_QUERY_DV_PRESET</para>
 	</listitem>
       </varlistentry>
       <varlistentry>
@@ -49,31 +49,27 @@ input</refpurpose>
   <refsect1>
     <title>Description</title>
 
-    <para>The hardware may be able to detect the current video
-standard automatically. To do so, applications call <constant>
-VIDIOC_QUERYSTD</constant> with a pointer to a &v4l2-std-id; type. The
-driver stores here a set of candidates, this can be a single flag or a
-set of supported standards if for example the hardware can only
-distinguish between 50 and 60 Hz systems. When detection is not
-possible or fails, the set must contain all standards supported by the
-current video input or output.</para>
-
+    <para>The hardware may be able to detect the current DV preset
+automatically, similar to sensing the video standard. To do so, applications
+call <constant> VIDIOC_QUERY_DV_PRESET</constant> with a pointer to a
+&v4l2-dv-preset; type. Once the hardware detects a preset, that preset is
+returned in the preset field of &v4l2-dv-preset;. When detection is not
+possible or fails, the value V4L2_DV_INVALID is returned.</para>
   </refsect1>
 
   <refsect1>
     &return-value;
-
     <variablelist>
       <varlistentry>
 	<term><errorcode>EINVAL</errorcode></term>
 	<listitem>
 	  <para>This ioctl is not supported.</para>
 	</listitem>
-      </varlistentry>
+    </varlistentry>
       <varlistentry>
 	<term><errorcode>EBUSY</errorcode></term>
 	<listitem>
-	  <para>The device is busy and therefore can not detect the standard</para>
+	  <para>The device is busy and therefore can not sense the preset</para>
 	</listitem>
       </varlistentry>
     </variablelist>
