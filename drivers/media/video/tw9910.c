@@ -239,18 +239,6 @@ struct tw9910_priv {
 	u32                             revision;
 };
 
-/*
- * register settings
- */
-
-#define ENDMARKER { 0xff, 0xff }
-
-static const struct regval_list tw9910_default_regs[] =
-{
-	{ OUTCTR1, VSP_LO | VSSL_VVALID | HSP_HI | HSSL_HSYNC },
-	ENDMARKER,
-};
-
 static const struct tw9910_scale_ctrl tw9910_ntsc_scales[] = {
 	{
 		.name   = "NTSC SQ",
@@ -341,13 +329,6 @@ static const struct tw9910_scale_ctrl tw9910_pal_scales[] = {
 	},
 };
 
-static const struct tw9910_cropping_ctrl tw9910_cropping_ctrl = {
-	.vdelay  = 0x0012,
-	.vactive = 0x00F0,
-	.hdelay  = 0x0010,
-	.hactive = 0x02D0,
-};
-
 static const struct tw9910_hsync_ctrl tw9910_hsync_ctrl = {
 	.start = 0x0260,
 	.end   = 0x0300,
@@ -397,40 +378,6 @@ static int tw9910_set_scale(struct i2c_client *client,
 	return ret;
 }
 
-static int tw9910_set_cropping(struct i2c_client *client,
-			       const struct tw9910_cropping_ctrl *cropping)
-{
-	int ret;
-
-	ret = i2c_smbus_write_byte_data(client, CROP_HI,
-					(cropping->vdelay  & 0x0300) >> 2 |
-					(cropping->vactive & 0x0300) >> 4 |
-					(cropping->hdelay  & 0x0300) >> 6 |
-					(cropping->hactive & 0x0300) >> 8);
-	if (ret < 0)
-		return ret;
-
-	ret = i2c_smbus_write_byte_data(client, VDELAY_LO,
-					cropping->vdelay & 0x00FF);
-	if (ret < 0)
-		return ret;
-
-	ret = i2c_smbus_write_byte_data(client, VACTIVE_LO,
-					cropping->vactive & 0x00FF);
-	if (ret < 0)
-		return ret;
-
-	ret = i2c_smbus_write_byte_data(client, HDELAY_LO,
-					cropping->hdelay & 0x00FF);
-	if (ret < 0)
-		return ret;
-
-	ret = i2c_smbus_write_byte_data(client, HACTIVE_LO,
-					cropping->hactive & 0x00FF);
-
-	return ret;
-}
-
 static int tw9910_set_hsync(struct i2c_client *client,
 			    const struct tw9910_hsync_ctrl *hsync)
 {
@@ -457,20 +404,6 @@ static int tw9910_set_hsync(struct i2c_client *client,
 				      (hsync->end   & 0x0007));
 
 	return ret;
-}
-
-static int tw9910_write_array(struct i2c_client *client,
-			      const struct regval_list *vals)
-{
-	while (vals->reg_num != 0xff) {
-		int ret = i2c_smbus_write_byte_data(client,
-						    vals->reg_num,
-						    vals->value);
-		if (ret < 0)
-			return ret;
-		vals++;
-	}
-	return 0;
 }
 
 static void tw9910_reset(struct i2c_client *client)
@@ -577,7 +510,23 @@ static int tw9910_s_stream(struct v4l2_subdev *sd, int enable)
 static int tw9910_set_bus_param(struct soc_camera_device *icd,
 				unsigned long flags)
 {
-	return 0;
+	struct v4l2_subdev *sd = soc_camera_to_subdev(icd);
+	struct i2c_client *client = sd->priv;
+	u8 val = VSSL_VVALID | HSSL_DVALID;
+
+	/*
+	 * set OUTCTR1
+	 *
+	 * We use VVALID and DVALID signals to control VSYNC and HSYNC
+	 * outputs, in this mode their polarity is inverted.
+	 */
+	if (flags & SOCAM_HSYNC_ACTIVE_LOW)
+		val |= HSP_HI;
+
+	if (flags & SOCAM_VSYNC_ACTIVE_LOW)
+		val |= VSP_HI;
+
+	return i2c_smbus_write_byte_data(client, OUTCTR1, val);
 }
 
 static unsigned long tw9910_query_bus_param(struct soc_camera_device *icd)
@@ -587,6 +536,7 @@ static unsigned long tw9910_query_bus_param(struct soc_camera_device *icd)
 	struct soc_camera_link *icl = to_soc_camera_link(icd);
 	unsigned long flags = SOCAM_PCLK_SAMPLE_RISING | SOCAM_MASTER |
 		SOCAM_VSYNC_ACTIVE_HIGH | SOCAM_HSYNC_ACTIVE_HIGH |
+		SOCAM_VSYNC_ACTIVE_LOW  | SOCAM_HSYNC_ACTIVE_LOW  |
 		SOCAM_DATA_ACTIVE_HIGH | priv->info->buswidth;
 
 	return soc_camera_apply_sensor_flags(icl, flags);
@@ -680,9 +630,6 @@ static int tw9910_s_crop(struct v4l2_subdev *sd, struct v4l2_crop *a)
 	 * reset hardware
 	 */
 	tw9910_reset(client);
-	ret = tw9910_write_array(client, tw9910_default_regs);
-	if (ret < 0)
-		goto tw9910_set_fmt_error;
 
 	/*
 	 * set bus width
@@ -727,13 +674,6 @@ static int tw9910_s_crop(struct v4l2_subdev *sd, struct v4l2_crop *a)
 	 * set scale
 	 */
 	ret = tw9910_set_scale(client, priv->scale);
-	if (ret < 0)
-		goto tw9910_set_fmt_error;
-
-	/*
-	 * set cropping
-	 */
-	ret = tw9910_set_cropping(client, &tw9910_cropping_ctrl);
 	if (ret < 0)
 		goto tw9910_set_fmt_error;
 
@@ -828,9 +768,9 @@ static int tw9910_g_fmt(struct v4l2_subdev *sd,
 
 	mf->width	= priv->scale->width;
 	mf->height	= priv->scale->height;
-	mf->code	= V4L2_MBUS_FMT_YVYU8_2X8_BE;
+	mf->code	= V4L2_MBUS_FMT_YUYV8_2X8_BE;
 	mf->colorspace	= V4L2_COLORSPACE_JPEG;
-	mf->field	= V4L2_FIELD_INTERLACED;
+	mf->field	= V4L2_FIELD_INTERLACED_BT;
 
 	return 0;
 }
@@ -852,12 +792,12 @@ static int tw9910_s_fmt(struct v4l2_subdev *sd,
 	int ret;
 
 	WARN_ON(mf->field != V4L2_FIELD_ANY &&
-		mf->field != V4L2_FIELD_INTERLACED);
+		mf->field != V4L2_FIELD_INTERLACED_BT);
 
 	/*
 	 * check color format
 	 */
-	if (mf->code != V4L2_MBUS_FMT_YVYU8_2X8_BE)
+	if (mf->code != V4L2_MBUS_FMT_YUYV8_2X8_BE)
 		return -EINVAL;
 
 	mf->colorspace = V4L2_COLORSPACE_JPEG;
@@ -878,13 +818,13 @@ static int tw9910_try_fmt(struct v4l2_subdev *sd,
 	const struct tw9910_scale_ctrl *scale;
 
 	if (V4L2_FIELD_ANY == mf->field) {
-		mf->field = V4L2_FIELD_INTERLACED;
-	} else if (V4L2_FIELD_INTERLACED != mf->field) {
+		mf->field = V4L2_FIELD_INTERLACED_BT;
+	} else if (V4L2_FIELD_INTERLACED_BT != mf->field) {
 		dev_err(&client->dev, "Field type %d invalid.\n", mf->field);
 		return -EINVAL;
 	}
 
-	mf->code = V4L2_MBUS_FMT_YVYU8_2X8_BE;
+	mf->code = V4L2_MBUS_FMT_YUYV8_2X8_BE;
 	mf->colorspace = V4L2_COLORSPACE_JPEG;
 
 	/*
@@ -969,7 +909,7 @@ static int tw9910_enum_fmt(struct v4l2_subdev *sd, int index,
 	if (index)
 		return -EINVAL;
 
-	*code = V4L2_MBUS_FMT_YVYU8_2X8_BE;
+	*code = V4L2_MBUS_FMT_YUYV8_2X8_BE;
 	return 0;
 }
 
