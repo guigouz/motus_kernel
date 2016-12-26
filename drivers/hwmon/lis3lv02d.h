@@ -98,7 +98,7 @@ enum lis3_who_am_i {
 	WAI_6B		= 0x52, /* 6 bits: LIS331DLF - not supported */
 };
 
-enum lis3lv02d_ctrl1 {
+enum lis3lv02d_ctrl1_12b {
 	CTRL1_Xen	= 0x01,
 	CTRL1_Yen	= 0x02,
 	CTRL1_Zen	= 0x04,
@@ -107,8 +107,17 @@ enum lis3lv02d_ctrl1 {
 	CTRL1_DF1	= 0x20,
 	CTRL1_PD0	= 0x40,
 	CTRL1_PD1	= 0x80,
-	CTRL1_DR	= 0x80, /* Data rate on 8 bits */
 };
+
+/* Delta to ctrl1_12b version */
+enum lis3lv02d_ctrl1_8b {
+	CTRL1_STM	= 0x08,
+	CTRL1_STP	= 0x10,
+	CTRL1_FS	= 0x20,
+	CTRL1_PD	= 0x40,
+	CTRL1_DR	= 0x80,
+};
+
 enum lis3lv02d_ctrl2 {
 	CTRL2_DAS	= 0x01,
 	CTRL2_SIM	= 0x02,
@@ -199,17 +208,20 @@ struct lis3lv02d {
 	int (*write) (struct lis3lv02d *lis3, int reg, u8 val);
 	int (*read) (struct lis3lv02d *lis3, int reg, u8 *ret);
 
+	int                     *odrs;     /* Supported output data rates */
+	u8                      odr_mask;  /* ODR bit mask */
 	u8			whoami;    /* indicates measurement precision */
 	s16 (*read_data) (struct lis3lv02d *lis3, int reg);
 	int			mdps_max_val;
 	int			pwron_delay;
+	int                     scale; /*
+					* relationship between 1 LBS and mG
+					* (1/1000th of earth gravity)
+					*/
 
 	struct input_polled_dev	*idev;     /* input device */
 	struct platform_device	*pdev;     /* platform device */
 	atomic_t		count;     /* interrupt count after last read */
-	int			xcalib;    /* calibrated null value for x */
-	int			ycalib;    /* calibrated null value for y */
-	int			zcalib;    /* calibrated null value for z */
 	struct axis_conversion	ac;        /* hw -> logical axis */
 
 	u32			irq;       /* IRQ number */
@@ -218,6 +230,7 @@ struct lis3lv02d {
 	unsigned long		misc_opened; /* bit0: whether the device is open */
 
 	struct lis3lv02d_platform_data *pdata;	/* for passing board config */
+	struct mutex		mutex;     /* Serialize poll and selftest */
 };
 
 int lis3lv02d_init_device(struct lis3lv02d *lis3);
