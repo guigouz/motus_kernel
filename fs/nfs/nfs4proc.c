@@ -341,6 +341,23 @@ nfs4_free_slot(struct nfs4_slot_table *tbl, u8 free_slotid)
 		free_slotid, tbl->highest_used_slotid);
 }
 
+/*
+ * Signal state manager thread if session is drained
+ */
+static void nfs41_check_drain_session_complete(struct nfs4_session *ses)
+{
+	if (!test_bit(NFS4CLNT_SESSION_DRAINING, &ses->clp->cl_state)) {
+		rpc_wake_up_next(&ses->fc_slot_table.slot_tbl_waitq);
+		return;
+	}
+
+	if (ses->fc_slot_table.highest_used_slotid != -1)
+		return;
+
+	dprintk("%s COMPLETE: Session Drained\n", __func__);
+	complete(&ses->complete);
+}
+
 static void nfs41_sequence_free_slot(const struct nfs_client *clp,
 			      struct nfs4_sequence_res *res)
 {
@@ -356,15 +373,7 @@ static void nfs41_sequence_free_slot(const struct nfs_client *clp,
 
 	spin_lock(&tbl->slot_tbl_lock);
 	nfs4_free_slot(tbl, res->sr_slotid);
-
-	/* Signal state manager thread if session is drained */
-	if (test_bit(NFS4CLNT_SESSION_DRAINING, &clp->cl_state)) {
-		if (tbl->highest_used_slotid == -1) {
-			dprintk("%s COMPLETE: Session Drained\n", __func__);
-			complete(&clp->cl_session->complete);
-		}
-	} else
-		rpc_wake_up_next(&tbl->slot_tbl_waitq);
+	nfs41_check_drain_session_complete(clp->cl_session);
 	spin_unlock(&tbl->slot_tbl_lock);
 	res->sr_slotid = NFS4_MAX_SLOT_TABLE;
 }
@@ -1055,7 +1064,6 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 	clear_bit(NFS_DELEGATED_STATE, &state->flags);
 	smp_rmb();
 	if (state->n_rdwr != 0) {
-		clear_bit(NFS_O_RDWR_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_READ|FMODE_WRITE, &newstate);
 		if (ret != 0)
 			return ret;
@@ -1063,7 +1071,6 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 			return -ESTALE;
 	}
 	if (state->n_wronly != 0) {
-		clear_bit(NFS_O_WRONLY_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_WRITE, &newstate);
 		if (ret != 0)
 			return ret;
@@ -1071,7 +1078,6 @@ static int nfs4_open_recover(struct nfs4_opendata *opendata, struct nfs4_state *
 			return -ESTALE;
 	}
 	if (state->n_rdonly != 0) {
-		clear_bit(NFS_O_RDONLY_STATE, &state->flags);
 		ret = nfs4_open_recover_helper(opendata, FMODE_READ, &newstate);
 		if (ret != 0)
 			return ret;
@@ -1430,16 +1436,11 @@ static int _nfs4_proc_open(struct nfs4_opendata *data)
 	if (status != 0 || !data->rpc_done)
 		return status;
 
-	if (o_res->fh.size == 0)
-		_nfs4_proc_lookup(dir, o_arg->name, &o_res->fh, o_res->f_attr);
-
 	if (o_arg->open_flags & O_CREAT) {
 		update_changeattr(dir, &o_res->cinfo);
 		nfs_post_op_update_inode(dir, o_res->dir_attr);
 	} else
 		nfs_refresh_inode(dir, o_res->dir_attr);
-	if ((o_res->rflags & NFS4_OPEN_RESULT_LOCKTYPE_POSIX) == 0)
-		server->caps &= ~NFS_CAP_POSIX_LOCK;
 	if(o_res->rflags & NFS4_OPEN_RESULT_CONFIRM) {
 		status = _nfs4_proc_open_confirm(data);
 		if (status != 0)
@@ -1580,9 +1581,6 @@ static int _nfs4_do_open(struct inode *dir, struct path *path, fmode_t fmode, in
 	status = PTR_ERR(state);
 	if (IS_ERR(state))
 		goto err_opendata_put;
-	if (server->caps & NFS_CAP_POSIX_LOCK)
-		set_bit(NFS_STATE_POSIX_LOCKS, &state->flags);
-	nfs_revalidate_inode(server, state->inode);
 	nfs4_opendata_put(opendata);
 	nfs4_put_state_owner(sp);
 	*res = state;
@@ -3148,35 +3146,6 @@ static void buf_to_pages(const void *buf, size_t buflen,
 	}
 }
 
-static int buf_to_pages_noslab(const void *buf, size_t buflen,
-		struct page **pages, unsigned int *pgbase)
-{
-	struct page *newpage, **spages;
-	int rc = 0;
-	size_t len;
-	spages = pages;
-
-	do {
-		len = min_t(size_t, PAGE_CACHE_SIZE, buflen);
-		newpage = alloc_page(GFP_KERNEL);
-
-		if (newpage == NULL)
-			goto unwind;
-		memcpy(page_address(newpage), buf, len);
-                buf += len;
-                buflen -= len;
-		*pages++ = newpage;
-		rc++;
-	} while (buflen != 0);
-
-	return rc;
-
-unwind:
-	for(; rc > 0; rc--)
-		__free_page(spages[rc-1]);
-	return -ENOMEM;
-}
-
 struct nfs4_cached_acl {
 	int cached;
 	size_t len;
@@ -3343,23 +3312,13 @@ static int __nfs4_proc_set_acl(struct inode *inode, const void *buf, size_t bufl
 		.rpc_argp	= &arg,
 		.rpc_resp	= &res,
 	};
-	int ret, i;
+	int ret;
 
 	if (!nfs4_server_supports_acls(server))
 		return -EOPNOTSUPP;
-	i = buf_to_pages_noslab(buf, buflen, arg.acl_pages, &arg.acl_pgbase);
-	if (i < 0)
-		return i;
 	nfs_inode_return_delegation(inode);
+	buf_to_pages(buf, buflen, arg.acl_pages, &arg.acl_pgbase);
 	ret = nfs4_call_sync(server, &msg, &arg, &res, 1);
-
-	/*
-	 * Free each page after tx, so the only ref left is
-	 * held by the network stack
-	 */
-	for (; i > 0; i--)
-		put_page(pages[i-1]);
-
 	nfs_access_zap_cache(inode);
 	nfs_zap_acl_cache(inode);
 	return ret;
@@ -4043,23 +4002,7 @@ static const struct rpc_call_ops nfs4_lock_ops = {
 	.rpc_release = nfs4_lock_release,
 };
 
-static void nfs4_handle_setlk_error(struct nfs_server *server, struct nfs4_lock_state *lsp, int new_lock_owner, int error)
-{
-	struct nfs_client *clp = server->nfs_client;
-	struct nfs4_state *state = lsp->ls_state;
-
-	switch (error) {
-	case -NFS4ERR_ADMIN_REVOKED:
-	case -NFS4ERR_BAD_STATEID:
-	case -NFS4ERR_EXPIRED:
-		if (new_lock_owner != 0 ||
-		   (lsp->ls_flags & NFS_LOCK_INITIALIZED) != 0)
-			nfs4_state_mark_reclaim_nograce(clp, state);
-		lsp->ls_seqid.flags &= ~NFS_SEQID_CONFIRMED;
-	};
-}
-
-static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *fl, int reclaim)
+static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *fl, int recovery_type)
 {
 	struct nfs4_lockdata *data;
 	struct rpc_task *task;
@@ -4083,8 +4026,8 @@ static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *f
 		return -ENOMEM;
 	if (IS_SETLKW(cmd))
 		data->arg.block = 1;
-	if (reclaim != 0)
-		data->arg.reclaim = 1;
+	if (recovery_type == NFS_LOCK_RECLAIM)
+			data->arg.reclaim = NFS_LOCK_RECLAIM;
 	msg.rpc_argp = &data->arg,
 	msg.rpc_resp = &data->res,
 	task_setup_data.callback_data = data;
@@ -4094,9 +4037,6 @@ static int _nfs4_do_setlk(struct nfs4_state *state, int cmd, struct file_lock *f
 	ret = nfs4_wait_for_completion_rpc_task(task);
 	if (ret == 0) {
 		ret = data->rpc_status;
-		if (ret)
-			nfs4_handle_setlk_error(data->server, data->lsp,
-					data->arg.new_lock_owner, ret);
 	} else
 		data->cancelled = 1;
 	rpc_put_task(task);
@@ -4114,7 +4054,7 @@ static int nfs4_lock_reclaim(struct nfs4_state *state, struct file_lock *request
 		/* Cache the lock if possible... */
 		if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
 			return 0;
-		err = _nfs4_do_setlk(state, F_SETLK, request, 1);
+		err = _nfs4_do_setlk(state, F_SETLK, request, NFS_LOCK_RECLAIM);
 		if (err != -NFS4ERR_DELAY)
 			break;
 		nfs4_handle_exception(server, err, &exception);
@@ -4134,7 +4074,7 @@ static int nfs4_lock_expired(struct nfs4_state *state, struct file_lock *request
 	do {
 		if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
 			return 0;
-		err = _nfs4_do_setlk(state, F_SETLK, request, 0);
+		err = _nfs4_do_setlk(state, F_SETLK, request, NFS_LOCK_EXPIRED);
 		switch (err) {
 		default:
 			goto out;
@@ -4152,11 +4092,8 @@ static int _nfs4_proc_setlk(struct nfs4_state *state, int cmd, struct file_lock 
 {
 	struct nfs_inode *nfsi = NFS_I(state->inode);
 	unsigned char fl_flags = request->fl_flags;
-	int status = -ENOLCK;
+	int status;
 
-	if ((fl_flags & FL_POSIX) &&
-			!test_bit(NFS_STATE_POSIX_LOCKS, &state->flags))
-		goto out;
 	/* Is this a delegated open? */
 	status = nfs4_set_lock_state(state, request);
 	if (status != 0)
@@ -4173,7 +4110,7 @@ static int _nfs4_proc_setlk(struct nfs4_state *state, int cmd, struct file_lock 
 		status = do_vfs_lock(request->fl_file, request);
 		goto out_unlock;
 	}
-	status = _nfs4_do_setlk(state, cmd, request, 0);
+	status = _nfs4_do_setlk(state, cmd, request, NFS_LOCK_NEW);
 	if (status != 0)
 		goto out_unlock;
 	/* Note: we always want to sleep here! */
@@ -4256,7 +4193,7 @@ int nfs4_lock_delegation_recall(struct nfs4_state *state, struct file_lock *fl)
 	if (err != 0)
 		goto out;
 	do {
-		err = _nfs4_do_setlk(state, F_SETLK, fl, 0);
+		err = _nfs4_do_setlk(state, F_SETLK, fl, NFS_LOCK_NEW);
 		switch (err) {
 			default:
 				printk(KERN_ERR "%s: unhandled error %d.\n",
