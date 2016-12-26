@@ -70,6 +70,9 @@ ifeq ($(CONFIG_MACH_CALGARY),y)
 obj-$(CONFIG_ADP5588_LEDS_BL)           += leds-adp5588.o
 endif
 obj-$(CONFIG_LEDS_PWM)			+= leds-pwm.o
+obj-$(CONFIG_LEDS_INTEL_SS4200)		+= leds-ss4200.o
+obj-$(CONFIG_LEDS_LT3593)		+= leds-lt3593.o
+obj-$(CONFIG_LEDS_ADP5520)		+= leds-adp5520.o
 
 # LED SPI Drivers
 obj-$(CONFIG_LEDS_DAC124S085)		+= leds-dac124s085.o
