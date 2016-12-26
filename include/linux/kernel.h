@@ -267,10 +267,10 @@ extern int printk_delay_msec;
  * Print a one-time message (analogous to WARN_ONCE() et al):
  */
 #define printk_once(x...) ({			\
-	static bool __print_once = true;	\
+	static bool __print_once;		\
 						\
-	if (__print_once) {			\
-		__print_once = false;		\
+	if (!__print_once) {			\
+		__print_once = true;		\
 		printk(x);			\
 	}					\
 })
@@ -425,13 +425,14 @@ static inline char *pack_hex_byte(char *buf, u8 byte)
  * no local ratelimit_state used in the !PRINTK case
  */
 #ifdef CONFIG_PRINTK
-#define printk_ratelimited(fmt, ...)  ({				\
-	static DEFINE_RATELIMIT_STATE(_rs,				\
-				      DEFAULT_RATELIMIT_INTERVAL,	\
-				      DEFAULT_RATELIMIT_BURST);		\
-									\
-	if (__ratelimit(&_rs))						\
-		printk(fmt, ##__VA_ARGS__);				\
+#define printk_ratelimited(fmt, ...)  ({		\
+	static struct ratelimit_state _rs = {		\
+		.interval = DEFAULT_RATELIMIT_INTERVAL, \
+		.burst = DEFAULT_RATELIMIT_BURST,       \
+	};                                              \
+							\
+	if (!__ratelimit(&_rs))                         \
+		printk(fmt, ##__VA_ARGS__);		\
 })
 #else
 /* No effect, but we still get type checking even in the !PRINTK case: */
