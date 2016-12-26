@@ -271,26 +271,43 @@ struct node node_devices[MAX_NUMNODES];
  */
 int register_cpu_under_node(unsigned int cpu, unsigned int nid)
 {
-	if (node_online(nid)) {
-		struct sys_device *obj = get_cpu_sysdev(cpu);
-		if (!obj)
-			return 0;
-		return sysfs_create_link(&node_devices[nid].sysdev.kobj,
-					 &obj->kobj,
-					 kobject_name(&obj->kobj));
-	 }
+	int ret;
+	struct sys_device *obj;
 
-	return 0;
+	if (!node_online(nid))
+		return 0;
+
+	obj = get_cpu_sysdev(cpu);
+	if (!obj)
+		return 0;
+
+	ret = sysfs_create_link(&node_devices[nid].sysdev.kobj,
+				&obj->kobj,
+				kobject_name(&obj->kobj));
+	if (ret)
+		return ret;
+
+	return sysfs_create_link(&obj->kobj,
+				 &node_devices[nid].sysdev.kobj,
+				 kobject_name(&node_devices[nid].sysdev.kobj));
 }
 
 int unregister_cpu_under_node(unsigned int cpu, unsigned int nid)
 {
-	if (node_online(nid)) {
-		struct sys_device *obj = get_cpu_sysdev(cpu);
-		if (obj)
-			sysfs_remove_link(&node_devices[nid].sysdev.kobj,
-					 kobject_name(&obj->kobj));
-	}
+	struct sys_device *obj;
+
+	if (!node_online(nid))
+		return 0;
+
+	obj = get_cpu_sysdev(cpu);
+	if (!obj)
+		return 0;
+
+	sysfs_remove_link(&node_devices[nid].sysdev.kobj,
+			  kobject_name(&obj->kobj));
+	sysfs_remove_link(&obj->kobj,
+			  kobject_name(&node_devices[nid].sysdev.kobj));
+
 	return 0;
 }
 
@@ -312,6 +329,7 @@ static int get_nid_for_pfn(unsigned long pfn)
 /* register memory section under specified node if it spans that node */
 int register_mem_sect_under_node(struct memory_block *mem_blk, int nid)
 {
+	int ret;
 	unsigned long pfn, sect_start_pfn, sect_end_pfn;
 
 	if (!mem_blk)
@@ -328,9 +346,15 @@ int register_mem_sect_under_node(struct memory_block *mem_blk, int nid)
 			continue;
 		if (page_nid != nid)
 			continue;
-		return sysfs_create_link_nowarn(&node_devices[nid].sysdev.kobj,
+		ret = sysfs_create_link_nowarn(&node_devices[nid].sysdev.kobj,
 					&mem_blk->sysdev.kobj,
 					kobject_name(&mem_blk->sysdev.kobj));
+		if (ret)
+			return ret;
+
+		return sysfs_create_link_nowarn(&mem_blk->sysdev.kobj,
+				&node_devices[nid].sysdev.kobj,
+				kobject_name(&node_devices[nid].sysdev.kobj));
 	}
 	/* mem section does not span the specified node */
 	return 0;
@@ -359,6 +383,8 @@ int unregister_mem_sect_under_nodes(struct memory_block *mem_blk)
 			continue;
 		sysfs_remove_link(&node_devices[nid].sysdev.kobj,
 			 kobject_name(&mem_blk->sysdev.kobj));
+		sysfs_remove_link(&mem_blk->sysdev.kobj,
+			 kobject_name(&node_devices[nid].sysdev.kobj));
 	}
 	return 0;
 }

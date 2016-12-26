@@ -119,7 +119,7 @@ void munlock_vma_page(struct page *page)
 			/*
 			 * did try_to_unlock() succeed or punt?
 			 */
-			if (ret == SWAP_SUCCESS || ret == SWAP_AGAIN)
+			if (ret != SWAP_MLOCK)
 				count_vm_event(UNEVICTABLE_PGMUNLOCKED);
 
 			putback_lru_page(page);
