@@ -169,7 +169,6 @@ static struct video_device pwc_template = {
 	.name =		"Philips Webcam",	/* Filled in later */
 	.release =	video_device_release,
 	.fops =         &pwc_fops,
-	.minor =        -1,
 };
 
 /***************************************************************************/
@@ -1807,7 +1806,7 @@ static int usb_pwc_probe(struct usb_interface *intf, const struct usb_device_id 
 		goto err_video_release;
 	}
 
-	PWC_INFO("Registered as /dev/video%d.\n", pdev->vdev->num);
+	PWC_INFO("Registered as %s.\n", video_device_node_name(pdev->vdev));
 
 	/* occupy slot */
 	if (hint < MAX_DEV_HINTS)

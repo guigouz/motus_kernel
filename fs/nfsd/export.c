@@ -1,7 +1,5 @@
 #define MSNFS	/* HACK HACK */
 /*
- * linux/fs/nfsd/export.c
- *
  * NFS exporting and validation.
  *
  * We maintain a list of clients, each of which has a list of
@@ -22,6 +20,7 @@
 #include <net/ipv6.h>
 
 #include "nfsd.h"
+#include "nfsfh.h"
 
 #define NFSDDBG_FACILITY	NFSDDBG_EXPORT
 
@@ -355,15 +354,24 @@ static struct svc_export *svc_export_update(struct svc_export *new,
 					    struct svc_export *old);
 static struct svc_export *svc_export_lookup(struct svc_export *);
 
-static int check_export(struct inode *inode, int flags, unsigned char *uuid)
+static int check_export(struct inode *inode, int *flags, unsigned char *uuid)
 {
 
-	/* We currently export only dirs and regular files.
-	 * This is what umountd does.
+	/*
+	 * We currently export only dirs, regular files, and (for v4
+	 * pseudoroot) symlinks.
 	 */
 	if (!S_ISDIR(inode->i_mode) &&
+	    !S_ISLNK(inode->i_mode) &&
 	    !S_ISREG(inode->i_mode))
 		return -ENOTDIR;
+
+	/*
+	 * Mountd should never pass down a writeable V4ROOT export, but,
+	 * just to make sure:
+	 */
+	if (*flags & NFSEXP_V4ROOT)
+		*flags |= NFSEXP_READONLY;
 
 	/* There are two requirements on a filesystem to be exportable.
 	 * 1:  We must be able to identify the filesystem from a number.
@@ -373,7 +381,7 @@ static int check_export(struct inode *inode, int flags, unsigned char *uuid)
 	 *       This means that s_export_op must be set.
 	 */
 	if (!(inode->i_sb->s_type->fs_flags & FS_REQUIRES_DEV) &&
-	    !(flags & NFSEXP_FSID) &&
+	    !(*flags & NFSEXP_FSID) &&
 	    uuid == NULL) {
 		dprintk("exp_export: export of non-dev fs without fsid\n");
 		return -EINVAL;
@@ -588,7 +596,7 @@ static int svc_export_parse(struct cache_detail *cd, char *mesg, int mlen)
 				goto out4;
 		}
 
-		err = check_export(exp.ex_path.dentry->d_inode, exp.ex_flags,
+		err = check_export(exp.ex_path.dentry->d_inode, &exp.ex_flags,
 				   exp.ex_uuid);
 		if (err)
 			goto out4;
@@ -1027,7 +1035,7 @@ exp_export(struct nfsctl_export *nxp)
 		goto finish;
 	}
 
-	err = check_export(path.dentry->d_inode, nxp->ex_flags, NULL);
+	err = check_export(path.dentry->d_inode, &nxp->ex_flags, NULL);
 	if (err) goto finish;
 
 	err = -ENOMEM;
@@ -1425,6 +1433,7 @@ static struct flags {
 	{ NFSEXP_CROSSMOUNT, {"crossmnt", ""}},
 	{ NFSEXP_NOSUBTREECHECK, {"no_subtree_check", ""}},
 	{ NFSEXP_NOAUTHNLM, {"insecure_locks", ""}},
+	{ NFSEXP_V4ROOT, {"v4root", ""}},
 #ifdef MSNFS
 	{ NFSEXP_MSNFS, {"msnfs", ""}},
 #endif

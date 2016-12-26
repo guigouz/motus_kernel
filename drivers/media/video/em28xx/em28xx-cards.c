@@ -2653,7 +2653,6 @@ static int em28xx_init_dev(struct em28xx **devhandle, struct usb_device *udev,
 	INIT_LIST_HEAD(&dev->vbiq.active);
 	INIT_LIST_HEAD(&dev->vbiq.queued);
 
-
 	if (dev->board.has_msp34xx) {
 		/* Send a reset to other chips via gpio */
 		errCode = em28xx_write_reg(dev, EM28XX_R08_GPIO, 0xf7);
@@ -2923,9 +2922,9 @@ static void em28xx_usb_disconnect(struct usb_interface *interface)
 
 	if (dev->users) {
 		em28xx_warn
-		    ("device /dev/video%d is open! Deregistration and memory "
+		    ("device %s is open! Deregistration and memory "
 		     "deallocation are deferred on close.\n",
-				dev->vdev->num);
+		     video_device_node_name(dev->vdev));
 
 		dev->state |= DEV_MISCONFIGURED;
 		em28xx_uninit_isoc(dev);

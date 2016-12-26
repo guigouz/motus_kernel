@@ -1926,7 +1926,6 @@ static const struct v4l2_file_operations fops_template = {
 static struct video_device cpia2_template = {
 	/* I could not find any place for the old .initialize initializer?? */
 	.name=		"CPiA2 Camera",
-	.minor=		-1,
 	.fops=		&fops_template,
 	.release=	video_device_release,
 };
@@ -1967,9 +1966,9 @@ void cpia2_unregister_camera(struct camera_data *cam)
 	if (!cam->open_count) {
 		video_unregister_device(cam->vdev);
 	} else {
-		LOG("/dev/video%d removed while open, "
-		    "deferring video_unregister_device\n",
-		    cam->vdev->num);
+		LOG("%s removed while open, deferring "
+		    "video_unregister_device\n",
+		    video_device_node_name(cam->vdev));
 	}
 }
 

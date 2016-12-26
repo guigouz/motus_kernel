@@ -1,6 +1,4 @@
 /*
- *  linux/include/nfsd/state.h
- *
  *  Copyright (c) 2001 The Regents of the University of Michigan.
  *  All rights reserved.
  *
@@ -38,6 +36,7 @@
 #define _NFSD4_STATE_H
 
 #include <linux/nfsd/nfsfh.h>
+#include "nfsfh.h"
 
 typedef struct {
 	u32             cl_boot;
