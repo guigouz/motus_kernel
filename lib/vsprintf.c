@@ -47,53 +47,6 @@ static unsigned int simple_guess_base(const char *cp)
 }
 
 /**
- * simple_strtoul - convert a string to an unsigned long
- * @cp: The start of the string
- * @endp: A pointer to the end of the parsed string will be placed here
- * @base: The number base to use
- */
-unsigned long simple_strtoul(const char *cp, char **endp, unsigned int base)
-{
-	unsigned long result = 0;
-
-	if (!base)
-		base = simple_guess_base(cp);
-
-	if (base == 16 && cp[0] == '0' && TOLOWER(cp[1]) == 'x')
-		cp += 2;
-
-	while (isxdigit(*cp)) {
-		unsigned int value;
-
-		value = isdigit(*cp) ? *cp - '0' : TOLOWER(*cp) - 'a' + 10;
-		if (value >= base)
-			break;
-		result = result * base + value;
-		cp++;
-	}
-	if (endp)
-		*endp = (char *)cp;
-
-	return result;
-}
-EXPORT_SYMBOL(simple_strtoul);
-
-/**
- * simple_strtol - convert a string to a signed long
- * @cp: The start of the string
- * @endp: A pointer to the end of the parsed string will be placed here
- * @base: The number base to use
- */
-long simple_strtol(const char *cp, char **endp, unsigned int base)
-{
-	if (*cp == '-')
-		return -simple_strtoul(cp + 1, endp, base);
-
-	return simple_strtoul(cp, endp, base);
-}
-EXPORT_SYMBOL(simple_strtol);
-
-/**
  * simple_strtoull - convert a string to an unsigned long long
  * @cp: The start of the string
  * @endp: A pointer to the end of the parsed string will be placed here
@@ -124,6 +77,33 @@ unsigned long long simple_strtoull(const char *cp, char **endp, unsigned int bas
 	return result;
 }
 EXPORT_SYMBOL(simple_strtoull);
+
+/**
+ * simple_strtoul - convert a string to an unsigned long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ */
+unsigned long simple_strtoul(const char *cp, char **endp, unsigned int base)
+{
+	return simple_strtoull(cp, endp, base);
+}
+EXPORT_SYMBOL(simple_strtoul);
+
+/**
+ * simple_strtol - convert a string to a signed long
+ * @cp: The start of the string
+ * @endp: A pointer to the end of the parsed string will be placed here
+ * @base: The number base to use
+ */
+long simple_strtol(const char *cp, char **endp, unsigned int base)
+{
+	if (*cp == '-')
+		return -simple_strtoul(cp + 1, endp, base);
+
+	return simple_strtoul(cp, endp, base);
+}
+EXPORT_SYMBOL(simple_strtol);
 
 /**
  * simple_strtoll - convert a string to a signed long long
@@ -795,8 +775,9 @@ static char *ip6_compressed_string(char *p, const char *addr)
 				p = pack_hex_byte(p, hi);
 			else
 				*p++ = hex_asc_lo(hi);
+			p = pack_hex_byte(p, lo);
 		}
-		if (hi || lo > 0x0f)
+		else if (lo > 0x0f)
 			p = pack_hex_byte(p, lo);
 		else
 			*p++ = hex_asc_lo(lo);
@@ -851,6 +832,52 @@ static char *ip4_addr_string(char *buf, char *end, const u8 *addr,
 	return string(buf, end, ip4_addr, spec);
 }
 
+static char *uuid_string(char *buf, char *end, const u8 *addr,
+			 struct printf_spec spec, const char *fmt)
+{
+	char uuid[sizeof("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")];
+	char *p = uuid;
+	int i;
+	static const u8 be[16] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+	static const u8 le[16] = {3,2,1,0,5,4,7,6,8,9,10,11,12,13,14,15};
+	const u8 *index = be;
+	bool uc = false;
+
+	switch (*(++fmt)) {
+	case 'L':
+		uc = true;		/* fall-through */
+	case 'l':
+		index = le;
+		break;
+	case 'B':
+		uc = true;
+		break;
+	}
+
+	for (i = 0; i < 16; i++) {
+		p = pack_hex_byte(p, addr[index[i]]);
+		switch (i) {
+		case 3:
+		case 5:
+		case 7:
+		case 9:
+			*p++ = '-';
+			break;
+		}
+	}
+
+	*p = 0;
+
+	if (uc) {
+		p = uuid;
+		do {
+			*p = toupper(*p);
+		} while (*(++p));
+	}
+
+	return string(buf, end, uuid, spec);
+}
+
 /*
  * Show a '%p' thing.  A kernel extension is that the '%p' is followed
  * by an extra set of alphanumeric characters that are extended format
@@ -875,6 +902,18 @@ static char *ip4_addr_string(char *buf, char *end, const u8 *addr,
  *       IPv4 uses dot-separated decimal with leading 0's (010.123.045.006)
  * - 'I6c' for IPv6 addresses printed as specified by
  *       http://www.ietf.org/id/draft-kawamura-ipv6-text-representation-03.txt
+ * - 'U' For a 16 byte UUID/GUID, it prints the UUID/GUID in the form
+ *       "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+ *       Options for %pU are:
+ *         b big endian lower case hex (default)
+ *         B big endian UPPER case hex
+ *         l little endian lower case hex
+ *         L little endian UPPER case hex
+ *           big endian output byte order is:
+ *             [0][1][2][3]-[4][5]-[6][7]-[8][9]-[10][11][12][13][14][15]
+ *           little endian output byte order is:
+ *             [3][2][1][0]-[5][4]-[7][6]-[8][9]-[10][11][12][13][14][15]
+ *
  * Note: The difference between 'S' and 'F' is that on ia64 and ppc64
  * function pointers are really function descriptors, which contain a
  * pointer to the real address.
@@ -888,9 +927,9 @@ static char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 	switch (*fmt) {
 	case 'F':
 		ptr = dereference_function_descriptor(ptr);
-	case 's':
 		/* Fallthrough */
 	case 'S':
+	case 's':
 		return symbol_string(buf, end, ptr, spec, *fmt);
 	case 'R':
 	case 'r':
@@ -914,6 +953,8 @@ static char *pointer(const char *fmt, char *buf, char *end, void *ptr,
 			return ip4_addr_string(buf, end, ptr, spec, fmt);
 		}
 		break;
+	case 'U':
+		return uuid_string(buf, end, ptr, spec, fmt);
 	}
 	spec.flags |= SMALL;
 	if (spec.field_width == -1) {
@@ -1147,8 +1188,7 @@ qualifier:
 int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 {
 	unsigned long long num;
-	char *str, *end, c;
-	int read;
+	char *str, *end;
 	struct printf_spec spec = {0};
 
 	/* Reject out-of-range values early.  Large positive sizes are
@@ -1167,8 +1207,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 
 	while (*fmt) {
 		const char *old_fmt = fmt;
-
-		read = format_decode(fmt, &spec);
+		int read = format_decode(fmt, &spec);
 
 		fmt += read;
 
@@ -1192,7 +1231,9 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 			spec.precision = va_arg(args, int);
 			break;
 
-		case FORMAT_TYPE_CHAR:
+		case FORMAT_TYPE_CHAR: {
+			char c;
+
 			if (!(spec.flags & LEFT)) {
 				while (--spec.field_width > 0) {
 					if (str < end)
@@ -1211,6 +1252,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
 				++str;
 			}
 			break;
+		}
 
 		case FORMAT_TYPE_STR:
 			str = string(str, end, va_arg(args, char *), spec);
@@ -1449,7 +1491,6 @@ int vbin_printf(u32 *bin_buf, size_t size, const char *fmt, va_list args)
 {
 	struct printf_spec spec = {0};
 	char *str, *end;
-	int read;
 
 	str = (char *)bin_buf;
 	end = (char *)(bin_buf + size);
@@ -1475,12 +1516,14 @@ do {									\
 } while (0)
 
 	while (*fmt) {
-		read = format_decode(fmt, &spec);
+		int read = format_decode(fmt, &spec);
 
 		fmt += read;
 
 		switch (spec.type) {
 		case FORMAT_TYPE_NONE:
+		case FORMAT_TYPE_INVALID:
+		case FORMAT_TYPE_PERCENT_CHAR:
 			break;
 
 		case FORMAT_TYPE_WIDTH:
@@ -1511,12 +1554,6 @@ do {									\
 			/* skip all alphanumeric pointer suffixes */
 			while (isalnum(*fmt))
 				fmt++;
-			break;
-
-		case FORMAT_TYPE_PERCENT_CHAR:
-			break;
-
-		case FORMAT_TYPE_INVALID:
 			break;
 
 		case FORMAT_TYPE_NRCHARS: {
@@ -1587,10 +1624,9 @@ EXPORT_SYMBOL_GPL(vbin_printf);
  */
 int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 {
-	unsigned long long num;
-	char *str, *end, c;
-	const char *args = (const char *)bin_buf;
 	struct printf_spec spec = {0};
+	char *str, *end;
+	const char *args = (const char *)bin_buf;
 
 	if (WARN_ON_ONCE((int) size < 0))
 		return 0;
@@ -1620,10 +1656,8 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 	}
 
 	while (*fmt) {
-		int read;
 		const char *old_fmt = fmt;
-
-		read = format_decode(fmt, &spec);
+		int read = format_decode(fmt, &spec);
 
 		fmt += read;
 
@@ -1647,7 +1681,9 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			spec.precision = get_arg(int);
 			break;
 
-		case FORMAT_TYPE_CHAR:
+		case FORMAT_TYPE_CHAR: {
+			char c;
+
 			if (!(spec.flags & LEFT)) {
 				while (--spec.field_width > 0) {
 					if (str < end)
@@ -1665,11 +1701,11 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 				++str;
 			}
 			break;
+		}
 
 		case FORMAT_TYPE_STR: {
 			const char *str_arg = args;
-			size_t len = strlen(str_arg);
-			args += len + 1;
+			args += strlen(str_arg) + 1;
 			str = string(str, end, (char *)str_arg, spec);
 			break;
 		}
@@ -1681,11 +1717,6 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			break;
 
 		case FORMAT_TYPE_PERCENT_CHAR:
-			if (str < end)
-				*str = '%';
-			++str;
-			break;
-
 		case FORMAT_TYPE_INVALID:
 			if (str < end)
 				*str = '%';
@@ -1696,15 +1727,15 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			/* skip */
 			break;
 
-		default:
+		default: {
+			unsigned long long num;
+
 			switch (spec.type) {
 
 			case FORMAT_TYPE_LONG_LONG:
 				num = get_arg(long long);
 				break;
 			case FORMAT_TYPE_ULONG:
-				num = get_arg(unsigned long);
-				break;
 			case FORMAT_TYPE_LONG:
 				num = get_arg(unsigned long);
 				break;
@@ -1728,8 +1759,9 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf)
 			}
 
 			str = number(str, end, num, spec);
-		}
-	}
+		} /* default: */
+		} /* switch(spec.type) */
+	} /* while(*fmt) */
 
 	if (size > 0) {
 		if (str < end)
@@ -1783,7 +1815,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 	char digit;
 	int num = 0;
 	int qualifier, base, field_width;
-	int is_sign = 0;
+	bool is_sign;
 
 	while (*fmt && *str) {
 		/* skip any white space in format */
@@ -1791,10 +1823,8 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 		 * white space, including none, in the input.
 		 */
 		if (isspace(*fmt)) {
-			while (isspace(*fmt))
-				++fmt;
-			while (isspace(*str))
-				++str;
+			fmt = skip_spaces(++fmt);
+			str = skip_spaces(str);
 		}
 
 		/* anything that is not a conversion must match exactly */
@@ -1839,11 +1869,12 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 				}
 			}
 		}
-		base = 10;
-		is_sign = 0;
 
 		if (!*fmt || !*str)
 			break;
+
+		base = 10;
+		is_sign = 0;
 
 		switch (*fmt++) {
 		case 'c':
@@ -1863,8 +1894,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 			if (field_width == -1)
 				field_width = INT_MAX;
 			/* first, skip leading white space in buffer */
-			while (isspace(*str))
-				str++;
+			str = skip_spaces(str);
 
 			/* now copy until next white space */
 			while (*str && !isspace(*str) && field_width--)
@@ -1906,8 +1936,7 @@ int vsscanf(const char *buf, const char *fmt, va_list args)
 		/* have some sort of integer conversion.
 		 * first, skip white space in buffer.
 		 */
-		while (isspace(*str))
-			str++;
+		str = skip_spaces(str);
 
 		digit = *str;
 		if (is_sign && digit == '-')
