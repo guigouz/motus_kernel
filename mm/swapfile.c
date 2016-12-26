@@ -316,9 +316,7 @@ checks:
 		scan_base = offset = si->lowest_bit;
 
 	/* reuse swap entry of cache-only swap if not hibernation. */
-	if (vm_swap_full()
-		&& cache == SWAP_CACHE
-		&& si->swap_map[offset] == SWAP_HAS_CACHE) {
+	if (vm_swap_full() && si->swap_map[offset] == SWAP_HAS_CACHE) {
 		int swap_was_freed;
 		spin_unlock(&swap_lock);
 		swap_was_freed = __try_to_reclaim_swap(si, offset);
