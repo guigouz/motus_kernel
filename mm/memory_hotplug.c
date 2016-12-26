@@ -27,6 +27,7 @@
 #include <linux/page-isolation.h>
 #include <linux/pfn.h>
 #include <linux/suspend.h>
+#include <linux/mm_inline.h>
 
 #include <asm/tlbflush.h>
 
@@ -672,6 +673,9 @@ do_migrate_range(unsigned long start_pfn, unsigned long end_pfn)
 		if (!ret) { /* Success */
 			list_add_tail(&page->lru, &source);
 			move_pages--;
+			inc_zone_page_state(page, NR_ISOLATED_ANON +
+					    page_is_file_cache(page));
+
 		} else {
 			/* Becasue we don't have big zone->lock. we should
 			   check this again here. */
@@ -849,6 +853,10 @@ repeat:
 
 	setup_per_zone_wmarks();
 	calculate_zone_inactive_ratio(zone);
+	if (!node_present_pages(node)) {
+		node_clear_state(node, N_HIGH_MEMORY);
+		kswapd_stop(node);
+	}
 
 	vm_total_pages = nr_free_pagecache_pages();
 	writeback_set_ratelimit();

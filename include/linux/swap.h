@@ -154,17 +154,18 @@ enum {
 #define SWAP_MAP_MAX	0x7ffe
 #define SWAP_MAP_BAD	0x7fff
 #define SWAP_HAS_CACHE  0x8000		/* There is a swap cache of entry. */
-#define SWAP_COUNT_MASK (~SWAP_HAS_CACHE)
+
 /*
  * The in-memory structure used to track swap areas.
  */
 struct swap_info_struct {
-	unsigned long flags;
-	int prio;			/* swap priority */
-	int next;			/* next entry on swap list */
+	unsigned long	flags;		/* SWP_USED etc: see above */
+	signed short	prio;		/* swap priority of this type */
+	signed char	type;		/* strange name for an index */
+	signed char	next;		/* next type on the swap list */
 	struct file *swap_file;
 	struct block_device *bdev;
-	struct list_head extent_list;
+	struct swap_extent first_swap_extent;
 	struct swap_extent *curr_swap_extent;
 	unsigned short *swap_map;
 	unsigned int lowest_bit;
@@ -263,6 +264,7 @@ extern int scan_unevictable_register_node(struct node *node);
 extern void scan_unevictable_unregister_node(struct node *node);
 
 extern int kswapd_run(int nid);
+extern void kswapd_stop(int nid);
 
 #ifdef CONFIG_MMU
 /* linux/mm/shmem.c */
@@ -307,9 +309,8 @@ extern void swapcache_free(swp_entry_t, struct page *page);
 extern int free_swap_and_cache(swp_entry_t);
 extern int swap_type_of(dev_t, sector_t, struct block_device **);
 extern unsigned int count_swap_pages(int, int);
-extern sector_t map_swap_page(struct swap_info_struct *, pgoff_t);
+extern sector_t map_swap_page(swp_entry_t, struct block_device **);
 extern sector_t swapdev_block(int, pgoff_t);
-extern struct swap_info_struct *get_swap_info_struct(unsigned);
 extern int reuse_swap_page(struct page *);
 extern int try_to_free_swap(struct page *);
 struct backing_dev_info;
