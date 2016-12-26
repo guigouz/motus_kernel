@@ -581,11 +581,18 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 		ret = -1;
 	}
 
+	/*
+	 * Temporarily disable discard granularity. It's currently buggy
+	 * since we default to 0 for discard_granularity, hence this
+	 * "failure" will always trigger for non-zero offsets.
+	 */
+#if 0
 	if (offset &&
 	    (offset & (b->discard_granularity - 1)) != b->discard_alignment) {
 		t->discard_misaligned = 1;
 		ret = -1;
 	}
+#endif
 
 	/* Find lowest common alignment_offset */
 	t->alignment_offset = lcm(t->alignment_offset, alignment)

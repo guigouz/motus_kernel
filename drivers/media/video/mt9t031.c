@@ -17,9 +17,11 @@
 #include <media/v4l2-chip-ident.h>
 #include <media/soc_camera.h>
 
-/* mt9t031 i2c address 0x5d
+/*
+ * mt9t031 i2c address 0x5d
  * The platform has to define i2c_board_info and link to it from
- * struct soc_camera_link */
+ * struct soc_camera_link
+ */
 
 /* mt9t031 selected register addresses */
 #define MT9T031_CHIP_VERSION		0x00
@@ -58,15 +60,6 @@
 	SOCAM_VSYNC_ACTIVE_HIGH | SOCAM_DATA_ACTIVE_HIGH |	\
 	SOCAM_MASTER | SOCAM_DATAWIDTH_10)
 
-static const struct soc_camera_data_format mt9t031_colour_formats[] = {
-	{
-		.name		= "Bayer (sRGB) 10 bit",
-		.depth		= 10,
-		.fourcc		= V4L2_PIX_FMT_SGRBG10,
-		.colorspace	= V4L2_COLORSPACE_SRGB,
-	}
-};
-
 struct mt9t031 {
 	struct v4l2_subdev subdev;
 	struct v4l2_rect rect;	/* Sensor window */
@@ -74,6 +67,7 @@ struct mt9t031 {
 	u16 xskip;
 	u16 yskip;
 	unsigned int gain;
+	unsigned short y_skip_top;	/* Lines to skip at the top */
 	unsigned int exposure;
 	unsigned char autoexposure;
 };
@@ -291,8 +285,10 @@ static int mt9t031_set_params(struct soc_camera_device *icd,
 	dev_dbg(&client->dev, "new physical left %u, top %u\n",
 		rect->left, rect->top);
 
-	/* The caller provides a supported format, as guaranteed by
-	 * icd->try_fmt_cap(), soc_camera_s_crop() and soc_camera_cropcap() */
+	/*
+	 * The caller provides a supported format, as guaranteed by
+	 * icd->try_fmt_cap(), soc_camera_s_crop() and soc_camera_cropcap()
+	 */
 	if (ret >= 0)
 		ret = reg_write(client, MT9T031_COLUMN_START, rect->left);
 	if (ret >= 0)
@@ -301,9 +297,9 @@ static int mt9t031_set_params(struct soc_camera_device *icd,
 		ret = reg_write(client, MT9T031_WINDOW_WIDTH, rect->width - 1);
 	if (ret >= 0)
 		ret = reg_write(client, MT9T031_WINDOW_HEIGHT,
-				rect->height + icd->y_skip_top - 1);
+				rect->height + mt9t031->y_skip_top - 1);
 	if (ret >= 0 && mt9t031->autoexposure) {
-		unsigned int total_h = rect->height + icd->y_skip_top + vblank;
+		unsigned int total_h = rect->height + mt9t031->y_skip_top + vblank;
 		ret = set_shutter(client, total_h);
 		if (ret >= 0) {
 			const u32 shutter_max = MT9T031_MAX_HEIGHT + vblank;
@@ -373,27 +369,27 @@ static int mt9t031_cropcap(struct v4l2_subdev *sd, struct v4l2_cropcap *a)
 	return 0;
 }
 
-static int mt9t031_g_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
+static int mt9t031_g_fmt(struct v4l2_subdev *sd,
+			 struct v4l2_mbus_framefmt *mf)
 {
 	struct i2c_client *client = sd->priv;
 	struct mt9t031 *mt9t031 = to_mt9t031(client);
-	struct v4l2_pix_format *pix = &f->fmt.pix;
 
-	pix->width		= mt9t031->rect.width / mt9t031->xskip;
-	pix->height		= mt9t031->rect.height / mt9t031->yskip;
-	pix->pixelformat	= V4L2_PIX_FMT_SGRBG10;
-	pix->field		= V4L2_FIELD_NONE;
-	pix->colorspace		= V4L2_COLORSPACE_SRGB;
+	mf->width	= mt9t031->rect.width / mt9t031->xskip;
+	mf->height	= mt9t031->rect.height / mt9t031->yskip;
+	mf->code	= V4L2_MBUS_FMT_SBGGR10_1X10;
+	mf->colorspace	= V4L2_COLORSPACE_SRGB;
+	mf->field	= V4L2_FIELD_NONE;
 
 	return 0;
 }
 
-static int mt9t031_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
+static int mt9t031_s_fmt(struct v4l2_subdev *sd,
+			 struct v4l2_mbus_framefmt *mf)
 {
 	struct i2c_client *client = sd->priv;
 	struct mt9t031 *mt9t031 = to_mt9t031(client);
 	struct soc_camera_device *icd = client->dev.platform_data;
-	struct v4l2_pix_format *pix = &f->fmt.pix;
 	u16 xskip, yskip;
 	struct v4l2_rect rect = mt9t031->rect;
 
@@ -401,8 +397,11 @@ static int mt9t031_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
 	 * try_fmt has put width and height within limits.
 	 * S_FMT: use binning and skipping for scaling
 	 */
-	xskip = mt9t031_skip(&rect.width, pix->width, MT9T031_MAX_WIDTH);
-	yskip = mt9t031_skip(&rect.height, pix->height, MT9T031_MAX_HEIGHT);
+	xskip = mt9t031_skip(&rect.width, mf->width, MT9T031_MAX_WIDTH);
+	yskip = mt9t031_skip(&rect.height, mf->height, MT9T031_MAX_HEIGHT);
+
+	mf->code	= V4L2_MBUS_FMT_SBGGR10_1X10;
+	mf->colorspace	= V4L2_COLORSPACE_SRGB;
 
 	/* mt9t031_set_params() doesn't change width and height */
 	return mt9t031_set_params(icd, &rect, xskip, yskip);
@@ -412,13 +411,15 @@ static int mt9t031_s_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
  * If a user window larger than sensor window is requested, we'll increase the
  * sensor window.
  */
-static int mt9t031_try_fmt(struct v4l2_subdev *sd, struct v4l2_format *f)
+static int mt9t031_try_fmt(struct v4l2_subdev *sd,
+			   struct v4l2_mbus_framefmt *mf)
 {
-	struct v4l2_pix_format *pix = &f->fmt.pix;
-
 	v4l_bound_align_image(
-		&pix->width, MT9T031_MIN_WIDTH, MT9T031_MAX_WIDTH, 1,
-		&pix->height, MT9T031_MIN_HEIGHT, MT9T031_MAX_HEIGHT, 1, 0);
+		&mf->width, MT9T031_MIN_WIDTH, MT9T031_MAX_WIDTH, 1,
+		&mf->height, MT9T031_MIN_HEIGHT, MT9T031_MAX_HEIGHT, 1, 0);
+
+	mf->code	= V4L2_MBUS_FMT_SBGGR10_1X10;
+	mf->colorspace	= V4L2_COLORSPACE_SRGB;
 
 	return 0;
 }
@@ -657,7 +658,7 @@ static int mt9t031_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 			const u16 vblank = MT9T031_VERTICAL_BLANK;
 			const u32 shutter_max = MT9T031_MAX_HEIGHT + vblank;
 			unsigned int total_h = mt9t031->rect.height +
-				icd->y_skip_top + vblank;
+				mt9t031->y_skip_top + vblank;
 
 			if (set_shutter(client, total_h) < 0)
 				return -EIO;
@@ -673,11 +674,12 @@ static int mt9t031_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
 	return 0;
 }
 
-/* Interface active, can use i2c. If it fails, it can indeed mean, that
- * this wasn't our capture interface, so, we wait for the right one */
+/*
+ * Interface active, can use i2c. If it fails, it can indeed mean, that
+ * this wasn't our capture interface, so, we wait for the right one
+ */
 static int mt9t031_video_probe(struct i2c_client *client)
 {
-	struct soc_camera_device *icd = client->dev.platform_data;
 	struct mt9t031 *mt9t031 = to_mt9t031(client);
 	s32 data;
 	int ret;
@@ -692,8 +694,6 @@ static int mt9t031_video_probe(struct i2c_client *client)
 	switch (data) {
 	case 0x1621:
 		mt9t031->model = V4L2_IDENT_MT9T031;
-		icd->formats = mt9t031_colour_formats;
-		icd->num_formats = ARRAY_SIZE(mt9t031_colour_formats);
 		break;
 	default:
 		dev_err(&client->dev,
@@ -714,6 +714,16 @@ static int mt9t031_video_probe(struct i2c_client *client)
 	return ret;
 }
 
+static int mt9t031_g_skip_top_lines(struct v4l2_subdev *sd, u32 *lines)
+{
+	struct i2c_client *client = sd->priv;
+	struct mt9t031 *mt9t031 = to_mt9t031(client);
+
+	*lines = mt9t031->y_skip_top;
+
+	return 0;
+}
+
 static struct v4l2_subdev_core_ops mt9t031_subdev_core_ops = {
 	.g_ctrl		= mt9t031_g_ctrl,
 	.s_ctrl		= mt9t031_s_ctrl,
@@ -724,19 +734,35 @@ static struct v4l2_subdev_core_ops mt9t031_subdev_core_ops = {
 #endif
 };
 
+static int mt9t031_enum_fmt(struct v4l2_subdev *sd, int index,
+			    enum v4l2_mbus_pixelcode *code)
+{
+	if (index)
+		return -EINVAL;
+
+	*code = V4L2_MBUS_FMT_SBGGR10_1X10;
+	return 0;
+}
+
 static struct v4l2_subdev_video_ops mt9t031_subdev_video_ops = {
 	.s_stream	= mt9t031_s_stream,
-	.s_fmt		= mt9t031_s_fmt,
-	.g_fmt		= mt9t031_g_fmt,
-	.try_fmt	= mt9t031_try_fmt,
+	.s_mbus_fmt	= mt9t031_s_fmt,
+	.g_mbus_fmt	= mt9t031_g_fmt,
+	.try_mbus_fmt	= mt9t031_try_fmt,
 	.s_crop		= mt9t031_s_crop,
 	.g_crop		= mt9t031_g_crop,
 	.cropcap	= mt9t031_cropcap,
+	.enum_mbus_fmt	= mt9t031_enum_fmt,
+};
+
+static struct v4l2_subdev_sensor_ops mt9t031_subdev_sensor_ops = {
+	.g_skip_top_lines	= mt9t031_g_skip_top_lines,
 };
 
 static struct v4l2_subdev_ops mt9t031_subdev_ops = {
 	.core	= &mt9t031_subdev_core_ops,
 	.video	= &mt9t031_subdev_video_ops,
+	.sensor	= &mt9t031_subdev_sensor_ops,
 };
 
 static int mt9t031_probe(struct i2c_client *client,
@@ -773,15 +799,17 @@ static int mt9t031_probe(struct i2c_client *client,
 
 	/* Second stage probe - when a capture adapter is there */
 	icd->ops		= &mt9t031_ops;
-	icd->y_skip_top		= 0;
 
+	mt9t031->y_skip_top	= 0;
 	mt9t031->rect.left	= MT9T031_COLUMN_SKIP;
 	mt9t031->rect.top	= MT9T031_ROW_SKIP;
 	mt9t031->rect.width	= MT9T031_MAX_WIDTH;
 	mt9t031->rect.height	= MT9T031_MAX_HEIGHT;
 
-	/* Simulated autoexposure. If enabled, we calculate shutter width
-	 * ourselves in the driver based on vertical blanking and frame width */
+	/*
+	 * Simulated autoexposure. If enabled, we calculate shutter width
+	 * ourselves in the driver based on vertical blanking and frame width
+	 */
 	mt9t031->autoexposure = 1;
 
 	mt9t031->xskip = 1;
