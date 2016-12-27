@@ -672,31 +672,26 @@ static void print_constraints(struct regulator_dev *rdev)
 	printk(KERN_INFO "regulator: %s: %s\n", rdev->desc->name, buf);
 }
 
-/**
- * set_machine_constraints - sets regulator constraints
- * @rdev: regulator source
- * @constraints: constraints to apply
- *
- * Allows platform initialisation code to define and constrain
- * regulator circuits e.g. valid voltage/current ranges, etc.  NOTE:
- * Constraints *must* be set by platform code in order for some
- * regulator operations to proceed i.e. set_voltage, set_current_limit,
- * set_mode.
- */
-static int set_machine_constraints(struct regulator_dev *rdev,
-	struct regulation_constraints *constraints)
+static int machine_constraints_voltage(struct regulator_dev *rdev,
+	const char *name, struct regulation_constraints *constraints)
 {
-	int ret = 0;
-	const char *name;
 	struct regulator_ops *ops = rdev->desc->ops;
-	int enable = 0;
+	int ret;
 
-	if (constraints->name)
-		name = constraints->name;
-	else if (rdev->desc->name)
-		name = rdev->desc->name;
-	else
-		name = "regulator";
+	/* do we need to apply the constraint voltage */
+	if (rdev->constraints->apply_uV &&
+		rdev->constraints->min_uV == rdev->constraints->max_uV &&
+		ops->set_voltage) {
+		ret = ops->set_voltage(rdev,
+			rdev->constraints->min_uV, rdev->constraints->max_uV);
+			if (ret < 0) {
+				printk(KERN_ERR "%s: failed to apply %duV constraint to %s\n",
+				       __func__,
+				       rdev->constraints->min_uV, name);
+				rdev->constraints = NULL;
+				return ret;
+			}
+	}
 
 	/* constrain machine-level voltage specs to fit
 	 * the actual range supported by this regulator.
@@ -720,14 +715,13 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 
 		/* voltage constraints are optional */
 		if ((cmin == 0) && (cmax == 0))
-			goto out;
+			return 0;
 
 		/* else require explicit machine-level constraints */
 		if (cmin <= 0 || cmax <= 0 || cmax < cmin) {
 			pr_err("%s: %s '%s' voltage constraints\n",
 				       __func__, "invalid", name);
-			ret = -EINVAL;
-			goto out;
+			return -EINVAL;
 		}
 
 		/* initial: [cmin..cmax] valid, [min_uV..max_uV] not */
@@ -749,8 +743,7 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		if (max_uV < min_uV) {
 			pr_err("%s: %s '%s' voltage constraints\n",
 				       __func__, "unsupportable", name);
-			ret = -EINVAL;
-			goto out;
+			return -EINVAL;
 		}
 
 		/* use regulator's subset of machine constraints */
@@ -768,22 +761,39 @@ static int set_machine_constraints(struct regulator_dev *rdev,
 		}
 	}
 
+	return 0;
+}
+
+/**
+ * set_machine_constraints - sets regulator constraints
+ * @rdev: regulator source
+ * @constraints: constraints to apply
+ *
+ * Allows platform initialisation code to define and constrain
+ * regulator circuits e.g. valid voltage/current ranges, etc.  NOTE:
+ * Constraints *must* be set by platform code in order for some
+ * regulator operations to proceed i.e. set_voltage, set_current_limit,
+ * set_mode.
+ */
+static int set_machine_constraints(struct regulator_dev *rdev,
+	struct regulation_constraints *constraints)
+{
+	int ret = 0;
+	const char *name;
+	struct regulator_ops *ops = rdev->desc->ops;
+
+	if (constraints->name)
+		name = constraints->name;
+	else if (rdev->desc->name)
+		name = rdev->desc->name;
+	else
+		name = "regulator";
+
 	rdev->constraints = constraints;
 
-	/* do we need to apply the constraint voltage */
-	if (rdev->constraints->apply_uV &&
-		rdev->constraints->min_uV == rdev->constraints->max_uV &&
-		ops->set_voltage) {
-		ret = ops->set_voltage(rdev,
-			rdev->constraints->min_uV, rdev->constraints->max_uV);
-			if (ret < 0) {
-				printk(KERN_ERR "%s: failed to apply %duV constraint to %s\n",
-				       __func__,
-				       rdev->constraints->min_uV, name);
-				rdev->constraints = NULL;
-				goto out;
-			}
-	}
+	ret = machine_constraints_voltage(rdev, name, constraints);
+	if (ret != 0)
+		goto out;
 
 	/* do we need to setup our suspend state */
 	if (constraints->initial_state) {
@@ -1889,9 +1899,9 @@ int regulator_bulk_get(struct device *dev, int num_consumers,
 		consumers[i].consumer = regulator_get(dev,
 						      consumers[i].supply);
 		if (IS_ERR(consumers[i].consumer)) {
-			dev_err(dev, "Failed to get supply '%s'\n",
-				consumers[i].supply);
 			ret = PTR_ERR(consumers[i].consumer);
+			dev_err(dev, "Failed to get supply '%s': %d\n",
+				consumers[i].supply, ret);
 			consumers[i].consumer = NULL;
 			goto err;
 		}
@@ -1934,7 +1944,7 @@ int regulator_bulk_enable(int num_consumers,
 	return 0;
 
 err:
-	printk(KERN_ERR "Failed to enable %s\n", consumers[i].supply);
+	printk(KERN_ERR "Failed to enable %s: %d\n", consumers[i].supply, ret);
 	for (i = 0; i < num_consumers; i++)
 		regulator_disable(consumers[i].consumer);
 
@@ -1969,7 +1979,8 @@ int regulator_bulk_disable(int num_consumers,
 	return 0;
 
 err:
-	printk(KERN_ERR "Failed to disable %s\n", consumers[i].supply);
+	printk(KERN_ERR "Failed to disable %s: %d\n", consumers[i].supply,
+	       ret);
 	for (i = 0; i < num_consumers; i++)
 		regulator_enable(consumers[i].consumer);
 
