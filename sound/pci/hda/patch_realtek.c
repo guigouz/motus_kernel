@@ -2517,7 +2517,10 @@ static int alc_build_controls(struct hda_codec *codec)
 	if (!kctl)
 		kctl = snd_hda_find_mixer_ctl(codec, "Input Source");
 	for (i = 0; kctl && i < kctl->count; i++) {
-		err = snd_hda_add_nids(codec, kctl, i, spec->capsrc_nids,
+		hda_nid_t *nids = spec->capsrc_nids;
+		if (!nids)
+			nids = spec->adc_nids;
+		err = snd_hda_add_nids(codec, kctl, i, nids,
 				       spec->input_mux->num_items);
 		if (err < 0)
 			return err;
@@ -9324,6 +9327,8 @@ static struct alc_config_preset alc882_presets[] = {
 		.dac_nids = alc883_dac_nids,
 		.num_adc_nids = ARRAY_SIZE(alc889_adc_nids),
 		.adc_nids = alc889_adc_nids,
+		.capsrc_nids = alc889_capsrc_nids,
+		.capsrc_nids = alc889_capsrc_nids,
 		.dig_out_nid = ALC883_DIGOUT_NID,
 		.dig_in_nid = ALC883_DIGIN_NID,
 		.slave_dig_outs = alc883_slave_dig_outs,
@@ -9370,6 +9375,7 @@ static struct alc_config_preset alc882_presets[] = {
 		.dac_nids = alc883_dac_nids,
 		.adc_nids = alc883_adc_nids_alt,
 		.num_adc_nids = ARRAY_SIZE(alc883_adc_nids_alt),
+		.capsrc_nids = alc883_capsrc_nids,
 		.dig_out_nid = ALC883_DIGOUT_NID,
 		.num_channel_mode = ARRAY_SIZE(alc883_3ST_2ch_modes),
 		.channel_mode = alc883_3ST_2ch_modes,
@@ -9516,6 +9522,7 @@ static struct alc_config_preset alc882_presets[] = {
 		.dac_nids = alc883_dac_nids,
 		.adc_nids = alc883_adc_nids_alt,
 		.num_adc_nids = ARRAY_SIZE(alc883_adc_nids_alt),
+		.capsrc_nids = alc883_capsrc_nids,
 		.num_channel_mode = ARRAY_SIZE(alc883_sixstack_modes),
 		.channel_mode = alc883_sixstack_modes,
 		.input_mux = &alc883_capture_source,
@@ -9577,6 +9584,7 @@ static struct alc_config_preset alc882_presets[] = {
 		.dac_nids = alc883_dac_nids,
 		.adc_nids = alc883_adc_nids_alt,
 		.num_adc_nids = ARRAY_SIZE(alc883_adc_nids_alt),
+		.capsrc_nids = alc883_capsrc_nids,
 		.num_channel_mode = ARRAY_SIZE(alc883_3ST_2ch_modes),
 		.channel_mode = alc883_3ST_2ch_modes,
 		.input_mux = &alc883_lenovo_101e_capture_source,
@@ -9756,6 +9764,7 @@ static struct alc_config_preset alc882_presets[] = {
 			alc880_gpio1_init_verbs },
 		.adc_nids = alc883_adc_nids,
 		.num_adc_nids = ARRAY_SIZE(alc883_adc_nids),
+		.capsrc_nids = alc883_capsrc_nids,
 		.dac_nids = alc883_dac_nids,
 		.num_dacs = ARRAY_SIZE(alc883_dac_nids),
 		.channel_mode = alc889A_mb31_6ch_modes,

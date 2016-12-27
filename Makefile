@@ -16,9 +16,12 @@ NAME = Man-Eating Seals of Antiquity
 # o  print "Entering directory ...";
 MAKEFLAGS += -rR --no-print-directory
 
-# Add custom flags here to avoid conflict with updates
-#EXTRAVERSION := $(EXTRAVERSION)-omap1
-#EXTRAVERSION := $(EXTRAVERSION)-msm7k
+# Avoid funny character set dependencies
+LC_ALL=
+LC_CTYPE=C
+LC_COLLATE=C
+LC_NUMERIC=C
+export LC_ALL LC_CTYPE LC_COLLATE LC_NUMERIC
 
 # We are using a recursive build, so we need to do a little thinking
 # to get the ordering right.
