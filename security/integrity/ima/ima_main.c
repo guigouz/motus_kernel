@@ -35,6 +35,55 @@ static int __init hash_setup(char *str)
 }
 __setup("ima_hash=", hash_setup);
 
+struct ima_imbalance {
+	struct hlist_node node;
+	unsigned long fsmagic;
+};
+
+/*
+ * ima_limit_imbalance - emit one imbalance message per filesystem type
+ *
+ * Maintain list of filesystem types that do not measure files properly.
+ * Return false if unknown, true if known.
+ */
+static bool ima_limit_imbalance(struct file *file)
+{
+	static DEFINE_SPINLOCK(ima_imbalance_lock);
+	static HLIST_HEAD(ima_imbalance_list);
+
+	struct super_block *sb = file->f_dentry->d_sb;
+	struct ima_imbalance *entry;
+	struct hlist_node *node;
+	bool found = false;
+
+	rcu_read_lock();
+	hlist_for_each_entry_rcu(entry, node, &ima_imbalance_list, node) {
+		if (entry->fsmagic == sb->s_magic) {
+			found = true;
+			break;
+		}
+	}
+	rcu_read_unlock();
+	if (found)
+		goto out;
+
+	entry = kmalloc(sizeof(*entry), GFP_NOFS);
+	if (!entry)
+		goto out;
+	entry->fsmagic = sb->s_magic;
+	spin_lock(&ima_imbalance_lock);
+	/*
+	 * we could have raced and something else might have added this fs
+	 * to the list, but we don't really care
+	 */
+	hlist_add_head_rcu(&entry->node, &ima_imbalance_list);
+	spin_unlock(&ima_imbalance_lock);
+	printk(KERN_INFO "IMA: unmeasured files on fsmagic: %lX\n",
+	       entry->fsmagic);
+out:
+	return found;
+}
+
 /*
  * Update the counts given an fmode_t
  */
@@ -50,19 +99,12 @@ static void ima_inc_counts(struct ima_iint_cache *iint, fmode_t mode)
 }
 
 /*
- * Update the counts given open flags instead of fmode
- */
-static void ima_inc_counts_flags(struct ima_iint_cache *iint, int flags)
-{
-	ima_inc_counts(iint, (__force fmode_t)((flags+1) & O_ACCMODE));
-}
-
-/*
  * Decrement ima counts
  */
 static void ima_dec_counts(struct ima_iint_cache *iint, struct inode *inode,
-			   fmode_t mode)
+			   struct file *file)
 {
+	mode_t mode = file->f_mode;
 	BUG_ON(!mutex_is_locked(&iint->mutex));
 
 	iint->opencount--;
@@ -76,26 +118,15 @@ static void ima_dec_counts(struct ima_iint_cache *iint, struct inode *inode,
 		}
 	}
 
-	if ((iint->opencount < 0) ||
-	    (iint->readcount < 0) ||
-	    (iint->writecount < 0)) {
-		static int dumped;
-
-		if (dumped)
-			return;
-		dumped = 1;
-
+	if (((iint->opencount < 0) ||
+	     (iint->readcount < 0) ||
+	     (iint->writecount < 0)) &&
+	    !ima_limit_imbalance(file)) {
 		printk(KERN_INFO "%s: open/free imbalance (r:%ld w:%ld o:%ld)\n",
 		       __FUNCTION__, iint->readcount, iint->writecount,
 		       iint->opencount);
 		dump_stack();
 	}
-}
-
-static void ima_dec_counts_flags(struct ima_iint_cache *iint,
-				 struct inode *inode, int flags)
-{
-	ima_dec_counts(iint, inode, (__force fmode_t)((flags+1) & O_ACCMODE));
 }
 
 /**
@@ -117,7 +148,7 @@ void ima_file_free(struct file *file)
 		return;
 
 	mutex_lock(&iint->mutex);
-	ima_dec_counts(iint, inode, file->f_mode);
+	ima_dec_counts(iint, inode, file);
 	mutex_unlock(&iint->mutex);
 	kref_put(&iint->refcount, iint_free);
 }
@@ -183,7 +214,7 @@ static int get_path_measurement(struct ima_iint_cache *iint, struct file *file,
  * Always return 0 and audit dentry_open failures.
  * (Return code will be based upon measurement appraisal.)
  */
-int ima_path_check(struct path *path, int mask, int update_counts)
+int ima_path_check(struct path *path, int mask)
 {
 	struct inode *inode = path->dentry->d_inode;
 	struct ima_iint_cache *iint;
@@ -197,8 +228,6 @@ int ima_path_check(struct path *path, int mask, int update_counts)
 		return 0;
 
 	mutex_lock(&iint->mutex);
-	if (update_counts)
-		ima_inc_counts_flags(iint, mask);
 
 	rc = ima_must_measure(iint, inode, MAY_READ, PATH_CHECK);
 	if (rc < 0)
@@ -266,35 +295,6 @@ out:
 	mutex_unlock(&iint->mutex);
 	kref_put(&iint->refcount, iint_free);
 	return rc;
-}
-
-/*
- * ima_counts_put - decrement file counts
- *
- * File counts are incremented in ima_path_check. On file open
- * error, such as ETXTBSY, decrement the counts to prevent
- * unnecessary imbalance messages.
- */
-void ima_counts_put(struct path *path, int mask)
-{
-	struct inode *inode = path->dentry->d_inode;
-	struct ima_iint_cache *iint;
-
-	/* The inode may already have been freed, freeing the iint
-	 * with it. Verify the inode is not NULL before dereferencing
-	 * it.
-	 */
-	if (!ima_initialized || !inode || !S_ISREG(inode->i_mode))
-		return;
-	iint = ima_iint_find_get(inode);
-	if (!iint)
-		return;
-
-	mutex_lock(&iint->mutex);
-	ima_dec_counts_flags(iint, inode, mask);
-	mutex_unlock(&iint->mutex);
-
-	kref_put(&iint->refcount, iint_free);
 }
 
 /*
