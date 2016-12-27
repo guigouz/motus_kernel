@@ -182,6 +182,7 @@ struct ceph_connection {
 	/* message out temps */
 	struct ceph_msg *out_msg;        /* sending message (== tail of
 					    out_sent) */
+	bool out_msg_done;
 	struct ceph_msg_pos out_msg_pos;
 
 	struct kvec out_kvec[8],         /* sending header/footer data */
@@ -252,5 +253,7 @@ static inline void ceph_msg_put(struct ceph_msg *msg)
 {
 	kref_put(&msg->kref, ceph_msg_last_put);
 }
+
+extern void ceph_msg_dump(struct ceph_msg *msg);
 
 #endif

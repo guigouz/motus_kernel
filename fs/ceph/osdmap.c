@@ -200,6 +200,7 @@ static struct crush_map *crush_decode(void *pbyval, void *end)
 			size = sizeof(struct crush_bucket_straw);
 			break;
 		default:
+			err = -EINVAL;
 			goto bad;
 		}
 		BUG_ON(size == 0);
@@ -278,6 +279,7 @@ static struct crush_map *crush_decode(void *pbyval, void *end)
 		/* len */
 		ceph_decode_32_safe(p, end, yes, bad);
 #if BITS_PER_LONG == 32
+		err = -EINVAL;
 		if (yes > ULONG_MAX / sizeof(struct crush_rule_step))
 			goto bad;
 #endif
@@ -489,11 +491,10 @@ struct ceph_osdmap *osdmap_decode(void **p, void *end)
 		ceph_decode_copy(p, &pgid, sizeof(pgid));
 		n = ceph_decode_32(p);
 		ceph_decode_need(p, end, n * sizeof(u32), bad);
+		err = -ENOMEM;
 		pg = kmalloc(sizeof(*pg) + n*sizeof(u32), GFP_NOFS);
-		if (!pg) {
-			err = -ENOMEM;
+		if (!pg)
 			goto bad;
-		}
 		pg->pgid = pgid;
 		pg->len = n;
 		for (j = 0; j < n; j++)
@@ -537,7 +538,6 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 					     struct ceph_osdmap *map,
 					     struct ceph_messenger *msgr)
 {
-	struct ceph_osdmap *newmap = map;
 	struct crush_map *newcrush = NULL;
 	struct ceph_fsid fsid;
 	u32 epoch = 0;
@@ -564,8 +564,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 	if (len > 0) {
 		dout("apply_incremental full map len %d, %p to %p\n",
 		     len, *p, end);
-		newmap = osdmap_decode(p, min(*p+len, end));
-		return newmap;  /* error or not */
+		return osdmap_decode(p, min(*p+len, end));
 	}
 
 	/* new crush? */
@@ -701,7 +700,7 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 			}
 			pg->pgid = pgid;
 			pg->len = pglen;
-			for (j = 0; j < len; j++)
+			for (j = 0; j < pglen; j++)
 				pg->osds[j] = ceph_decode_32(p);
 			err = __insert_pg_mapping(pg, &map->pg_temp);
 			if (err)
@@ -726,6 +725,9 @@ struct ceph_osdmap *osdmap_apply_incremental(void **p, void *end,
 bad:
 	pr_err("corrupt inc osdmap epoch %d off %d (%p of %p-%p)\n",
 	       epoch, (int)(*p - start), *p, start, end);
+	print_hex_dump(KERN_DEBUG, "osdmap: ",
+		       DUMP_PREFIX_OFFSET, 16, 1,
+		       start, end - start, true);
 	if (newcrush)
 		crush_destroy(newcrush);
 	return ERR_PTR(err);
@@ -806,6 +808,7 @@ int ceph_calc_object_layout(struct ceph_object_layout *ol,
 	struct ceph_pg_pool_info *pool;
 	unsigned ps;
 
+	BUG_ON(!osdmap);
 	if (poolid >= osdmap->num_pools)
 		return -EIO;
 

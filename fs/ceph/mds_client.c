@@ -1597,14 +1597,17 @@ int ceph_mdsc_do_request(struct ceph_mds_client *mdsc,
 	if (!req->r_reply) {
 		mutex_unlock(&mdsc->mutex);
 		if (req->r_timeout) {
-			err = wait_for_completion_timeout(&req->r_completion,
-							  req->r_timeout);
-			if (err > 0)
-				err = 0;
-			else if (err == 0)
+			err = (long)wait_for_completion_interruptible_timeout(
+				&req->r_completion, req->r_timeout);
+			if (err == 0)
 				req->r_reply = ERR_PTR(-EIO);
+			else if (err < 0)
+				req->r_reply = ERR_PTR(err);
 		} else {
-			wait_for_completion(&req->r_completion);
+                        err = wait_for_completion_interruptible(
+                                &req->r_completion);
+                        if (err)
+                                req->r_reply = ERR_PTR(err);
 		}
 		mutex_lock(&mdsc->mutex);
 	}
@@ -1650,6 +1653,7 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 		return;
 	if (msg->front.iov_len < sizeof(*head)) {
 		pr_err("mdsc_handle_reply got corrupt (short) reply\n");
+		ceph_msg_dump(msg);
 		return;
 	}
 
@@ -1740,6 +1744,7 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 	mutex_lock(&session->s_mutex);
 	if (err < 0) {
 		pr_err("mdsc_handle_reply got corrupt reply mds%d\n", mds);
+		ceph_msg_dump(msg);
 		goto out_err;
 	}
 
@@ -1929,6 +1934,7 @@ static void handle_session(struct ceph_mds_session *session,
 bad:
 	pr_err("mdsc_handle_session corrupt message mds%d len %d\n", mds,
 	       (int)msg->front.iov_len);
+	ceph_msg_dump(msg);
 	return;
 }
 
@@ -2394,6 +2400,7 @@ out:
 
 bad:
 	pr_err("corrupt lease message\n");
+	ceph_msg_dump(msg);
 }
 
 void ceph_mdsc_lease_send_msg(struct ceph_mds_session *session,

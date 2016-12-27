@@ -320,9 +320,17 @@ static void reset_connection(struct ceph_connection *con)
 	ceph_msg_remove_list(&con->out_queue);
 	ceph_msg_remove_list(&con->out_sent);
 
+	if (con->in_msg) {
+		ceph_msg_put(con->in_msg);
+		con->in_msg = NULL;
+	}
+
 	con->connect_seq = 0;
 	con->out_seq = 0;
-	con->out_msg = NULL;
+	if (con->out_msg) {
+		ceph_msg_put(con->out_msg);
+		con->out_msg = NULL;
+	}
 	con->in_seq = 0;
 	mutex_unlock(&con->out_mutex);
 }
@@ -423,7 +431,7 @@ static void prepare_write_message_footer(struct ceph_connection *con, int v)
 	con->out_kvec_bytes += sizeof(m->footer);
 	con->out_kvec_left++;
 	con->out_more = m->more_to_follow;
-	con->out_msg = NULL;   /* we're done with this one */
+	con->out_msg_done = true;
 }
 
 /*
@@ -436,6 +444,7 @@ static void prepare_write_message(struct ceph_connection *con)
 
 	con->out_kvec_bytes = 0;
 	con->out_kvec_is_msg = true;
+	con->out_msg_done = false;
 
 	/* Sneak an ack in there first?  If we can get it into the same
 	 * TCP packet that's a good thing. */
@@ -449,11 +458,16 @@ static void prepare_write_message(struct ceph_connection *con)
 		con->out_kvec_bytes = 1 + sizeof(con->out_temp_ack);
 	}
 
-	/* move message to sending/sent list */
 	m = list_first_entry(&con->out_queue,
 		       struct ceph_msg, list_head);
-	list_move_tail(&m->list_head, &con->out_sent);
-	con->out_msg = m;   /* we don't bother taking a reference here. */
+	con->out_msg = m;
+	if (test_bit(LOSSYTX, &con->state)) {
+		/* put message on sent list */
+		ceph_msg_get(m);
+		list_move_tail(&m->list_head, &con->out_sent);
+	} else {
+		list_del_init(&m->list_head);
+	}
 
 	m->hdr.seq = cpu_to_le64(++con->out_seq);
 
@@ -620,8 +634,6 @@ static void prepare_write_connect(struct ceph_messenger *msgr,
 	con->out_connect.global_seq = cpu_to_le32(global_seq);
 	con->out_connect.protocol_version = cpu_to_le32(proto);
 	con->out_connect.flags = 0;
-	if (test_bit(LOSSYTX, &con->state))
-		con->out_connect.flags = CEPH_MSG_CONNECT_LOSSY;
 
 	if (!after_banner) {
 		con->out_kvec_left = 0;
@@ -1163,6 +1175,10 @@ static int process_connect(struct ceph_connection *con)
 		     con->connect_seq);
 		WARN_ON(con->connect_seq !=
 			le32_to_cpu(con->in_reply.connect_seq));
+
+		if (con->in_reply.flags & CEPH_MSG_CONNECT_LOSSY)
+			set_bit(LOSSYTX, &con->state);
+
 		prepare_read_tag(con);
 		break;
 
@@ -1277,7 +1293,7 @@ static int read_partial_message(struct ceph_connection *con)
 		con->in_msg = con->ops->alloc_msg(con, &con->in_hdr);
 		if (!con->in_msg) {
 			/* skip this message */
-			dout("alloc_msg returned NULL, skipping message\n");
+			pr_err("alloc_msg returned NULL, skipping message\n");
 			con->in_base_pos = -front_len - middle_len - data_len -
 				sizeof(m->footer);
 			con->in_tag = CEPH_MSGR_TAG_READY;
@@ -1316,7 +1332,7 @@ static int read_partial_message(struct ceph_connection *con)
 			if (con->ops->alloc_middle)
 				ret = con->ops->alloc_middle(con, m);
 			if (ret < 0) {
-				dout("alloc_middle failed, skipping payload\n");
+				pr_err("alloc_middle fail skipping payload\n");
 				con->in_base_pos = -middle_len - data_len
 					- sizeof(m->footer);
 				ceph_msg_put(con->in_msg);
@@ -1429,8 +1445,9 @@ no_data:
  */
 static void process_message(struct ceph_connection *con)
 {
-	struct ceph_msg *msg = con->in_msg;
+	struct ceph_msg *msg;
 
+	msg = con->in_msg;
 	con->in_msg = NULL;
 
 	/* if first message, set peer_name */
@@ -1486,6 +1503,7 @@ more:
 		set_bit(CONNECTING, &con->state);
 		clear_bit(NEGOTIATING, &con->state);
 
+		BUG_ON(con->in_msg);
 		con->in_tag = CEPH_MSGR_TAG_READY;
 		dout("try_write initiating connect on %p new state %lu\n",
 		     con, con->state);
@@ -1513,14 +1531,16 @@ more_kvec:
 		ret = write_partial_kvec(con);
 		if (ret <= 0)
 			goto done;
-		if (ret < 0) {
-			dout("try_write write_partial_kvec err %d\n", ret);
-			goto done;
-		}
 	}
 
 	/* msg pages? */
 	if (con->out_msg) {
+		if (con->out_msg_done) {
+			ceph_msg_put(con->out_msg);
+			con->out_msg = NULL;   /* we're done with this one */
+			goto do_next;
+		}
+
 		ret = write_partial_msg_pages(con);
 		if (ret == 1)
 			goto more_kvec;  /* we need to send the footer, too! */
@@ -1533,6 +1553,7 @@ more_kvec:
 		}
 	}
 
+do_next:
 	if (!test_bit(CONNECTING, &con->state)) {
 		/* is anything else pending? */
 		if (!list_empty(&con->out_queue)) {
@@ -1798,7 +1819,11 @@ static void ceph_fault(struct ceph_connection *con)
 	clear_bit(BUSY, &con->state);  /* to avoid an improbable race */
 
 	con_close_socket(con);
-	con->in_msg = NULL;
+
+	if (con->in_msg) {
+		ceph_msg_put(con->in_msg);
+		con->in_msg = NULL;
+	}
 
 	/* If there are no messages in the queue, place the connection
 	 * in a STANDBY state (i.e., don't try to reconnect just yet). */
@@ -1923,8 +1948,10 @@ void ceph_con_revoke(struct ceph_connection *con, struct ceph_msg *msg)
 		list_del_init(&msg->list_head);
 		ceph_msg_put(msg);
 		msg->hdr.seq = 0;
-		if (con->out_msg == msg)
+		if (con->out_msg == msg) {
+			ceph_msg_put(con->out_msg);
 			con->out_msg = NULL;
+		}
 		if (con->out_kvec_is_msg) {
 			con->out_skip = con->out_kvec_bytes;
 			con->out_kvec_is_msg = false;
@@ -2089,4 +2116,24 @@ void ceph_msg_last_put(struct kref *kref)
 		ceph_msgpool_put(m->pool, m);
 	else
 		ceph_msg_kfree(m);
+}
+
+void ceph_msg_dump(struct ceph_msg *msg)
+{
+	pr_debug("msg_dump %p (front_max %d nr_pages %d)\n", msg,
+		 msg->front_max, msg->nr_pages);
+	print_hex_dump(KERN_DEBUG, "header: ",
+		       DUMP_PREFIX_OFFSET, 16, 1,
+		       &msg->hdr, sizeof(msg->hdr), true);
+	print_hex_dump(KERN_DEBUG, " front: ",
+		       DUMP_PREFIX_OFFSET, 16, 1,
+		       msg->front.iov_base, msg->front.iov_len, true);
+	if (msg->middle)
+		print_hex_dump(KERN_DEBUG, "middle: ",
+			       DUMP_PREFIX_OFFSET, 16, 1,
+			       msg->middle->vec.iov_base,
+			       msg->middle->vec.iov_len, true);
+	print_hex_dump(KERN_DEBUG, "footer: ",
+		       DUMP_PREFIX_OFFSET, 16, 1,
+		       &msg->footer, sizeof(msg->footer), true);
 }

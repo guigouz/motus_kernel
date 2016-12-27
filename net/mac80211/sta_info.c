@@ -398,7 +398,7 @@ int sta_info_insert(struct sta_info *sta)
 					     struct ieee80211_sub_if_data,
 					     u.ap);
 
-		drv_sta_notify(local, &sdata->vif, STA_NOTIFY_ADD, &sta->sta);
+		drv_sta_notify(local, sdata, STA_NOTIFY_ADD, &sta->sta);
 		sdata = sta->sdata;
 	}
 
@@ -538,7 +538,7 @@ static void __sta_info_unlink(struct sta_info **sta)
 					     struct ieee80211_sub_if_data,
 					     u.ap);
 
-		drv_sta_notify(local, &sdata->vif, STA_NOTIFY_REMOVE,
+		drv_sta_notify(local, sdata, STA_NOTIFY_REMOVE,
 			       &(*sta)->sta);
 		sdata = (*sta)->sdata;
 	}
@@ -877,7 +877,7 @@ void ieee80211_sta_ps_deliver_wakeup(struct sta_info *sta)
 	struct ieee80211_local *local = sdata->local;
 	int sent, buffered;
 
-	drv_sta_notify(local, &sdata->vif, STA_NOTIFY_AWAKE, &sta->sta);
+	drv_sta_notify(local, sdata, STA_NOTIFY_AWAKE, &sta->sta);
 
 	if (!skb_queue_empty(&sta->ps_tx_buf))
 		sta_info_clear_tim_bit(sta);
