@@ -669,6 +669,7 @@ bnx2_netif_stop(struct bnx2 *bp)
 			txq->trans_start = jiffies;
 		}
 	}
+	bnx2_disable_int_sync(bp);
 }
 
 static void
@@ -682,7 +683,6 @@ bnx2_netif_start(struct bnx2 *bp)
 			bnx2_cnic_start(bp);
 		}
 	}
-	bnx2_disable_int_sync(bp);
 }
 
 static void
