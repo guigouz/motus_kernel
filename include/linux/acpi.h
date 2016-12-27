@@ -114,7 +114,7 @@ extern u32 acpi_irq_not_handled;
 extern int sbf_port;
 extern unsigned long acpi_realmode_flags;
 
-int acpi_register_gsi (u32 gsi, int triggering, int polarity);
+int acpi_register_gsi (struct device *dev, u32 gsi, int triggering, int polarity);
 int acpi_gsi_to_irq (u32 gsi, unsigned int *irq);
 
 #ifdef CONFIG_X86_IO_APIC
@@ -240,7 +240,7 @@ extern int pnpacpi_disabled;
 #define PXM_INVAL	(-1)
 #define NID_INVAL	(-1)
 
-int acpi_check_resource_conflict(const struct resource *res);
+int acpi_check_resource_conflict(struct resource *res);
 
 int acpi_check_region(resource_size_t start, resource_size_t n,
 		      const char *name);
@@ -273,13 +273,6 @@ struct acpi_osc_context {
 #define OSC_CAPABILITIES_MASK_ERROR	16
 
 acpi_status acpi_run_osc(acpi_handle handle, struct acpi_osc_context *context);
-
-/* platform-wide _OSC bits */
-#define OSC_SB_PAD_SUPPORT		1
-#define OSC_SB_PPC_OST_SUPPORT		2
-#define OSC_SB_PR3_SUPPORT		4
-#define OSC_SB_CPUHP_OST_SUPPORT	8
-#define OSC_SB_APEI_SUPPORT		16
 
 /* _OSC DW1 Definition (OS Support Fields) */
 #define OSC_EXT_PCI_CONFIG_SUPPORT		1
