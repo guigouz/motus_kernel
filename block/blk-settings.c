@@ -510,7 +510,7 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 		     sector_t offset)
 {
 	sector_t alignment;
-	unsigned int top, bottom, ret = 0;
+	unsigned int top, bottom, granularity;
 
 	t->max_sectors = min_not_zero(t->max_sectors, b->max_sectors);
 	t->max_hw_sectors = min_not_zero(t->max_hw_sectors, b->max_hw_sectors);
@@ -528,24 +528,17 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 	t->max_segment_size = min_not_zero(t->max_segment_size,
 					   b->max_segment_size);
 
-	t->misaligned |= b->misaligned;
+	granularity = max(b->physical_block_size, b->io_min);
+	alignment = b->alignment_offset - (offset & (granularity - 1));
 
-	alignment = queue_limit_alignment_offset(b, offset);
-
-	/* Bottom device has different alignment.  Check that it is
-	 * compatible with the current top alignment.
-	 */
 	if (t->alignment_offset != alignment) {
 
 		top = max(t->physical_block_size, t->io_min)
 			+ t->alignment_offset;
-		bottom = max(b->physical_block_size, b->io_min) + alignment;
+		bottom = granularity + alignment;
 
-		/* Verify that top and bottom intervals line up */
-		if (max(top, bottom) & (min(top, bottom) - 1)) {
+		if (max(top, bottom) & (min(top, bottom) - 1))
 			t->misaligned = 1;
-			ret = -1;
-		}
 	}
 
 	t->logical_block_size = max(t->logical_block_size,
@@ -556,68 +549,54 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 
 	t->io_min = max(t->io_min, b->io_min);
 	t->io_opt = lcm(t->io_opt, b->io_opt);
+
+	t->no_cluster |= b->no_cluster;
 	t->discard_zeroes_data &= b->discard_zeroes_data;
 
-	t->cluster &= b->cluster;
-
-	/* Physical block size a multiple of the logical block size? */
 	if (t->physical_block_size & (t->logical_block_size - 1)) {
 		t->physical_block_size = t->logical_block_size;
 		t->misaligned = 1;
-		ret = -1;
 	}
 
-	/* Minimum I/O a multiple of the physical block size? */
 	if (t->io_min & (t->physical_block_size - 1)) {
 		t->io_min = t->physical_block_size;
 		t->misaligned = 1;
-		ret = -1;
 	}
 
-	/* Optimal I/O a multiple of the physical block size? */
 	if (t->io_opt & (t->physical_block_size - 1)) {
 		t->io_opt = 0;
 		t->misaligned = 1;
-		ret = -1;
 	}
 
-	/*
-	 * Temporarily disable discard granularity. It's currently buggy
-	 * since we default to 0 for discard_granularity, hence this
-	 * "failure" will always trigger for non-zero offsets.
-	 */
-#if 0
-	if (offset &&
-	    (offset & (b->discard_granularity - 1)) != b->discard_alignment) {
-		t->discard_misaligned = 1;
-		ret = -1;
-	}
-#endif
-
-	/* Find lowest common alignment_offset */
 	t->alignment_offset = lcm(t->alignment_offset, alignment)
 		& (max(t->physical_block_size, t->io_min) - 1);
 
-	if (!t->discard_alignment)
-		t->discard_alignment =
-			b->discard_alignment & (b->discard_granularity - 1);
-
-	/* Top device aligned on logical block boundary? */
-	if (t->alignment_offset & (t->logical_block_size - 1)) {
+	if (t->alignment_offset & (t->logical_block_size - 1))
 		t->misaligned = 1;
-		ret = -1;
+
+	/* Discard alignment and granularity */
+	if (b->discard_granularity) {
+
+		alignment = b->discard_alignment -
+			(offset & (b->discard_granularity - 1));
+
+		if (t->discard_granularity != 0 &&
+		    t->discard_alignment != alignment) {
+			top = t->discard_granularity + t->discard_alignment;
+			bottom = b->discard_granularity + alignment;
+
+			/* Verify that top and bottom intervals line up */
+			if (max(top, bottom) & (min(top, bottom) - 1))
+				t->discard_misaligned = 1;
+		}
+
+		t->discard_granularity = max(t->discard_granularity,
+					     b->discard_granularity);
+		t->discard_alignment = lcm(t->discard_alignment, alignment) &
+			(t->discard_granularity - 1);
 	}
 
-	/* Find lcm() of optimal I/O size and granularity */
-	t->io_opt = lcm(t->io_opt, b->io_opt);
-	t->discard_granularity = lcm(t->discard_granularity,
-				     b->discard_granularity);
-
-	/* Verify that optimal I/O size is a multiple of io_min */
-	if (t->io_min && t->io_opt % t->io_min)
-		ret = -1;
-
-	return ret;
+	return t->misaligned ? -1 : 0;
 }
 EXPORT_SYMBOL(blk_stack_limits);
 
