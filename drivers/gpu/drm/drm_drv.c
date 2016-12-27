@@ -24,7 +24,6 @@
  *
  * Copyright 1999, 2000 Precision Insight, Inc., Cedar Park, Texas.
  * Copyright 2000 VA Linux Systems, Inc., Sunnyvale, California.
- * Copyright (c) 2009, Code Aurora Forum.
  * All Rights Reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
@@ -235,22 +234,28 @@ int drm_lastclose(struct drm_device * dev)
 	return 0;
 }
 
+/**
+ * Module initialization. Called via init_module at module load time, or via
+ * linux/init/main.c (this is not currently supported).
+ *
+ * \return zero on success or a negative number on failure.
+ *
+ * Initializes an array of drm_device structures, and attempts to
+ * initialize all available devices, using consecutive minors, registering the
+ * stubs and initializing the AGP device.
+ *
+ * Expands the \c DRIVER_PREINIT and \c DRIVER_POST_INIT macros before and
+ * after the initialization for driver customization.
+ */
 int drm_init(struct drm_driver *driver)
 {
-#ifdef CONFIG_PCI
 	struct pci_dev *pdev = NULL;
 	const struct pci_device_id *pid;
 	int i;
-#endif
 
 	DRM_DEBUG("\n");
 
 	INIT_LIST_HEAD(&driver->device_list);
-
-	if (driver->driver_features & DRIVER_USE_PLATFORM_DEVICE)
-		return drm_platform_init(driver);
-
-#ifdef CONFIG_PCI
 
 	if (driver->driver_features & DRIVER_MODESET)
 		return pci_register_driver(&driver->pci_driver);
@@ -277,7 +282,6 @@ int drm_init(struct drm_driver *driver)
 			drm_get_dev(pdev, pid, driver);
 		}
 	}
-#endif /* CONFIG_PCI */
 	return 0;
 }
 
@@ -430,11 +434,11 @@ static int drm_version(struct drm_device *dev, void *data,
  * Looks up the ioctl function in the ::ioctls table, checking for root
  * previleges if so required, and dispatches to the respective function.
  */
-int drm_ioctl(struct inode *inode, struct file *filp,
+long drm_ioctl(struct file *filp,
 	      unsigned int cmd, unsigned long arg)
 {
 	struct drm_file *file_priv = filp->private_data;
-	struct drm_device *dev = file_priv->minor->dev;
+	struct drm_device *dev;
 	struct drm_ioctl_desc *ioctl;
 	drm_ioctl_t *func;
 	unsigned int nr = DRM_IOCTL_NR(cmd);
@@ -442,6 +446,7 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 	char stack_kdata[128];
 	char *kdata = NULL;
 
+	dev = file_priv->minor->dev;
 	atomic_inc(&dev->ioctl_count);
 	atomic_inc(&dev->counts[_DRM_STAT_IOCTLS]);
 	++file_priv->ioctl_count;
@@ -496,10 +501,14 @@ int drm_ioctl(struct inode *inode, struct file *filp,
 				retcode = -EFAULT;
 				goto err_i1;
 			}
-		} else
-			memset(kdata, 0, _IOC_SIZE(cmd));
-
-		retcode = func(dev, kdata, file_priv);
+		}
+		if (ioctl->flags & DRM_UNLOCKED)
+			retcode = func(dev, kdata, file_priv);
+		else {
+			lock_kernel();
+			retcode = func(dev, kdata, file_priv);
+			unlock_kernel();
+		}
 
 		if (cmd & IOC_OUT) {
 			if (copy_to_user((void __user *)arg, kdata,
