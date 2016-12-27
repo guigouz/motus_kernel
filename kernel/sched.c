@@ -962,8 +962,6 @@ static inline int task_is_waking(struct task_struct *p)
 static inline struct rq *__task_rq_lock(struct task_struct *p)
 	__acquires(rq->lock)
 {
-	struct rq *rq;
-
 	for (;;) {
 		struct rq *rq = task_rq(p);
 		raw_spin_lock(&rq->lock);
