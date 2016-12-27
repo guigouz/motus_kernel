@@ -2431,7 +2431,7 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
  *
  *  - fork, @p is stable because it isn't on the tasklist yet
  *
- *  - exec, @p is unstable XXX
+ *  - exec, @p is unstable, retry loop
  *
  *  - wake-up, we serialize ->cpus_allowed against TASK_WAKING so
  *             we should be good.
@@ -3259,11 +3259,46 @@ static void double_rq_unlock(struct rq *rq1, struct rq *rq2)
  */
 void sched_exec(void)
 {
-	int new_cpu, this_cpu = get_cpu();
-	new_cpu = select_task_rq(current, SD_BALANCE_EXEC, 0);
+	struct task_struct *p = current;
+	struct migration_req req;
+	int dest_cpu, this_cpu;
+	unsigned long flags;
+	struct rq *rq;
+
+again:
+	this_cpu = get_cpu();
+	dest_cpu = select_task_rq(p, SD_BALANCE_EXEC, 0);
+	if (dest_cpu == this_cpu) {
+		put_cpu();
+		return;
+	}
+
+	rq = task_rq_lock(p, &flags);
 	put_cpu();
-	if (new_cpu != this_cpu)
-		sched_migrate_task(current, new_cpu);
+
+	/*
+	 * select_task_rq() can race against ->cpus_allowed
+	 */
+	if (!cpumask_test_cpu(dest_cpu, &p->cpus_allowed)
+	    || unlikely(!cpu_active(dest_cpu))) {
+		task_rq_unlock(rq, &flags);
+		goto again;
+	}
+
+	/* force the process onto the specified CPU */
+	if (migrate_task(p, dest_cpu, &req)) {
+		/* Need to wait for migration thread (might exit: take ref). */
+		struct task_struct *mt = rq->migration_thread;
+
+		get_task_struct(mt);
+		task_rq_unlock(rq, &flags);
+		wake_up_process(mt);
+		put_task_struct(mt);
+		wait_for_completion(&req.done);
+
+		return;
+	}
+	task_rq_unlock(rq, &flags);
 }
 
 /*
