@@ -13,8 +13,8 @@
  * License.
  *
  * File: ima_main.c
- *             implements the IMA hooks: ima_bprm_check, ima_file_mmap,
- *             and ima_path_check.
+ *	implements the IMA hooks: ima_bprm_check, ima_file_mmap,
+ *	and ima_path_check.
  */
 #include <linux/module.h>
 #include <linux/file.h>
@@ -29,23 +29,74 @@ int ima_initialized;
 char *ima_hash = "sha1";
 static int __init hash_setup(char *str)
 {
-	const char *op = "hash_setup";
-	const char *hash = "sha1";
-	int result = 0;
-	int audit_info = 0;
-
-	if (strncmp(str, "md5", 3) == 0) {
-		hash = "md5";
-		ima_hash = str;
-	} else if (strncmp(str, "sha1", 4) != 0) {
-		hash = "invalid_hash_type";
-		result = 1;
-	}
-	integrity_audit_msg(AUDIT_INTEGRITY_HASH, NULL, NULL, op, hash,
-			    result, audit_info);
+	if (strncmp(str, "md5", 3) == 0)
+		ima_hash = "md5";
 	return 1;
 }
 __setup("ima_hash=", hash_setup);
+
+/*
+ * Update the counts given an fmode_t
+ */
+static void ima_inc_counts(struct ima_iint_cache *iint, fmode_t mode)
+{
+	BUG_ON(!mutex_is_locked(&iint->mutex));
+
+	iint->opencount++;
+	if ((mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
+		iint->readcount++;
+	if (mode & FMODE_WRITE)
+		iint->writecount++;
+}
+
+/*
+ * Update the counts given open flags instead of fmode
+ */
+static void ima_inc_counts_flags(struct ima_iint_cache *iint, int flags)
+{
+	ima_inc_counts(iint, (__force fmode_t)((flags+1) & O_ACCMODE));
+}
+
+/*
+ * Decrement ima counts
+ */
+static void ima_dec_counts(struct ima_iint_cache *iint, struct inode *inode,
+			   fmode_t mode)
+{
+	BUG_ON(!mutex_is_locked(&iint->mutex));
+
+	iint->opencount--;
+	if ((mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
+		iint->readcount--;
+	if (mode & FMODE_WRITE) {
+		iint->writecount--;
+		if (iint->writecount == 0) {
+			if (iint->version != inode->i_version)
+				iint->flags &= ~IMA_MEASURED;
+		}
+	}
+
+	if ((iint->opencount < 0) ||
+	    (iint->readcount < 0) ||
+	    (iint->writecount < 0)) {
+		static int dumped;
+
+		if (dumped)
+			return;
+		dumped = 1;
+
+		printk(KERN_INFO "%s: open/free imbalance (r:%ld w:%ld o:%ld)\n",
+		       __FUNCTION__, iint->readcount, iint->writecount,
+		       iint->opencount);
+		dump_stack();
+	}
+}
+
+static void ima_dec_counts_flags(struct ima_iint_cache *iint,
+				 struct inode *inode, int flags)
+{
+	ima_dec_counts(iint, inode, (__force fmode_t)((flags+1) & O_ACCMODE));
+}
 
 /**
  * ima_file_free - called on __fput()
@@ -66,29 +117,7 @@ void ima_file_free(struct file *file)
 		return;
 
 	mutex_lock(&iint->mutex);
-	if (iint->opencount <= 0) {
-		printk(KERN_INFO
-		       "%s: %s open/free imbalance (r:%ld w:%ld o:%ld f:%ld)\n",
-		       __FUNCTION__, file->f_dentry->d_name.name,
-		       iint->readcount, iint->writecount,
-		       iint->opencount, atomic_long_read(&file->f_count));
-		if (!(iint->flags & IMA_IINT_DUMP_STACK)) {
-			dump_stack();
-			iint->flags |= IMA_IINT_DUMP_STACK;
-		}
-	}
-	iint->opencount--;
-
-	if ((file->f_mode & (FMODE_READ | FMODE_WRITE)) == FMODE_READ)
-		iint->readcount--;
-
-	if (file->f_mode & FMODE_WRITE) {
-		iint->writecount--;
-		if (iint->writecount == 0) {
-			if (iint->version != inode->i_version)
-				iint->flags &= ~IMA_MEASURED;
-		}
-	}
+	ima_dec_counts(iint, inode, file->f_mode);
 	mutex_unlock(&iint->mutex);
 	kref_put(&iint->refcount, iint_free);
 }
@@ -128,12 +157,7 @@ static int get_path_measurement(struct ima_iint_cache *iint, struct file *file,
 {
 	int rc = 0;
 
-	if (IS_ERR(file)) {
-		pr_info("%s dentry_open failed\n", filename);
-		return rc;
-	}
-	iint->opencount++;
-	iint->readcount++;
+	ima_inc_counts(iint, file->f_mode);
 
 	rc = ima_collect_measurement(iint, file);
 	if (!rc)
@@ -156,10 +180,10 @@ static int get_path_measurement(struct ima_iint_cache *iint, struct file *file,
  *	- Opening a file for read when already open for write,
  * 	  could result in a file measurement error.
  *
- * Return 0 on success, an error code on failure.
- * (Based on the results of appraise_measurement().)
+ * Always return 0 and audit dentry_open failures.
+ * (Return code will be based upon measurement appraisal.)
  */
-int ima_path_check(struct path *path, int mask)
+int ima_path_check(struct path *path, int mask, int update_counts)
 {
 	struct inode *inode = path->dentry->d_inode;
 	struct ima_iint_cache *iint;
@@ -168,16 +192,13 @@ int ima_path_check(struct path *path, int mask)
 
 	if (!ima_initialized || !S_ISREG(inode->i_mode))
 		return 0;
-	iint = ima_iint_find_insert_get(inode);
+	iint = ima_iint_find_get(inode);
 	if (!iint)
 		return 0;
 
 	mutex_lock(&iint->mutex);
-	iint->opencount++;
-	if ((mask & MAY_WRITE) || (mask == 0))
-		iint->writecount++;
-	else if (mask & (MAY_READ | MAY_EXEC))
-		iint->readcount++;
+	if (update_counts)
+		ima_inc_counts_flags(iint, mask);
 
 	rc = ima_must_measure(iint, inode, MAY_READ, PATH_CHECK);
 	if (rc < 0)
@@ -196,7 +217,19 @@ int ima_path_check(struct path *path, int mask)
 		struct dentry *dentry = dget(path->dentry);
 		struct vfsmount *mnt = mntget(path->mnt);
 
-		file = dentry_open(dentry, mnt, O_RDONLY, current->cred);
+		file = dentry_open(dentry, mnt, O_RDONLY | O_LARGEFILE,
+				   current_cred());
+		if (IS_ERR(file)) {
+			int audit_info = 0;
+
+			integrity_audit_msg(AUDIT_INTEGRITY_PCR, inode,
+					    dentry->d_name.name,
+					    "add_measurement",
+					    "dentry_open failed",
+					    1, audit_info);
+			file = NULL;
+			goto out;
+		}
 		rc = get_path_measurement(iint, file, dentry->d_name.name);
 	}
 out:
@@ -206,6 +239,7 @@ out:
 	kref_put(&iint->refcount, iint_free);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(ima_path_check);
 
 static int process_measurement(struct file *file, const unsigned char *filename,
 			       int mask, int function)
@@ -216,7 +250,7 @@ static int process_measurement(struct file *file, const unsigned char *filename,
 
 	if (!ima_initialized || !S_ISREG(inode->i_mode))
 		return 0;
-	iint = ima_iint_find_insert_get(inode);
+	iint = ima_iint_find_get(inode);
 	if (!iint)
 		return -ENOMEM;
 
@@ -252,16 +286,12 @@ void ima_counts_put(struct path *path, int mask)
 	 */
 	if (!ima_initialized || !inode || !S_ISREG(inode->i_mode))
 		return;
-	iint = ima_iint_find_insert_get(inode);
+	iint = ima_iint_find_get(inode);
 	if (!iint)
 		return;
 
 	mutex_lock(&iint->mutex);
-	iint->opencount--;
-	if ((mask & MAY_WRITE) || (mask == 0))
-		iint->writecount--;
-	else if (mask & (MAY_READ | MAY_EXEC))
-		iint->readcount--;
+	ima_dec_counts_flags(iint, inode, mask);
 	mutex_unlock(&iint->mutex);
 
 	kref_put(&iint->refcount, iint_free);
@@ -283,15 +313,16 @@ void ima_counts_get(struct file *file)
 
 	if (!ima_initialized || !S_ISREG(inode->i_mode))
 		return;
-	iint = ima_iint_find_insert_get(inode);
+	iint = ima_iint_find_get(inode);
 	if (!iint)
 		return;
 	mutex_lock(&iint->mutex);
-	iint->opencount++;
+	ima_inc_counts(iint, file->f_mode);
 	mutex_unlock(&iint->mutex);
 
 	kref_put(&iint->refcount, iint_free);
 }
+EXPORT_SYMBOL_GPL(ima_counts_get);
 
 /**
  * ima_file_mmap - based on policy, collect/store measurement.
@@ -314,18 +345,6 @@ int ima_file_mmap(struct file *file, unsigned long prot)
 		rc = process_measurement(file, file->f_dentry->d_name.name,
 					 MAY_EXEC, FILE_MMAP);
 	return 0;
-}
-
-/*
- * ima_shm_check - IPC shm and shmat create/fput a file
- *
- * Maintain the opencount for these files to prevent unnecessary
- * imbalance messages.
- */
-void ima_shm_check(struct file *file)
-{
-	opencount_get(file);
-	return;
 }
 
 /**
