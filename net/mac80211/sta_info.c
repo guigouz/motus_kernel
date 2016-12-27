@@ -103,13 +103,16 @@ static int sta_info_hash_del(struct ieee80211_local *local,
 }
 
 /* protected by RCU */
-struct sta_info *sta_info_get(struct ieee80211_local *local, const u8 *addr)
+struct sta_info *sta_info_get(struct ieee80211_sub_if_data *sdata,
+			      const u8 *addr)
 {
+	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta;
 
 	sta = rcu_dereference(local->sta_hash[STA_HASH(addr)]);
 	while (sta) {
-		if (memcmp(sta->sta.addr, addr, ETH_ALEN) == 0)
+		if (sta->sdata == sdata &&
+		    memcmp(sta->sta.addr, addr, ETH_ALEN) == 0)
 			break;
 		sta = rcu_dereference(sta->hnext);
 	}
@@ -370,7 +373,7 @@ int sta_info_insert(struct sta_info *sta)
 		goto out_free;
 	}
 
-	if (WARN_ON(compare_ether_addr(sta->sta.addr, sdata->dev->dev_addr) == 0 ||
+	if (WARN_ON(compare_ether_addr(sta->sta.addr, sdata->vif.addr) == 0 ||
 		    is_multicast_ether_addr(sta->sta.addr))) {
 		err = -EINVAL;
 		goto out_free;
@@ -378,7 +381,7 @@ int sta_info_insert(struct sta_info *sta)
 
 	spin_lock_irqsave(&local->sta_lock, flags);
 	/* check if STA exists already */
-	if (sta_info_get(local, sta->sta.addr)) {
+	if (sta_info_get(sdata, sta->sta.addr)) {
 		spin_unlock_irqrestore(&local->sta_lock, flags);
 		err = -EEXIST;
 		goto out_free;
@@ -829,7 +832,7 @@ void ieee80211_sta_expire(struct ieee80211_sub_if_data *sdata,
 		if (time_after(jiffies, sta->last_rx + exp_time)) {
 #ifdef CONFIG_MAC80211_IBSS_DEBUG
 			printk(KERN_DEBUG "%s: expiring inactive STA %pM\n",
-			       sdata->dev->name, sta->sta.addr);
+			       sdata->name, sta->sta.addr);
 #endif
 			__sta_info_unlink(&sta);
 			if (sta)
@@ -844,11 +847,12 @@ void ieee80211_sta_expire(struct ieee80211_sub_if_data *sdata,
 struct ieee80211_sta *ieee80211_find_sta_by_hw(struct ieee80211_hw *hw,
 					       const u8 *addr)
 {
-	struct sta_info *sta = sta_info_get(hw_to_local(hw), addr);
+	struct sta_info *sta, *nxt;
 
-	if (!sta)
-		return NULL;
-	return &sta->sta;
+	/* Just return a random station ... first in list ... */
+	for_each_sta_info(hw_to_local(hw), addr, sta, nxt)
+		return &sta->sta;
+	return NULL;
 }
 EXPORT_SYMBOL_GPL(ieee80211_find_sta_by_hw);
 
@@ -886,7 +890,7 @@ void ieee80211_sta_ps_deliver_wakeup(struct sta_info *sta)
 
 #ifdef CONFIG_MAC80211_VERBOSE_PS_DEBUG
 	printk(KERN_DEBUG "%s: STA %pM aid %d sending %d filtered/%d PS frames "
-	       "since STA not sleeping anymore\n", sdata->dev->name,
+	       "since STA not sleeping anymore\n", sdata->name,
 	       sta->sta.addr, sta->sta.aid, sent - buffered, buffered);
 #endif /* CONFIG_MAC80211_VERBOSE_PS_DEBUG */
 }
@@ -945,7 +949,7 @@ void ieee80211_sta_ps_deliver_poll_response(struct sta_info *sta)
 		 */
 		printk(KERN_DEBUG "%s: STA %pM sent PS Poll even "
 		       "though there are no buffered frames for it\n",
-		       sdata->dev->name, sta->sta.addr);
+		       sdata->name, sta->sta.addr);
 #endif /* CONFIG_MAC80211_VERBOSE_PS_DEBUG */
 	}
 }
