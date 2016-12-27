@@ -352,8 +352,7 @@ int btrfs_remove_ordered_extent(struct inode *inode,
  * wait for all the ordered extents in a root.  This is done when balancing
  * space between drives.
  */
-int btrfs_wait_ordered_extents(struct btrfs_root *root,
-			       int nocow_only, int delay_iput)
+int btrfs_wait_ordered_extents(struct btrfs_root *root, int nocow_only)
 {
 	struct list_head splice;
 	struct list_head *cur;
@@ -390,10 +389,7 @@ int btrfs_wait_ordered_extents(struct btrfs_root *root,
 		if (inode) {
 			btrfs_start_ordered_extent(inode, ordered, 1);
 			btrfs_put_ordered_extent(ordered);
-			if (delay_iput)
-				btrfs_add_delayed_iput(inode);
-			else
-				iput(inode);
+			iput(inode);
 		} else {
 			btrfs_put_ordered_extent(ordered);
 		}
@@ -451,7 +447,7 @@ again:
 				btrfs_wait_ordered_range(inode, 0, (u64)-1);
 			else
 				filemap_flush(inode->i_mapping);
-			btrfs_add_delayed_iput(inode);
+			iput(inode);
 		}
 
 		cond_resched();
@@ -626,8 +622,6 @@ int btrfs_ordered_update_i_size(struct inode *inode, u64 offset,
 
 	if (ordered)
 		offset = entry_end(ordered);
-	else
-		offset = ALIGN(offset, BTRFS_I(inode)->root->sectorsize);
 
 	mutex_lock(&tree->mutex);
 	disk_i_size = BTRFS_I(inode)->disk_i_size;
