@@ -816,7 +816,7 @@ int fix_alignment(struct pt_regs *regs)
 			nb = 8;
 		}
 		PPC_WARN_ALIGNMENT(vsx, regs);
-		return emulate_vsx(addr, reg, areg, regs, flags, nb);
+		return emulate_vsx(addr, reg, areg, regs, flags, nb, elsize);
 	}
 #endif
 	/* A size of 0 indicates an instruction we don't support, with
