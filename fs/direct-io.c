@@ -1209,7 +1209,7 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
 	if (dio->flags & DIO_LOCKING) {
 		if (unlikely((rw & WRITE) && retval < 0)) {
 			loff_t isize = i_size_read(inode);
-			if (end > isize)
+			if (end > isize )
 				vmtruncate(inode, isize);
 		}
 	}
