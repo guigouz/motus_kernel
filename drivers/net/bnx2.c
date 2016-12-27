@@ -656,11 +656,18 @@ static void
 bnx2_netif_stop(struct bnx2 *bp)
 {
 	bnx2_cnic_stop(bp);
-	bnx2_disable_int_sync(bp);
 	if (netif_running(bp->dev)) {
+		int i;
+
 		bnx2_napi_disable(bp);
 		netif_tx_disable(bp->dev);
-		bp->dev->trans_start = jiffies;	/* prevent tx timeout */
+		/* prevent tx timeout */
+		for (i = 0; i <  bp->dev->num_tx_queues; i++) {
+			struct netdev_queue *txq;
+
+			txq = netdev_get_tx_queue(bp->dev, i);
+			txq->trans_start = jiffies;
+		}
 	}
 }
 
@@ -675,6 +682,7 @@ bnx2_netif_start(struct bnx2 *bp)
 			bnx2_cnic_start(bp);
 		}
 	}
+	bnx2_disable_int_sync(bp);
 }
 
 static void
