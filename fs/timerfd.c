@@ -341,7 +341,7 @@ SYSCALL_DEFINE2(timerfd_create, int, clockid, int, flags)
 	ctx->moffs = ktime_get_monotonic_offset();
 
 	ufd = anon_inode_getfd("[timerfd]", &timerfd_fops, ctx,
-			       flags & TFD_SHARED_FCNTL_FLAGS);
+			       O_RDWR | (flags & TFD_SHARED_FCNTL_FLAGS));
 	if (ufd < 0)
 		kfree(ctx);
 
