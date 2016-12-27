@@ -193,6 +193,8 @@ print_cfs_rq(struct seq_file *m, int cpu, struct cfs_rq *cfs_rq)
 #define TASK_WAKEKILL		128
 #define TASK_WAKING		256
 
+#define TASK_STATE_TO_CHAR_STR "RSDTtZX"
+
 /* Convenience macros for the sake of set_task_state */
 #define TASK_KILLABLE		(TASK_WAKEKILL | TASK_UNINTERRUPTIBLE)
 #define TASK_STOPPED		(TASK_WAKEKILL | __TASK_STOPPED)
@@ -2603,8 +2605,6 @@ static inline void mm_init_owner(struct mm_struct *mm, struct task_struct *p)
 {
 }
 #endif /* CONFIG_MM_OWNER */
-
-#define TASK_STATE_TO_CHAR_STR "RSDTtZX"
 
 static inline unsigned long task_rlimit(const struct task_struct *tsk,
 		unsigned int limit)
