@@ -193,6 +193,7 @@ struct file *alloc_file(struct path *path, fmode_t mode,
 	}
 	return file;
 }
+EXPORT_SYMBOL(alloc_file);
 
 void fput(struct file *file)
 {
