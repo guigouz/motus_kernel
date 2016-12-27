@@ -2112,22 +2112,15 @@ static inline void check_class_changed(struct rq *rq, struct task_struct *p,
  */
 void kthread_bind(struct task_struct *p, unsigned int cpu)
 {
-	struct rq *rq = cpu_rq(cpu);
-	unsigned long flags;
-
 	/* Must have done schedule() in kthread() before we set_task_cpu */
 	if (!wait_task_inactive(p, TASK_UNINTERRUPTIBLE)) {
 		WARN_ON(1);
 		return;
 	}
 
-	raw_spin_lock_irqsave(&rq->lock, flags);
-	update_rq_clock(rq);
-	set_task_cpu(p, cpu);
 	p->cpus_allowed = cpumask_of_cpu(cpu);
 	p->rt.nr_cpus_allowed = 1;
 	p->flags |= PF_THREAD_BOUND;
-	raw_spin_unlock_irqrestore(&rq->lock, flags);
 }
 EXPORT_SYMBOL(kthread_bind);
 
@@ -2171,6 +2164,14 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 	struct cfs_rq *old_cfsrq = task_cfs_rq(p),
 		      *new_cfsrq = cpu_cfs_rq(old_cfsrq, new_cpu);
 
+#ifdef CONFIG_SCHED_DEBUG
+	/*
+	 * We should never call set_task_cpu() on a blocked task,
+	 * ttwu() will sort out the placement.
+	 */
+	WARN_ON(p->state != TASK_RUNNING && p->state != TASK_WAKING);
+#endif
+
 	trace_sched_migrate_task(p, new_cpu);
 
 	if (old_cpu != new_cpu) {
@@ -2204,9 +2205,7 @@ migrate_task(struct task_struct *p, int dest_cpu, struct migration_req *req)
 	 * If the task is not on a runqueue (and not running), then
 	 * the next wake-up will properly place the task.
 	 */
-	if (!p->se.on_rq && !task_running(rq, p)) {
-		update_rq_clock(rq);
-		set_task_cpu(p, dest_cpu);
+	if (!p->se.on_rq && !task_running(rq, p))
 		return 0;
 
 	init_completion(&req->done);
@@ -2427,10 +2426,42 @@ static int select_fallback_rq(int cpu, struct task_struct *p)
 #endif
 
 #ifdef CONFIG_SMP
+/*
+ * Called from:
+ *
+ *  - fork, @p is stable because it isn't on the tasklist yet
+ *
+ *  - exec, @p is unstable XXX
+ *
+ *  - wake-up, we serialize ->cpus_allowed against TASK_WAKING so
+ *             we should be good.
+ */
 static inline
 int select_task_rq(struct task_struct *p, int sd_flags, int wake_flags)
 {
-	return p->sched_class->select_task_rq(p, sd_flags, wake_flags);
+	int cpu = p->sched_class->select_task_rq(p, sd_flags, wake_flags);
+
+	/*
+	 * In order not to call set_task_cpu() on a blocking task we need
+	 * to rely on ttwu() to place the task on a valid ->cpus_allowed
+	 * cpu.
+	 *
+	 * Since this is common to all placement strategies, this lives here.
+	 *
+	 * [ this allows ->select_task() to simply return task_cpu(p) and
+	 *   not worry about this generic constraint ]
+	 */
+	if (unlikely(!cpumask_test_cpu(cpu, &p->cpus_allowed) ||
+		     !cpu_active(cpu))) {
+
+		cpu = cpumask_any_and(&p->cpus_allowed, cpu_active_mask);
+		/*
+		 * XXX: race against hot-plug modifying cpu_active_mask
+		 */
+		BUG_ON(cpu >= nr_cpu_ids);
+	}
+
+	return cpu;
 }
 #endif
 
@@ -7304,6 +7335,7 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 again:
 	while (task_is_waking(p))
 		cpu_relax();
+
 	rq = task_rq_lock(p, &flags);
 	if (task_is_waking(p)) {
 		task_rq_unlock(rq, &flags);
