@@ -510,7 +510,7 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 		     sector_t offset)
 {
 	sector_t alignment;
-	unsigned int top, bottom, granularity;
+	unsigned int top, bottom;
 
 	t->max_sectors = min_not_zero(t->max_sectors, b->max_sectors);
 	t->max_hw_sectors = min_not_zero(t->max_hw_sectors, b->max_hw_sectors);
@@ -528,15 +528,18 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 	t->max_segment_size = min_not_zero(t->max_segment_size,
 					   b->max_segment_size);
 
-	granularity = max(b->physical_block_size, b->io_min);
-	alignment = b->alignment_offset - (offset & (granularity - 1));
+	alignment = queue_limit_alignment_offset(b, offset);
 
+	/* Bottom device has different alignment.  Check that it is
+	 * compatible with the current top alignment.
+	 */
 	if (t->alignment_offset != alignment) {
 
 		top = max(t->physical_block_size, t->io_min)
 			+ t->alignment_offset;
-		bottom = granularity + alignment;
+		bottom = max(b->physical_block_size, b->io_min) + alignment;
 
+		/* Verify that top and bottom intervals line up */
 		if (max(top, bottom) & (min(top, bottom) - 1))
 			t->misaligned = 1;
 	}
@@ -553,32 +556,39 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 	t->cluster &= b->cluster;
 	t->discard_zeroes_data &= b->discard_zeroes_data;
 
+	/* Physical block size a multiple of the logical block size? */
 	if (t->physical_block_size & (t->logical_block_size - 1)) {
 		t->physical_block_size = t->logical_block_size;
 		t->misaligned = 1;
 	}
 
+	/* Minimum I/O a multiple of the physical block size? */
 	if (t->io_min & (t->physical_block_size - 1)) {
 		t->io_min = t->physical_block_size;
 		t->misaligned = 1;
 	}
 
+	/* Optimal I/O a multiple of the physical block size? */
 	if (t->io_opt & (t->physical_block_size - 1)) {
 		t->io_opt = 0;
 		t->misaligned = 1;
 	}
 
+	/* Find lowest common alignment_offset */
 	t->alignment_offset = lcm(t->alignment_offset, alignment)
 		& (max(t->physical_block_size, t->io_min) - 1);
 
+	/* Verify that new alignment_offset is on a logical block boundary */
 	if (t->alignment_offset & (t->logical_block_size - 1))
 		t->misaligned = 1;
 
 	/* Discard alignment and granularity */
 	if (b->discard_granularity) {
+		unsigned int granularity = b->discard_granularity;
+		offset &= granularity - 1;
 
-		alignment = b->discard_alignment -
-			(offset & (b->discard_granularity - 1));
+		alignment = (granularity + b->discard_alignment - offset)
+			& (granularity - 1);
 
 		if (t->discard_granularity != 0 &&
 		    t->discard_alignment != alignment) {
@@ -590,6 +600,8 @@ int blk_stack_limits(struct queue_limits *t, struct queue_limits *b,
 				t->discard_misaligned = 1;
 		}
 
+		t->max_discard_sectors = min_not_zero(t->max_discard_sectors,
+						      b->max_discard_sectors);
 		t->discard_granularity = max(t->discard_granularity,
 					     b->discard_granularity);
 		t->discard_alignment = lcm(t->discard_alignment, alignment) &

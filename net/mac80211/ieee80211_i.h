@@ -71,9 +71,6 @@ struct ieee80211_fragment_entry {
 
 
 struct ieee80211_bss {
-	/* Yes, this is a hack */
-	struct cfg80211_bss cbss;
-
 	/* don't want to look up all the time */
 	size_t ssid_len;
 	u8 ssid[IEEE80211_MAX_SSID_LEN];
@@ -228,9 +225,11 @@ struct mesh_preq_queue {
 };
 
 enum ieee80211_work_type {
+	IEEE80211_WORK_ABORT,
 	IEEE80211_WORK_DIRECT_PROBE,
 	IEEE80211_WORK_AUTH,
 	IEEE80211_WORK_ASSOC,
+	IEEE80211_WORK_REMAIN_ON_CHANNEL,
 };
 
 /**
@@ -256,12 +255,14 @@ struct ieee80211_work {
 				      struct sk_buff *skb);
 
 	struct ieee80211_channel *chan;
-	/* XXX: chan type? -- right now not really needed */
+	enum nl80211_channel_type chan_type;
 
 	unsigned long timeout;
 	enum ieee80211_work_type type;
 
 	u8 filter_ta[ETH_ALEN];
+
+	bool started;
 
 	union {
 		struct {
@@ -274,7 +275,7 @@ struct ieee80211_work {
 			bool privacy;
 		} probe_auth;
 		struct {
-			struct ieee80211_bss *bss;
+			struct cfg80211_bss *bss;
 			const u8 *supp_rates;
 			const u8 *ht_information_ie;
 			enum ieee80211_smps_mode smps;
@@ -286,6 +287,10 @@ struct ieee80211_work {
 			u8 supp_rates_len;
 			bool wmm_used, use_11n;
 		} assoc;
+		struct {
+			u32 duration;
+			bool started;
+		} remain;
 	};
 
 	int ie_len;
@@ -318,7 +323,7 @@ struct ieee80211_if_managed {
 	int probe_send_count;
 
 	struct mutex mtx;
-	struct ieee80211_bss *associated;
+	struct cfg80211_bss *associated;
 
 	u8 bssid[ETH_ALEN];
 
@@ -733,6 +738,10 @@ struct ieee80211_local {
 	enum nl80211_channel_type oper_channel_type;
 	struct ieee80211_channel *oper_channel, *csa_channel;
 
+	/* Temporary remain-on-channel for off-channel operations */
+	struct ieee80211_channel *tmp_channel;
+	enum nl80211_channel_type tmp_channel_type;
+
 	/* SNMP counters */
 	/* dot11CountersTable */
 	u32 dot11TransmittedFragmentCount;
@@ -790,7 +799,7 @@ struct ieee80211_local {
 	unsigned int wmm_acm; /* bit field of ACM bits (BIT(802.1D tag)) */
 
 	bool pspolling;
-	bool scan_ps_enabled;
+	bool offchannel_ps_enabled;
 	/*
 	 * PS can only be enabled when we have exactly one managed
 	 * interface (and monitors) in PS, this then points there.
@@ -985,6 +994,12 @@ ieee80211_rx_bss_get(struct ieee80211_local *local, u8 *bssid, int freq,
 void ieee80211_rx_bss_put(struct ieee80211_local *local,
 			  struct ieee80211_bss *bss);
 
+/* off-channel helpers */
+void ieee80211_offchannel_stop_beaconing(struct ieee80211_local *local);
+void ieee80211_offchannel_stop_station(struct ieee80211_local *local);
+void ieee80211_offchannel_return(struct ieee80211_local *local,
+				 bool enable_beaconing);
+
 /* interface handling */
 int ieee80211_iface_init(void);
 void ieee80211_iface_exit(void);
@@ -1149,6 +1164,10 @@ int __ieee80211_request_smps(struct ieee80211_sub_if_data *sdata,
 void ieee80211_recalc_smps(struct ieee80211_local *local,
 			   struct ieee80211_sub_if_data *forsdata);
 
+size_t ieee80211_ie_split(const u8 *ies, size_t ielen,
+			  const u8 *ids, int n_ids, size_t offset);
+size_t ieee80211_ie_split_vendor(const u8 *ies, size_t ielen, size_t offset);
+
 /* internal work items */
 void ieee80211_work_init(struct ieee80211_local *local);
 void ieee80211_add_work(struct ieee80211_work *wk);
@@ -1156,6 +1175,12 @@ void free_work(struct ieee80211_work *wk);
 void ieee80211_work_purge(struct ieee80211_sub_if_data *sdata);
 ieee80211_rx_result ieee80211_work_rx_mgmt(struct ieee80211_sub_if_data *sdata,
 					   struct sk_buff *skb);
+int ieee80211_wk_remain_on_channel(struct ieee80211_sub_if_data *sdata,
+				   struct ieee80211_channel *chan,
+				   enum nl80211_channel_type channel_type,
+				   unsigned int duration, u64 *cookie);
+int ieee80211_wk_cancel_remain_on_channel(
+	struct ieee80211_sub_if_data *sdata, u64 cookie);
 
 #ifdef CONFIG_MAC80211_NOINLINE
 #define debug_noinline noinline
