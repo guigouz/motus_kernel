@@ -47,4 +47,3 @@ obj-$(CONFIG_USB_SPEEDTOUCH)	+= atm/
 
 obj-$(CONFIG_USB_IPC)		+= ipchost/
 
-obj-$(CONFIG_USB_ULPI)		+= otg/
