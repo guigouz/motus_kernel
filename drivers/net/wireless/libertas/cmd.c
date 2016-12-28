@@ -842,9 +842,6 @@ int lbs_set_radio(struct lbs_private *priv, u8 preamble, u8 radio_on)
 	if (priv->fwrelease < 0x09000000) {
 		switch (preamble) {
 		case RADIO_PREAMBLE_SHORT:
-			if (!(priv->capability & WLAN_CAPABILITY_SHORT_PREAMBLE))
-				goto out;
-			/* Fall through */
 		case RADIO_PREAMBLE_AUTO:
 		case RADIO_PREAMBLE_LONG:
 			cmd.control = cpu_to_le16(preamble);
@@ -998,6 +995,8 @@ int lbs_prepare_and_send_command(struct lbs_private *priv,
 		ret = 0;
 		break;
 
+#ifdef CONFIG_LIBERTAS_MESH
+
 	case CMD_BT_ACCESS:
 		ret = lbs_cmd_bt_access(cmdptr, cmd_action, pdata_buf);
 		break;
@@ -1005,6 +1004,8 @@ int lbs_prepare_and_send_command(struct lbs_private *priv,
 	case CMD_FWT_ACCESS:
 		ret = lbs_cmd_fwt_access(cmdptr, cmd_action, pdata_buf);
 		break;
+
+#endif
 
 	case CMD_802_11_BEACON_CTRL:
 		ret = lbs_cmd_bcn_ctrl(priv, cmdptr, cmd_action);
