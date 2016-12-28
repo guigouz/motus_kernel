@@ -3211,7 +3211,7 @@ out:
 	 * count for this offset. So cancel these reservation
 	 */
 	if (flags & EXT4_GET_BLOCKS_DELALLOC_RESERVE)
-		ext4_da_update_reserve_space(inode, allocated, 0);
+		ext4_da_update_reserve_space(inode, allocated);
 
 map_out:
 	set_buffer_mapped(bh_result);
