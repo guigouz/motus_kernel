@@ -46,11 +46,20 @@ void lbs_mesh_set_txpd(struct lbs_private *priv,
 /* Command handling */
 
 struct cmd_ds_command;
+struct cmd_ds_mesh_access;
+struct cmd_ds_mesh_config;
 
 int lbs_cmd_bt_access(struct cmd_ds_command *cmd,
 	u16 cmd_action, void *pdata_buf);
 int lbs_cmd_fwt_access(struct cmd_ds_command *cmd,
 	u16 cmd_action, void *pdata_buf);
+int lbs_mesh_access(struct lbs_private *priv, uint16_t cmd_action,
+		    struct cmd_ds_mesh_access *cmd);
+int lbs_mesh_config_send(struct lbs_private *priv,
+			 struct cmd_ds_mesh_config *cmd,
+			 uint16_t action, uint16_t type);
+int lbs_mesh_config(struct lbs_private *priv, uint16_t enable, uint16_t chan);
+
 
 
 /* Persistent configuration */
@@ -73,6 +82,12 @@ void lbs_mesh_ethtool_get_stats(struct net_device *dev,
 int lbs_mesh_ethtool_get_sset_count(struct net_device *dev, int sset);
 void lbs_mesh_ethtool_get_strings(struct net_device *dev,
 	uint32_t stringset, uint8_t *s);
+
+
+/* Accessors */
+
+#define lbs_mesh_open(priv) (priv->mesh_open)
+#define lbs_mesh_connected(priv) (priv->mesh_connect_status == LBS_CONNECTED)
 
 
 #endif
