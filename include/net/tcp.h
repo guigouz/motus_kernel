@@ -880,13 +880,6 @@ static inline void tcp_check_probe_timer(struct sock *sk)
 					  icsk->icsk_rto, TCP_RTO_MAX);
 }
 
-static inline void tcp_push_pending_frames(struct sock *sk)
-{
-	struct tcp_sock *tp = tcp_sk(sk);
-
-	__tcp_push_pending_frames(sk, tcp_current_mss(sk), tp->nonagle);
-}
-
 static inline void tcp_init_wl(struct tcp_sock *tp, u32 seq)
 {
 	tp->snd_wl1 = seq;
@@ -996,7 +989,8 @@ static inline void tcp_sack_reset(struct tcp_options_received *rx_opt)
 /* Determine a window scaling and initial window to offer. */
 extern void tcp_select_initial_window(int __space, __u32 mss,
 				      __u32 *rcv_wnd, __u32 *window_clamp,
-				      int wscale_ok, __u8 *rcv_wscale);
+				      int wscale_ok, __u8 *rcv_wscale,
+				      __u32 init_rcv_wnd);
 
 static inline int tcp_win_from_space(int space)
 {
@@ -1365,6 +1359,15 @@ static inline void tcp_unlink_write_queue(struct sk_buff *skb, struct sock *sk)
 static inline int tcp_write_queue_empty(struct sock *sk)
 {
 	return skb_queue_empty(&sk->sk_write_queue);
+}
+
+static inline void tcp_push_pending_frames(struct sock *sk)
+{
+	if (tcp_send_head(sk)) {
+		struct tcp_sock *tp = tcp_sk(sk);
+
+		__tcp_push_pending_frames(sk, tcp_current_mss(sk), tp->nonagle);
+	}
 }
 
 /* Start sequence of the highest skb with SACKed bit, valid only if
