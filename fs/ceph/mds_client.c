@@ -337,10 +337,12 @@ static struct ceph_mds_session *register_session(struct ceph_mds_client *mdsc,
 	s->s_renew_seq = 0;
 	INIT_LIST_HEAD(&s->s_caps);
 	s->s_nr_caps = 0;
+	s->s_trim_caps = 0;
 	atomic_set(&s->s_ref, 1);
 	INIT_LIST_HEAD(&s->s_waiting);
 	INIT_LIST_HEAD(&s->s_unsafe);
 	s->s_num_cap_releases = 0;
+	s->s_iterating_caps = false;
 	INIT_LIST_HEAD(&s->s_cap_releases);
 	INIT_LIST_HEAD(&s->s_cap_releases_done);
 	INIT_LIST_HEAD(&s->s_cap_flushing);
@@ -699,6 +701,7 @@ static int iterate_session_caps(struct ceph_mds_session *session,
 
 	dout("iterate_session_caps %p mds%d\n", session, session->s_mds);
 	spin_lock(&session->s_cap_lock);
+	session->s_iterating_caps = true;
 	list_for_each_entry_safe(cap, ncap, &session->s_caps, session_caps) {
 		inode = igrab(&cap->ci->vfs_inode);
 		if (!inode)
@@ -706,13 +709,15 @@ static int iterate_session_caps(struct ceph_mds_session *session,
 		spin_unlock(&session->s_cap_lock);
 		ret = cb(inode, cap, arg);
 		iput(inode);
-		if (ret < 0)
-			return ret;
 		spin_lock(&session->s_cap_lock);
+		if (ret < 0)
+			goto out;
 	}
+	ret = 0;
+out:
+	session->s_iterating_caps = false;
 	spin_unlock(&session->s_cap_lock);
-
-	return 0;
+	return ret;
 }
 
 static int remove_session_caps_cb(struct inode *inode, struct ceph_cap *cap,
@@ -935,6 +940,7 @@ static int trim_caps(struct ceph_mds_client *mdsc,
 		dout("trim_caps mds%d done: %d / %d, trimmed %d\n",
 		     session->s_mds, session->s_nr_caps, max_caps,
 			trim_caps - session->s_trim_caps);
+		session->s_trim_caps = 0;
 	}
 	return 0;
 }
@@ -1333,6 +1339,8 @@ static struct ceph_msg *create_request_message(struct ceph_mds_client *mdsc,
 	if (IS_ERR(msg))
 		goto out_free2;
 
+	msg->hdr.tid = cpu_to_le64(req->r_tid);
+
 	head = msg->front.iov_base;
 	p = msg->front.iov_base + sizeof(*head);
 	end = msg->front.iov_base + msg->front.iov_len;
@@ -1425,7 +1433,6 @@ static int __prepare_send_request(struct ceph_mds_client *mdsc,
 	req->r_request = msg;
 
 	rhead = msg->front.iov_base;
-	rhead->tid = cpu_to_le64(req->r_tid);
 	rhead->oldest_client_tid = cpu_to_le64(__get_oldest_tid(mdsc));
 	if (req->r_got_unsafe)
 		flags |= CEPH_MDS_FLAG_REPLAY;
@@ -1658,7 +1665,7 @@ static void handle_reply(struct ceph_mds_session *session, struct ceph_msg *msg)
 	}
 
 	/* get request, session */
-	tid = le64_to_cpu(head->tid);
+	tid = le64_to_cpu(msg->hdr.tid);
 	mutex_lock(&mdsc->mutex);
 	req = __lookup_request(mdsc, tid);
 	if (!req) {
