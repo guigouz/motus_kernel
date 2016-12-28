@@ -227,31 +227,48 @@ struct mesh_preq_queue {
 	u8 flags;
 };
 
-enum ieee80211_mgd_state {
-	IEEE80211_MGD_STATE_IDLE,
-	IEEE80211_MGD_STATE_PROBE,
-	IEEE80211_MGD_STATE_AUTH,
-	IEEE80211_MGD_STATE_ASSOC,
+enum ieee80211_work_type {
+	IEEE80211_WORK_AUTH_PROBE,
+	IEEE80211_WORK_AUTH,
+	IEEE80211_WORK_ASSOC,
 };
 
-struct ieee80211_mgd_work {
+struct ieee80211_work {
 	struct list_head list;
-	struct ieee80211_bss *bss;
-	int ie_len;
-	u8 prev_bssid[ETH_ALEN];
-	u8 ssid[IEEE80211_MAX_SSID_LEN];
-	u8 ssid_len;
+
+	struct ieee80211_channel *chan;
+	/* XXX: chan type? -- right now not really needed */
 	unsigned long timeout;
-	enum ieee80211_mgd_state state;
-	u16 auth_alg, auth_transaction;
+	enum ieee80211_work_type type;
 
-	int tries;
+	union {
+		struct {
+			int tries;
+			u16 algorithm, transaction;
+			u8 ssid[IEEE80211_MAX_SSID_LEN];
+			u8 ssid_len;
+			u8 bssid[ETH_ALEN];
+			u8 key[WLAN_KEY_LEN_WEP104];
+			u8 key_len, key_idx;
+			bool privacy;
+		} auth;
+		struct {
+			struct ieee80211_bss *bss;
+			const u8 *supp_rates;
+			const u8 *ht_information_ie;
+			int tries;
+			u16 capability;
+			u8 bssid[ETH_ALEN], prev_bssid[ETH_ALEN];
+			u8 ssid[IEEE80211_MAX_SSID_LEN];
+			u8 ssid_len;
+			u8 supp_rates_len;
+			bool wmm_used;
+		} assoc;
+	};
 
-	u8 key[WLAN_KEY_LEN_WEP104];
-	u8 key_len, key_idx;
-
+	int ie_len;
 	/* must be last */
-	u8 ie[0]; /* for auth or assoc frame, not probe */
+	u8 ie[0];
 };
 
 /* flags used in struct ieee80211_if_managed.flags */
@@ -286,7 +303,6 @@ struct ieee80211_if_managed {
 
 	struct mutex mtx;
 	struct ieee80211_bss *associated;
-	struct ieee80211_mgd_work *old_associate_work;
 	struct list_head work_list;
 
 	u8 bssid[ETH_ALEN];
@@ -960,6 +976,11 @@ void ieee80211_if_remove(struct ieee80211_sub_if_data *sdata);
 void ieee80211_remove_interfaces(struct ieee80211_local *local);
 u32 __ieee80211_recalc_idle(struct ieee80211_local *local);
 void ieee80211_recalc_idle(struct ieee80211_local *local);
+
+static inline bool ieee80211_sdata_running(struct ieee80211_sub_if_data *sdata)
+{
+	return netif_running(sdata->dev);
+}
 
 /* tx handling */
 void ieee80211_clear_tx_pending(struct ieee80211_local *local);

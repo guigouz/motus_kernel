@@ -67,7 +67,7 @@ static int ieee80211_change_mac(struct net_device *dev, void *addr)
 	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
 	int ret;
 
-	if (netif_running(dev))
+	if (ieee80211_sdata_running(sdata))
 		return -EBUSY;
 
 	ret = eth_mac_addr(dev, addr);
@@ -113,7 +113,7 @@ static int ieee80211_open(struct net_device *dev)
 	list_for_each_entry(nsdata, &local->interfaces, list) {
 		struct net_device *ndev = nsdata->dev;
 
-		if (ndev != dev && netif_running(ndev)) {
+		if (ndev != dev && ieee80211_sdata_running(nsdata)) {
 			/*
 			 * Allow only a single IBSS interface to be up at any
 			 * time. This is restricted because beacon distribution
@@ -199,7 +199,7 @@ static int ieee80211_open(struct net_device *dev)
 		struct net_device *ndev = nsdata->dev;
 
 		/*
-		 * No need to check netif_running since we do not allow
+		 * No need to check running since we do not allow
 		 * it to start up with this invalid address.
 		 */
 		if (compare_ether_addr(null_addr, ndev->dev_addr) == 0) {
@@ -792,7 +792,7 @@ int ieee80211_if_change_type(struct ieee80211_sub_if_data *sdata,
 	 * and goes into the requested mode.
 	 */
 
-	if (netif_running(sdata->dev))
+	if (ieee80211_sdata_running(sdata))
 		return -EBUSY;
 
 	/* Purge and reset type-dependent state. */
@@ -953,6 +953,8 @@ static u32 ieee80211_idle_on(struct ieee80211_local *local)
 	       wiphy_name(local->hw.wiphy));
 #endif
 
+	drv_flush(local, false);
+
 	local->hw.conf.flags |= IEEE80211_CONF_IDLE;
 	return IEEE80211_CONF_CHANGE_IDLE;
 }
@@ -966,7 +968,7 @@ u32 __ieee80211_recalc_idle(struct ieee80211_local *local)
 		return ieee80211_idle_off(local, "scanning");
 
 	list_for_each_entry(sdata, &local->interfaces, list) {
-		if (!netif_running(sdata->dev))
+		if (!ieee80211_sdata_running(sdata))
 			continue;
 		/* do not count disabled managed interfaces */
 		if (sdata->vif.type == NL80211_IFTYPE_STATION &&
