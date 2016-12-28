@@ -85,8 +85,8 @@ static void rose_loopback_timer(unsigned long param)
 			kfree_skb(skb);
 			continue;
 		}
-		dest      = (rose_address *)(skb->data + ROSE_CALL_REQ_DEST_ADDR_OFF);
-		lci_o     = 0xFFF - lci_i;
+		dest      = (rose_address *)(skb->data + 4);
+		lci_o     = ROSE_DEFAULT_MAXVC + 1 - lci_i;
 
 		skb_reset_transport_header(skb);
 
