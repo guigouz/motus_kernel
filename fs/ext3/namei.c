@@ -1708,7 +1708,7 @@ static int ext3_create (struct inode * dir, struct dentry * dentry, int mode,
 retry:
 	handle = ext3_journal_start(dir, EXT3_DATA_TRANS_BLOCKS(dir->i_sb) +
 					EXT3_INDEX_EXTRA_TRANS_BLOCKS + 3 +
-					2*EXT3_QUOTA_INIT_BLOCKS(dir->i_sb));
+					EXT3_MAXQUOTAS_INIT_BLOCKS(dir->i_sb));
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
@@ -1742,7 +1742,7 @@ static int ext3_mknod (struct inode * dir, struct dentry *dentry,
 retry:
 	handle = ext3_journal_start(dir, EXT3_DATA_TRANS_BLOCKS(dir->i_sb) +
 					EXT3_INDEX_EXTRA_TRANS_BLOCKS + 3 +
-					2*EXT3_QUOTA_INIT_BLOCKS(dir->i_sb));
+					EXT3_MAXQUOTAS_INIT_BLOCKS(dir->i_sb));
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
@@ -1778,7 +1778,7 @@ static int ext3_mkdir(struct inode * dir, struct dentry * dentry, int mode)
 retry:
 	handle = ext3_journal_start(dir, EXT3_DATA_TRANS_BLOCKS(dir->i_sb) +
 					EXT3_INDEX_EXTRA_TRANS_BLOCKS + 3 +
-					2*EXT3_QUOTA_INIT_BLOCKS(dir->i_sb));
+					EXT3_MAXQUOTAS_INIT_BLOCKS(dir->i_sb));
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
@@ -2184,7 +2184,7 @@ static int ext3_symlink (struct inode * dir,
 retry:
 	handle = ext3_journal_start(dir, EXT3_DATA_TRANS_BLOCKS(dir->i_sb) +
 					EXT3_INDEX_EXTRA_TRANS_BLOCKS + 5 +
-					2*EXT3_QUOTA_INIT_BLOCKS(dir->i_sb));
+					EXT3_MAXQUOTAS_INIT_BLOCKS(dir->i_sb));
 	if (IS_ERR(handle))
 		return PTR_ERR(handle);
 
