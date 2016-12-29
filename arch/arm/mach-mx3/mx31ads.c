@@ -173,6 +173,7 @@ static void expio_unmask_irq(u32 irq)
 }
 
 static struct irq_chip expio_irq_chip = {
+	.name = "EXPIO(CPLD)",
 	.ack = expio_ack_irq,
 	.mask = expio_mask_irq,
 	.unmask = expio_unmask_irq,
@@ -302,17 +303,14 @@ static struct regulator_init_data ldo1_data = {
 		.min_uV = 2800000,
 		.max_uV = 2800000,
 		.valid_modes_mask = REGULATOR_MODE_NORMAL,
+		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.apply_uV = 1,
 	},
 };
 
 static struct regulator_consumer_supply ldo2_consumers[] = {
-	{
-		.supply = "AVDD",
-	},
-	{
-		.supply = "HPVDD",
-	},
+	{ .supply = "AVDD", .dev_name = "1-001a" },
+	{ .supply = "HPVDD", .dev_name = "1-001a" },
 };
 
 /* CODEC and SIM */
@@ -322,6 +320,7 @@ static struct regulator_init_data ldo2_data = {
 		.min_uV = 3300000,
 		.max_uV = 3300000,
 		.valid_modes_mask = REGULATOR_MODE_NORMAL,
+		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 		.apply_uV = 1,
 	},
 	.num_consumer_supplies = ARRAY_SIZE(ldo2_consumers),
@@ -382,8 +381,6 @@ static struct wm8350_audio_platform_data imx32ads_wm8350_setup = {
 
 static int mx31_wm8350_init(struct wm8350 *wm8350)
 {
-	int i;
-
 	wm8350_gpio_config(wm8350, 0, WM8350_GPIO_DIR_IN,
 			   WM8350_GPIO0_PWR_ON_IN, WM8350_GPIO_ACTIVE_LOW,
 			   WM8350_GPIO_PULL_UP, WM8350_GPIO_INVERT_OFF,
@@ -418,10 +415,6 @@ static int mx31_wm8350_init(struct wm8350 *wm8350)
 			   WM8350_GPIO9_BATT_FAULT_OUT, WM8350_GPIO_ACTIVE_LOW,
 			   WM8350_GPIO_PULL_NONE, WM8350_GPIO_INVERT_OFF,
 			   WM8350_GPIO_DEBOUNCE_OFF);
-
-	/* Fix up for our own supplies. */
-	for (i = 0; i < ARRAY_SIZE(ldo2_consumers); i++)
-		ldo2_consumers[i].dev = wm8350->dev;
 
 	wm8350_register_regulator(wm8350, WM8350_DCDC_1, &sw1a_data);
 	wm8350_register_regulator(wm8350, WM8350_DCDC_3, &viohi_data);
@@ -459,6 +452,7 @@ static int mx31_wm8350_init(struct wm8350 *wm8350)
 
 static struct wm8350_platform_data __initdata mx31_wm8350_pdata = {
 	.init = mx31_wm8350_init,
+	.irq_base = MXC_BOARD_IRQ_START + MXC_MAX_EXP_IO_LINES,
 };
 #endif
 
