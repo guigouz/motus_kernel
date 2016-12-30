@@ -212,59 +212,32 @@ static unsigned int tomoyo_allocated_memory_for_elements;
 static unsigned int tomoyo_quota_for_elements;
 
 /**
- * tomoyo_alloc_element - Allocate permanent memory for structures.
+ * tomoyo_memory_ok - Check memory quota.
  *
- * @size: Size in bytes.
+ * @ptr: Pointer to allocated memory.
  *
- * Returns pointer to allocated memory on success, NULL otherwise.
+ * Returns true on success, false otherwise.
  *
- * Memory has to be zeroed.
- * The RAM is chunked, so NEVER try to kfree() the returned pointer.
+ * Caller holds tomoyo_policy_lock.
+ * Memory pointed by @ptr will be zeroed on success.
  */
-void *tomoyo_alloc_element(const unsigned int size)
+bool tomoyo_memory_ok(void *ptr)
 {
-	static char *buf;
-	static DEFINE_MUTEX(lock);
-	static unsigned int buf_used_len = PATH_MAX;
-	char *ptr = NULL;
-	/*Assumes sizeof(void *) >= sizeof(long) is true. */
-	const unsigned int word_aligned_size
-		= roundup(size, max(sizeof(void *), sizeof(long)));
-	if (word_aligned_size > PATH_MAX)
-		return NULL;
-	/***** EXCLUSIVE SECTION START *****/
-	mutex_lock(&lock);
-	if (buf_used_len + word_aligned_size > PATH_MAX) {
-		if (!tomoyo_quota_for_elements ||
-		    tomoyo_allocated_memory_for_elements
-		    + PATH_MAX <= tomoyo_quota_for_elements)
-			ptr = kzalloc(PATH_MAX, GFP_KERNEL);
-		if (!ptr) {
-			printk(KERN_WARNING "ERROR: Out of memory "
-			       "for tomoyo_alloc_element().\n");
-			if (!tomoyo_policy_loaded)
-				panic("MAC Initialization failed.\n");
-		} else {
-			buf = ptr;
-			tomoyo_allocated_memory_for_elements += PATH_MAX;
-			buf_used_len = word_aligned_size;
-			ptr = buf;
-		}
-	} else if (word_aligned_size) {
-		int i;
-		ptr = buf + buf_used_len;
-		buf_used_len += word_aligned_size;
-		for (i = 0; i < word_aligned_size; i++) {
-			if (!ptr[i])
-				continue;
-			printk(KERN_ERR "WARNING: Reserved memory was tainted! "
-			       "The system might go wrong.\n");
-			ptr[i] = '\0';
-		}
+	int allocated_len = ptr ? ksize(ptr) : 0;
+	bool result = false;
+	if (!ptr || (tomoyo_quota_for_elements &&
+		     tomoyo_allocated_memory_for_elements
+		     + allocated_len > tomoyo_quota_for_elements)) {
+		printk(KERN_WARNING "ERROR: Out of memory "
+		       "for tomoyo_alloc_element().\n");
+		if (!tomoyo_policy_loaded)
+			panic("MAC Initialization failed.\n");
+	} else {
+		result = true;
+		tomoyo_allocated_memory_for_elements += allocated_len;
+		memset(ptr, 0, allocated_len);
 	}
-	mutex_unlock(&lock);
-	/***** EXCLUSIVE SECTION END *****/
-	return ptr;
+	return result;
 }
 
 /* Memory allocated for string data in bytes. */
@@ -280,24 +253,26 @@ static unsigned int tomoyo_quota_for_savename;
 #define TOMOYO_HASH_BITS  8
 #define TOMOYO_MAX_HASH (1u<<TOMOYO_HASH_BITS)
 
-/* Structure for string data. */
+/*
+ * tomoyo_name_entry is a structure which is used for linking
+ * "struct tomoyo_path_info" into tomoyo_name_list .
+ *
+ * Since tomoyo_name_list manages a list of strings which are shared by
+ * multiple processes (whereas "struct tomoyo_path_info" inside
+ * "struct tomoyo_path_info_with_data" is not shared), a reference counter will
+ * be added to "struct tomoyo_name_entry" rather than "struct tomoyo_path_info"
+ * when TOMOYO starts supporting garbage collector.
+ */
 struct tomoyo_name_entry {
 	struct list_head list;
 	struct tomoyo_path_info entry;
 };
 
-/* Structure for available memory region. */
-struct tomoyo_free_memory_block_list {
-	struct list_head list;
-	char *ptr;             /* Pointer to a free area. */
-	int len;               /* Length of the area.     */
-};
-
 /*
- * The list for "struct tomoyo_name_entry".
- *
- * This list is updated only inside tomoyo_save_name(), thus
- * no global mutex exists.
+ * tomoyo_name_list is used for holding string data used by TOMOYO.
+ * Since same string data is likely used for multiple times (e.g.
+ * "/lib/libc-2.5.so"), TOMOYO shares string data in the form of
+ * "const struct tomoyo_path_info *".
  */
 static struct list_head tomoyo_name_list[TOMOYO_MAX_HASH];
 
@@ -307,52 +282,32 @@ static struct list_head tomoyo_name_list[TOMOYO_MAX_HASH];
  * @name: The string to store into the permernent memory.
  *
  * Returns pointer to "struct tomoyo_path_info" on success, NULL otherwise.
- *
- * The RAM is shared, so NEVER try to modify or kfree() the returned name.
  */
 const struct tomoyo_path_info *tomoyo_save_name(const char *name)
 {
-	static LIST_HEAD(fmb_list);
 	static DEFINE_MUTEX(lock);
 	struct tomoyo_name_entry *ptr;
 	unsigned int hash;
-	/* fmb contains available size in bytes.
-	   fmb is removed from the fmb_list when fmb->len becomes 0. */
-	struct tomoyo_free_memory_block_list *fmb;
 	int len;
-	char *cp;
+	int allocated_len;
 	struct list_head *head;
 
 	if (!name)
 		return NULL;
 	len = strlen(name) + 1;
-	if (len > TOMOYO_MAX_PATHNAME_LEN) {
-		printk(KERN_WARNING "ERROR: Name too long "
-		       "for tomoyo_save_name().\n");
-		return NULL;
-	}
 	hash = full_name_hash((const unsigned char *) name, len - 1);
 	head = &tomoyo_name_list[hash_long(hash, TOMOYO_HASH_BITS)];
-
 	mutex_lock(&lock);
 	list_for_each_entry(ptr, head, list) {
 		if (hash == ptr->entry.hash && !strcmp(name, ptr->entry.name))
 			goto out;
 	}
-	list_for_each_entry(fmb, &fmb_list, list) {
-		if (len <= fmb->len)
-			goto ready;
-	}
-	if (!tomoyo_quota_for_savename ||
-	    tomoyo_allocated_memory_for_savename + PATH_MAX
-	    <= tomoyo_quota_for_savename)
-		cp = kzalloc(PATH_MAX, GFP_KERNEL);
-	else
-		cp = NULL;
-	fmb = kzalloc(sizeof(*fmb), GFP_KERNEL);
-	if (!cp || !fmb) {
-		kfree(cp);
-		kfree(fmb);
+	ptr = kzalloc(sizeof(*ptr) + len, GFP_KERNEL);
+	allocated_len = ptr ? ksize(ptr) : 0;
+	if (!ptr || (tomoyo_quota_for_savename &&
+		     tomoyo_allocated_memory_for_savename + allocated_len
+		     > tomoyo_quota_for_savename)) {
+		kfree(ptr);
 		printk(KERN_WARNING "ERROR: Out of memory "
 		       "for tomoyo_save_name().\n");
 		if (!tomoyo_policy_loaded)
@@ -360,27 +315,13 @@ const struct tomoyo_path_info *tomoyo_save_name(const char *name)
 		ptr = NULL;
 		goto out;
 	}
-	tomoyo_allocated_memory_for_savename += PATH_MAX;
-	list_add(&fmb->list, &fmb_list);
-	fmb->ptr = cp;
-	fmb->len = PATH_MAX;
- ready:
-	ptr = tomoyo_alloc_element(sizeof(*ptr));
-	if (!ptr)
-		goto out;
-	ptr->entry.name = fmb->ptr;
-	memmove(fmb->ptr, name, len);
+	tomoyo_allocated_memory_for_savename += allocated_len;
+	ptr->entry.name = ((char *) ptr) + sizeof(*ptr);
+	memmove((char *) ptr->entry.name, name, len);
 	tomoyo_fill_path_info(&ptr->entry);
-	fmb->ptr += len;
-	fmb->len -= len;
 	list_add_tail(&ptr->list, head);
-	if (fmb->len == 0) {
-		list_del(&fmb->list);
-		kfree(fmb);
-	}
  out:
 	mutex_unlock(&lock);
-	/***** EXCLUSIVE SECTION END *****/
 	return ptr ? &ptr->entry : NULL;
 }
 
