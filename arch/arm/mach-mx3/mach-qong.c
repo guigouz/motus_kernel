@@ -198,9 +198,7 @@ static struct platform_device qong_nand_device = {
 static void __init qong_init_nand_mtd(void)
 {
 	/* init CS */
-	__raw_writel(0x00004f00, CSCR_U(3));
-	__raw_writel(0x20013b31, CSCR_L(3));
-	__raw_writel(0x00020800, CSCR_A(3));
+	mx31_setup_weimcs(3, 0x00004f00, 0x20013b31, 0x00020800);
 	mxc_iomux_set_gpr(MUX_SDCTL_CSD1_SEL, true);
 
 	/* enable pin */
@@ -276,7 +274,7 @@ static struct sys_timer qong_timer = {
 MACHINE_START(QONG, "Dave/DENX QongEVB-LITE")
 	/* Maintainer: DENX Software Engineering GmbH */
 	.phys_io        = MX31_AIPS1_BASE_ADDR,
-	.io_pg_offst    = ((MX31_AIPS1_BASE_ADDR_VIRT) >> 18) & 0xfffc,
+	.io_pg_offst    = (MX31_AIPS1_BASE_ADDR_VIRT >> 18) & 0xfffc,
 	.boot_params    = PHYS_OFFSET + 0x100,
 	.map_io         = mx31_map_io,
 	.init_irq       = mx31_init_irq,
