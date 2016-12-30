@@ -307,8 +307,6 @@ typedef struct drm_i915_private {
 	u32 saveDSPACNTR;
 	u32 saveDSPBCNTR;
 	u32 saveDSPARB;
-	u32 saveRENDERSTANDBY;
-	u32 savePWRCTXA;
 	u32 saveHWS;
 	u32 savePIPEACONF;
 	u32 savePIPEBCONF;
@@ -803,6 +801,8 @@ int i915_gem_sw_finish_ioctl(struct drm_device *dev, void *data,
 			     struct drm_file *file_priv);
 int i915_gem_execbuffer(struct drm_device *dev, void *data,
 			struct drm_file *file_priv);
+int i915_gem_execbuffer2(struct drm_device *dev, void *data,
+			 struct drm_file *file_priv);
 int i915_gem_pin_ioctl(struct drm_device *dev, void *data,
 		       struct drm_file *file_priv);
 int i915_gem_unpin_ioctl(struct drm_device *dev, void *data,
@@ -869,6 +869,9 @@ void i915_gem_shrinker_exit(void);
 void i915_gem_detect_bit_6_swizzle(struct drm_device *dev);
 void i915_gem_object_do_bit_17_swizzle(struct drm_gem_object *obj);
 void i915_gem_object_save_bit_17_swizzle(struct drm_gem_object *obj);
+bool i915_tiling_ok(struct drm_device *dev, int stride, int size,
+		    int tiling_mode);
+bool i915_obj_fenceable(struct drm_device *dev, struct drm_gem_object *obj);
 
 /* i915_gem_debug.c */
 void i915_gem_dump_object(struct drm_gem_object *obj, int len,
