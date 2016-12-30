@@ -560,8 +560,12 @@ reiserfs_xattr_set_handle(struct reiserfs_transaction_handle *th,
 			.ia_size = new_size,
 			.ia_valid = ATTR_SIZE | ATTR_CTIME,
 		};
+
+		reiserfs_write_unlock(inode->i_sb);
 		mutex_lock_nested(&dentry->d_inode->i_mutex, I_MUTEX_XATTR);
 		down_write(&dentry->d_inode->i_alloc_sem);
+		reiserfs_write_lock(inode->i_sb);
+
 		err = reiserfs_setattr(dentry, &newattrs);
 		up_write(&dentry->d_inode->i_alloc_sem);
 		mutex_unlock(&dentry->d_inode->i_mutex);
