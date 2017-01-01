@@ -73,7 +73,6 @@ static const u16 e1000_igp_2_cable_length_table[] =
 #define I82577_CFG_ASSERT_CRS_ON_TX       (1 << 15)
 #define I82577_CFG_ENABLE_DOWNSHIFT       (3 << 10) /* auto downshift 100/10 */
 #define I82577_CTRL_REG                   23
-#define I82577_CTRL_DOWNSHIFT_MASK        (7 << 10)
 
 /* 82577 specific PHY registers */
 #define I82577_PHY_CTRL_2            18
@@ -153,32 +152,9 @@ s32 e1000e_get_phy_id(struct e1000_hw *hw)
 		if (phy->id != 0 && phy->id != PHY_REVISION_MASK)
 			goto out;
 
-		/*
-		 * If the PHY ID is still unknown, we may have an 82577
-		 * without link.  We will try again after setting Slow MDIC
-		 * mode. No harm in trying again in this case since the PHY
-		 * ID is unknown at this point anyway.
-		 */
-		ret_val = phy->ops.acquire(hw);
-		if (ret_val)
-			goto out;
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, true);
-		if (ret_val)
-			goto out;
-		phy->ops.release(hw);
-
 		retry_count++;
 	}
 out:
-	/* Revert to MDIO fast mode, if applicable */
-	if (retry_count) {
-		ret_val = phy->ops.acquire(hw);
-		if (ret_val)
-			return ret_val;
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, false);
-		phy->ops.release(hw);
-	}
-
 	return ret_val;
 }
 
@@ -662,15 +638,6 @@ s32 e1000_copper_link_setup_82577(struct e1000_hw *hw)
 	phy_data |= I82577_CFG_ENABLE_DOWNSHIFT;
 
 	ret_val = phy->ops.write_reg(hw, I82577_CFG_REG, phy_data);
-	if (ret_val)
-		goto out;
-
-	/* Set number of link attempts before downshift */
-	ret_val = phy->ops.read_reg(hw, I82577_CTRL_REG, &phy_data);
-	if (ret_val)
-		goto out;
-	phy_data &= ~I82577_CTRL_DOWNSHIFT_MASK;
-	ret_val = phy->ops.write_reg(hw, I82577_CTRL_REG, phy_data);
 
 out:
 	return ret_val;
@@ -2801,38 +2768,6 @@ static s32 e1000_set_d0_lplu_state(struct e1000_hw *hw, bool active)
 }
 
 /**
- *  e1000_set_mdio_slow_mode_hv - Set slow MDIO access mode
- *  @hw:   pointer to the HW structure
- *  @slow: true for slow mode, false for normal mode
- *
- *  Assumes semaphore already acquired.
- **/
-s32 e1000_set_mdio_slow_mode_hv(struct e1000_hw *hw, bool slow)
-{
-	s32 ret_val = 0;
-	u16 data = 0;
-
-	/* Set MDIO mode - page 769, register 16: 0x2580==slow, 0x2180==fast */
-	hw->phy.addr = 1;
-	ret_val = e1000e_write_phy_reg_mdic(hw, IGP01E1000_PHY_PAGE_SELECT,
-				         (BM_PORT_CTRL_PAGE << IGP_PAGE_SHIFT));
-	if (ret_val)
-		goto out;
-
-	ret_val = e1000e_write_phy_reg_mdic(hw, BM_CS_CTRL1,
-	                                   (0x2180 | (slow << 10)));
-	if (ret_val)
-		goto out;
-
-	/* dummy read when reverting to fast mode - throw away result */
-	if (!slow)
-		ret_val = e1000e_read_phy_reg_mdic(hw, BM_CS_CTRL1, &data);
-
-out:
-	return ret_val;
-}
-
-/**
  *  __e1000_read_phy_reg_hv -  Read HV PHY register
  *  @hw: pointer to the HW structure
  *  @offset: register offset to be read
@@ -2849,22 +2784,11 @@ static s32 __e1000_read_phy_reg_hv(struct e1000_hw *hw, u32 offset, u16 *data,
 	s32 ret_val;
 	u16 page = BM_PHY_REG_PAGE(offset);
 	u16 reg = BM_PHY_REG_NUM(offset);
-	bool in_slow_mode = false;
 
 	if (!locked) {
 		ret_val = hw->phy.ops.acquire(hw);
 		if (ret_val)
 			return ret_val;
-	}
-
-	/* Workaround failure in MDIO access while cable is disconnected */
-	if ((hw->phy.type == e1000_phy_82577) &&
-	    !(er32(STATUS) & E1000_STATUS_LU)) {
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, true);
-		if (ret_val)
-			goto out;
-
-		in_slow_mode = true;
 	}
 
 	/* Page 800 works differently than the rest so it has its own func */
@@ -2886,28 +2810,23 @@ static s32 __e1000_read_phy_reg_hv(struct e1000_hw *hw, u32 offset, u16 *data,
 		page = 0;
 
 	if (reg > MAX_PHY_MULTI_PAGE_REG) {
-		if ((hw->phy.type != e1000_phy_82578) ||
-		    ((reg != I82578_ADDR_REG) &&
-		     (reg != I82578_ADDR_REG + 1))) {
-			u32 phy_addr = hw->phy.addr;
+		u32 phy_addr = hw->phy.addr;
 
-			hw->phy.addr = 1;
+		hw->phy.addr = 1;
 
-			/* Page is shifted left, PHY expects (page x 32) */
-			ret_val = e1000e_write_phy_reg_mdic(hw,
-			                             IGP01E1000_PHY_PAGE_SELECT,
-			                             (page << IGP_PAGE_SHIFT));
-			hw->phy.addr = phy_addr;
-		}
+		/* Page is shifted left, PHY expects (page x 32) */
+		ret_val = e1000e_write_phy_reg_mdic(hw,
+					     IGP01E1000_PHY_PAGE_SELECT,
+					     (page << IGP_PAGE_SHIFT));
+		hw->phy.addr = phy_addr;
+
+		if (ret_val)
+			goto out;
 	}
 
 	ret_val = e1000e_read_phy_reg_mdic(hw, MAX_PHY_REG_ADDRESS & reg,
 	                                  data);
 out:
-	/* Revert to MDIO fast mode, if applicable */
-	if ((hw->phy.type == e1000_phy_82577) && in_slow_mode)
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, false);
-
 	if (!locked)
 		hw->phy.ops.release(hw);
 
@@ -2959,22 +2878,11 @@ static s32 __e1000_write_phy_reg_hv(struct e1000_hw *hw, u32 offset, u16 data,
 	s32 ret_val;
 	u16 page = BM_PHY_REG_PAGE(offset);
 	u16 reg = BM_PHY_REG_NUM(offset);
-	bool in_slow_mode = false;
 
 	if (!locked) {
 		ret_val = hw->phy.ops.acquire(hw);
 		if (ret_val)
 			return ret_val;
-	}
-
-	/* Workaround failure in MDIO access while cable is disconnected */
-	if ((hw->phy.type == e1000_phy_82577) &&
-	    !(er32(STATUS) & E1000_STATUS_LU)) {
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, true);
-		if (ret_val)
-			goto out;
-
-		in_slow_mode = true;
 	}
 
 	/* Page 800 works differently than the rest so it has its own func */
@@ -3012,29 +2920,24 @@ static s32 __e1000_write_phy_reg_hv(struct e1000_hw *hw, u32 offset, u16 data,
 	}
 
 	if (reg > MAX_PHY_MULTI_PAGE_REG) {
-		if ((hw->phy.type != e1000_phy_82578) ||
-		    ((reg != I82578_ADDR_REG) &&
-		     (reg != I82578_ADDR_REG + 1))) {
-			u32 phy_addr = hw->phy.addr;
+		u32 phy_addr = hw->phy.addr;
 
-			hw->phy.addr = 1;
+		hw->phy.addr = 1;
 
-			/* Page is shifted left, PHY expects (page x 32) */
-			ret_val = e1000e_write_phy_reg_mdic(hw,
-			                             IGP01E1000_PHY_PAGE_SELECT,
-			                             (page << IGP_PAGE_SHIFT));
-			hw->phy.addr = phy_addr;
-		}
+		/* Page is shifted left, PHY expects (page x 32) */
+		ret_val = e1000e_write_phy_reg_mdic(hw,
+					     IGP01E1000_PHY_PAGE_SELECT,
+					     (page << IGP_PAGE_SHIFT));
+		hw->phy.addr = phy_addr;
+
+		if (ret_val)
+			goto out;
 	}
 
 	ret_val = e1000e_write_phy_reg_mdic(hw, MAX_PHY_REG_ADDRESS & reg,
 	                                  data);
 
 out:
-	/* Revert to MDIO fast mode, if applicable */
-	if ((hw->phy.type == e1000_phy_82577) && in_slow_mode)
-		ret_val = e1000_set_mdio_slow_mode_hv(hw, false);
-
 	if (!locked)
 		hw->phy.ops.release(hw);
 
