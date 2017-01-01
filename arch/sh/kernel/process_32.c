@@ -25,14 +25,16 @@
 #include <linux/fs.h>
 #include <linux/ftrace.h>
 #include <linux/preempt.h>
-#include <linux/hw_breakpoint.h>
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
 #include <asm/system.h>
+#include <asm/ubc.h>
 #include <asm/fpu.h>
 #include <asm/syscalls.h>
 #include <asm/watchdog.h>
+
+int ubc_usercnt = 0;
 
 #ifdef CONFIG_32BIT
 static void watchdog_trigger_immediate(void)
@@ -132,7 +134,10 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 	regs.regs[5] = (unsigned long)fn;
 
 	regs.pc = (unsigned long)kernel_thread_helper;
-	regs.sr = (1 << 30);
+	regs.sr = SR_MD;
+#if defined(CONFIG_SH_FPU)
+	regs.sr |= SR_FD;
+#endif
 
 	/* Ok, create the new process.. */
 	pid = do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0,
@@ -140,6 +145,7 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 
 	return pid;
 }
+EXPORT_SYMBOL(kernel_thread);
 
 void start_thread(struct pt_regs *regs, unsigned long new_pc,
 		  unsigned long new_sp)
@@ -150,6 +156,8 @@ void start_thread(struct pt_regs *regs, unsigned long new_pc,
 	regs->sr = SR_FD;
 	regs->pc = new_pc;
 	regs->regs[15] = new_sp;
+
+	free_thread_xstate(current);
 }
 EXPORT_SYMBOL(start_thread);
 
@@ -158,15 +166,16 @@ EXPORT_SYMBOL(start_thread);
  */
 void exit_thread(void)
 {
+	if (current->thread.ubc_pc) {
+		current->thread.ubc_pc = 0;
+		ubc_usercnt -= 1;
+	}
 }
 
 void flush_thread(void)
 {
-	struct task_struct *tsk = current;
-
-	flush_ptrace_hw_breakpoint(tsk);
-
 #if defined(CONFIG_SH_FPU)
+	struct task_struct *tsk = current;
 	/* Forget lazy FPU state */
 	clear_fpu(tsk, task_pt_regs(tsk));
 	clear_used_math();
@@ -195,6 +204,16 @@ int dump_fpu(struct pt_regs *regs, elf_fpregset_t *fpu)
 
 	return fpvalid;
 }
+EXPORT_SYMBOL(dump_fpu);
+
+/*
+ * This gets called before we allocate a new thread and copy
+ * the current task into it.
+ */
+void prepare_to_copy(struct task_struct *tsk)
+{
+	unlazy_fpu(tsk, task_pt_regs(tsk));
+}
 
 asmlinkage void ret_from_fork(void);
 
@@ -204,12 +223,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 {
 	struct thread_info *ti = task_thread_info(p);
 	struct pt_regs *childregs;
+#if defined(CONFIG_SH_DSP)
 	struct task_struct *tsk = current;
-
-#if defined(CONFIG_SH_FPU)
-	unlazy_fpu(tsk, regs);
-	p->thread.fpu = tsk->thread.fpu;
-	copy_to_stopped_child_used_math(p);
 #endif
 
 #if defined(CONFIG_SH_DSP)
@@ -231,6 +246,8 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 	} else {
 		childregs->regs[15] = (unsigned long)childregs;
 		ti->addr_limit = KERNEL_DS;
+		ti->status &= ~TS_USEDFPU;
+		p->fpu_counter = 0;
 	}
 
 	if (clone_flags & CLONE_SETTLS)
@@ -241,9 +258,51 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 	p->thread.sp = (unsigned long) childregs;
 	p->thread.pc = (unsigned long) ret_from_fork;
 
-	memset(p->thread.ptrace_bps, 0, sizeof(p->thread.ptrace_bps));
+	p->thread.ubc_pc = 0;
 
 	return 0;
+}
+
+/* Tracing by user break controller.  */
+static void ubc_set_tracing(int asid, unsigned long pc)
+{
+#if defined(CONFIG_CPU_SH4A)
+	unsigned long val;
+
+	val = (UBC_CBR_ID_INST | UBC_CBR_RW_READ | UBC_CBR_CE);
+	val |= (UBC_CBR_AIE | UBC_CBR_AIV_SET(asid));
+
+	ctrl_outl(val, UBC_CBR0);
+	ctrl_outl(pc,  UBC_CAR0);
+	ctrl_outl(0x0, UBC_CAMR0);
+	ctrl_outl(0x0, UBC_CBCR);
+
+	val = (UBC_CRR_RES | UBC_CRR_PCB | UBC_CRR_BIE);
+	ctrl_outl(val, UBC_CRR0);
+
+	/* Read UBC register that we wrote last, for checking update */
+	val = ctrl_inl(UBC_CRR0);
+
+#else	/* CONFIG_CPU_SH4A */
+	ctrl_outl(pc, UBC_BARA);
+
+#ifdef CONFIG_MMU
+	ctrl_outb(asid, UBC_BASRA);
+#endif
+
+	ctrl_outl(0, UBC_BAMRA);
+
+	if (current_cpu_data.type == CPU_SH7729 ||
+	    current_cpu_data.type == CPU_SH7710 ||
+	    current_cpu_data.type == CPU_SH7712 ||
+	    current_cpu_data.type == CPU_SH7203){
+		ctrl_outw(BBR_INST | BBR_READ | BBR_CPU, UBC_BBRA);
+		ctrl_outl(BRCR_PCBA | BRCR_PCTE, UBC_BRCR);
+	} else {
+		ctrl_outw(BBR_INST | BBR_READ, UBC_BBRA);
+		ctrl_outw(BRCR_PCBA, UBC_BRCR);
+	}
+#endif	/* CONFIG_CPU_SH4A */
 }
 
 /*
@@ -253,9 +312,13 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 __notrace_funcgraph struct task_struct *
 __switch_to(struct task_struct *prev, struct task_struct *next)
 {
-#if defined(CONFIG_SH_FPU)
+	struct thread_struct *next_t = &next->thread;
+
 	unlazy_fpu(prev, task_pt_regs(prev));
-#endif
+
+	/* we're going to use this soon, after a few expensive things */
+	if (next->fpu_counter > 5)
+		prefetch(next_t->xstate);
 
 #ifdef CONFIG_MMU
 	/*
@@ -266,6 +329,33 @@ __switch_to(struct task_struct *prev, struct task_struct *next)
 		     : /* no output */
 		     : "r" (task_thread_info(next)));
 #endif
+
+	/* If no tasks are using the UBC, we're done */
+	if (ubc_usercnt == 0)
+		/* If no tasks are using the UBC, we're done */;
+	else if (next->thread.ubc_pc && next->mm) {
+		int asid = 0;
+#ifdef CONFIG_MMU
+		asid |= cpu_asid(smp_processor_id(), next->mm);
+#endif
+		ubc_set_tracing(asid, next->thread.ubc_pc);
+	} else {
+#if defined(CONFIG_CPU_SH4A)
+		ctrl_outl(UBC_CBR_INIT, UBC_CBR0);
+		ctrl_outl(UBC_CRR_INIT, UBC_CRR0);
+#else
+		ctrl_outw(0, UBC_BBRA);
+		ctrl_outw(0, UBC_BBRB);
+#endif
+	}
+
+	/*
+	 * If the task has used fpu the last 5 timeslices, just do a full
+	 * restore of the math state immediately to avoid the trap; the
+	 * chances of needing FPU soon are obviously high now
+	 */
+	if (next->fpu_counter > 5)
+		__fpu_state_restore();
 
 	return prev;
 }
@@ -357,4 +447,21 @@ unsigned long get_wchan(struct task_struct *p)
 #endif
 
 	return pc;
+}
+
+asmlinkage void break_point_trap(void)
+{
+	/* Clear tracing.  */
+#if defined(CONFIG_CPU_SH4A)
+	ctrl_outl(UBC_CBR_INIT, UBC_CBR0);
+	ctrl_outl(UBC_CRR_INIT, UBC_CRR0);
+#else
+	ctrl_outw(0, UBC_BBRA);
+	ctrl_outw(0, UBC_BBRB);
+	ctrl_outl(0, UBC_BRCR);
+#endif
+	current->thread.ubc_pc = 0;
+	ubc_usercnt -= 1;
+
+	force_sig(SIGTRAP, current);
 }
