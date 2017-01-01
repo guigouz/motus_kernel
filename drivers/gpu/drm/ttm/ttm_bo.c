@@ -428,7 +428,8 @@ moved:
 		    bdev->man[bo->mem.mem_type].gpu_offset;
 		bo->cur_placement = bo->mem.placement;
 		spin_unlock(&bo->lock);
-	}
+	} else
+		bo->offset = 0;
 
 	return 0;
 
@@ -1846,6 +1847,9 @@ static int ttm_bo_swapout(struct ttm_mem_shrink *shrink)
 	 * anyone tries to access a ttm page.
 	 */
 
+	if (bo->bdev->driver->swap_notify)
+		bo->bdev->driver->swap_notify(bo);
+
 	ret = ttm_tt_swapout(bo->ttm, bo->persistant_swap_storage);
 out:
 
@@ -1866,3 +1870,4 @@ void ttm_bo_swapout_all(struct ttm_bo_device *bdev)
 	while (ttm_bo_swapout(&bdev->glob->shrink) == 0)
 		;
 }
+EXPORT_SYMBOL(ttm_bo_swapout_all);
