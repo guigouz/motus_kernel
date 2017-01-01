@@ -1680,7 +1680,7 @@ static int idetape_mtioctop(ide_drive_t *drive, short mt_op, int mt_count)
  * supported here, and not in the corresponding block interface. Our own
  * ide-tape ioctls are supported on both interfaces.
  */
-static int idetape_chrdev_ioctl(struct inode *inode, struct file *file,
+static long do_idetape_chrdev_ioctl(struct file *file,
 				unsigned int cmd, unsigned long arg)
 {
 	struct ide_tape_obj *tape = file->private_data;
@@ -1733,6 +1733,16 @@ static int idetape_chrdev_ioctl(struct inode *inode, struct file *file,
 			ide_tape_discard_merge_buffer(drive, 1);
 		return idetape_blkdev_ioctl(drive, cmd, arg);
 	}
+}
+
+static long idetape_chrdev_ioctl(struct file *file,
+				unsigned int cmd, unsigned long arg)
+{
+	long ret;
+	lock_kernel();
+	ret = do_idetape_chrdev_ioctl(file, cmd, arg);
+	unlock_kernel();
+	return ret;
 }
 
 /*
@@ -2208,7 +2218,7 @@ static const struct file_operations idetape_fops = {
 	.owner		= THIS_MODULE,
 	.read		= idetape_chrdev_read,
 	.write		= idetape_chrdev_write,
-	.ioctl		= idetape_chrdev_ioctl,
+	.unlocked_ioctl	= idetape_chrdev_ioctl,
 	.open		= idetape_chrdev_open,
 	.release	= idetape_chrdev_release,
 };
