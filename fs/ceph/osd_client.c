@@ -538,6 +538,8 @@ static int __map_osds(struct ceph_osd_client *osdc,
 	if (err)
 		return err;
 	pgid = reqhead->layout.ol_pgid;
+	req->r_pgid = pgid;
+
 	o = ceph_calc_pg_primary(osdc->osdmap, pgid);
 
 	if ((req->r_osd && req->r_osd->o_osd == o &&
@@ -821,9 +823,10 @@ static void kick_requests(struct ceph_osd_client *osdc,
 
 			n = rb_next(p);
 			if (!ceph_osd_is_up(osdc->osdmap, osd->o_osd) ||
-			    !ceph_entity_addr_equal(&osd->o_con.peer_addr,
-					    ceph_osd_addr(osdc->osdmap,
-							  osd->o_osd)))
+			    memcmp(&osd->o_con.peer_addr,
+				   ceph_osd_addr(osdc->osdmap,
+						 osd->o_osd),
+				   sizeof(struct ceph_entity_addr)) != 0)
 				reset_osd(osdc, osd);
 		}
 	}

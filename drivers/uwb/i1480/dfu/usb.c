@@ -413,6 +413,10 @@ error:
 	return result;
 }
 
+MODULE_FIRMWARE("i1480-pre-phy-0.0.bin");
+MODULE_FIRMWARE("i1480-usb-0.0.bin");
+MODULE_FIRMWARE("i1480-phy-0.0.bin");
+
 #define i1480_USB_DEV(v, p)				\
 {							\
 	.match_flags = USB_DEVICE_ID_MATCH_DEVICE	\
@@ -430,7 +434,7 @@ error:
 
 
 /** USB device ID's that we handle */
-static struct usb_device_id i1480_usb_id_table[] = {
+static const struct usb_device_id i1480_usb_id_table[] = {
 	i1480_USB_DEV(0x8086, 0xdf3b),
 	i1480_USB_DEV(0x15a9, 0x0005),
 	i1480_USB_DEV(0x07d1, 0x3802),
