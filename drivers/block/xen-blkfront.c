@@ -1052,7 +1052,7 @@ static const struct block_device_operations xlvbd_block_fops =
 };
 
 
-static struct xenbus_device_id blkfront_ids[] = {
+static const struct xenbus_device_id blkfront_ids[] = {
 	{ "vbd" },
 	{ "" }
 };
