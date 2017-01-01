@@ -20,6 +20,14 @@ unsigned int __machine_arch_type;
 
 #define _LINUX_STRING_H_
 
+#include <linux/compiler.h>	/* for inline */
+#include <linux/types.h>	/* for size_t */
+#include <linux/stddef.h>	/* for NULL */
+#include <asm/string.h>
+#include <linux/linkage.h>
+
+#include <asm/unaligned.h>
+
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/stddef.h>
@@ -138,6 +146,25 @@ void *memcpy(void *__dest, __const void *__src, size_t __n)
 /*
  * gzip delarations
  */
+#define STATIC static
+
+/* Diagnostic functions */
+#ifdef DEBUG
+#  define Assert(cond,msg) {if(!(cond)) error(msg);}
+#  define Trace(x) fprintf x
+#  define Tracev(x) {if (verbose) fprintf x ;}
+#  define Tracevv(x) {if (verbose>1) fprintf x ;}
+#  define Tracec(c,x) {if (verbose && (c)) fprintf x ;}
+#  define Tracecv(c,x) {if (verbose>1 && (c)) fprintf x ;}
+#else
+#  define Assert(cond,msg)
+#  define Trace(x)
+#  define Tracev(x)
+#  define Tracevv(x)
+#  define Tracec(c,x)
+#  define Tracecv(c,x)
+#endif
+
 extern char input_data[];
 extern char input_data_end[];
 
@@ -146,6 +173,20 @@ unsigned long output_ptr;
 
 unsigned long free_mem_ptr;
 unsigned long free_mem_end_ptr;
+
+#ifdef STANDALONE_DEBUG
+#define NO_INFLATE_MALLOC
+#endif
+
+#define ARCH_HAS_DECOMP_WDOG
+
+#ifdef CONFIG_KERNEL_GZIP
+#include "../../../../lib/decompress_inflate.c"
+#endif
+
+#ifdef CONFIG_KERNEL_LZO
+#include "../../../../lib/decompress_unlzo.c"
+#endif
 
 #ifndef arch_error
 #define arch_error(x)
@@ -164,15 +205,17 @@ void error(char *x)
 
 asmlinkage void __div0(void)
 {
-     error("Attempting division by 0!");
+	error("Attempting division by 0!");
 }
 
 extern void do_decompress(u8 *input, int len, u8 *output, void (*error)(char *x));
 
+#ifndef STANDALONE_DEBUG
+
 unsigned long
 decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
-		  unsigned long free_mem_ptr_end_p,
-		  int arch_id)
+		unsigned long free_mem_ptr_end_p,
+		int arch_id)
 {
 	unsigned char *tmp;
 
@@ -185,9 +228,25 @@ decompress_kernel(unsigned long output_start, unsigned long free_mem_ptr_p,
 
 	tmp = (unsigned char *) (((unsigned long)input_data_end) - 4);
 	output_ptr = get_unaligned_le32(tmp);
+
 	putstr("Uncompressing Linux...");
 	do_decompress(input_data, input_data_end - input_data,
-		      output_data, error);
+			output_data, error);
 	putstr(" done, booting the kernel.\n");
 	return output_ptr;
 }
+#else
+
+char output_buffer[1500*1024];
+
+int main()
+{
+	output_data = output_buffer;
+
+	putstr("Uncompressing Linux...");
+	decompress(input_data, input_data_end - input_data,
+			NULL, NULL, output_data, NULL, error);
+	putstr("done.\n");
+	return 0;
+}
+#endif
