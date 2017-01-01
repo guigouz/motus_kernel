@@ -12,10 +12,10 @@
 #ifndef __ASM_SH_PGTABLE_H
 #define __ASM_SH_PGTABLE_H
 
-#ifdef CONFIG_PGTABLE_LEVELS_3
-#include <asm/pgtable_pmd.h>
+#ifdef CONFIG_X2TLB
+#include <asm/pgtable-3level.h>
 #else
-#include <asm/pgtable_nopmd.h>
+#include <asm/pgtable-2level.h>
 #endif
 #include <asm/page.h>
 
