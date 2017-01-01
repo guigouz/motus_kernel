@@ -64,18 +64,27 @@ void __init default_setup_apic_routing(void)
 			apic = &apic_x2apic_phys;
 		else
 			apic = &apic_x2apic_cluster;
+		printk(KERN_INFO "Setting APIC routing to %s\n", apic->name);
 	}
 #endif
 
-	if (apic == &apic_flat && num_possible_cpus() > 8)
-		apic = &apic_physflat;
-
-	printk(KERN_INFO "Setting APIC routing to %s\n", apic->name);
+	if (apic == &apic_flat) {
+		if (max_physical_apicid >= 8)
+			apic = &apic_physflat;
+		printk(KERN_INFO "Setting APIC routing to %s\n", apic->name);
+	}
 
 	if (is_vsmp_box()) {
 		/* need to update phys_pkg_id */
 		apic->phys_pkg_id = apicid_phys_pkg_id;
 	}
+
+	/*
+	 * Now that apic routing model is selected, configure the
+	 * fault handling for intr remapping.
+	 */
+	if (intr_remapping_enabled)
+		enable_drhd_fault_handling();
 }
 
 /* Same for both flat and physical. */
