@@ -61,14 +61,14 @@ unsigned int is_smart_cam = 0;
 
 #define DEBUG 0
 
-#define err_print(fmt, args...) printk(KERN_ERR "fun %s "fmt"\n", __FUNCTION__, ##args)
+#define err_print(fmt, args...) printk(KERN_ERR "fun %s "fmt, __FUNCTION__, ##args)
 
 #if DEBUG > 0
 
-#define dbg_print(fmt, args...) printk(KERN_INFO "fun %s "fmt"\n", __FUNCTION__, ##args)
+#define dbg_print(fmt, args...) printk(KERN_INFO "fun %s "fmt, __FUNCTION__, ##args)
 
 #if DEBUG > 1
-#define ddbg_print(fmt, args...) printk(KERN_INFO "fun %s "fmt"\n", __FUNCTION__, ##args)
+#define ddbg_print(fmt, args...) printk(KERN_INFO "fun %s "fmt, __FUNCTION__, ##args)
 #else
 #define ddbg_print(fmt, args...) ;
 #endif
