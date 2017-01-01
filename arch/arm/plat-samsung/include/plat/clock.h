@@ -11,6 +11,30 @@
 
 #include <linux/spinlock.h>
 
+struct clk;
+
+/**
+ * struct clk_ops - standard clock operations
+ * @set_rate: set the clock rate, see clk_set_rate().
+ * @get_rate: get the clock rate, see clk_get_rate().
+ * @round_rate: round a given clock rate, see clk_round_rate().
+ * @set_parent: set the clock's parent, see clk_set_parent().
+ *
+ * Group the common clock implementations together so that we
+ * don't have to keep setting the same fiels again. We leave
+ * enable in struct clk.
+ *
+ * Adding an extra layer of indirection into the process should
+ * not be a problem as it is unlikely these operations are going
+ * to need to be called quickly.
+ */
+struct clk_ops {
+	int		    (*set_rate)(struct clk *c, unsigned long rate);
+	unsigned long	    (*get_rate)(struct clk *c);
+	unsigned long	    (*round_rate)(struct clk *c, unsigned long rate);
+	int		    (*set_parent)(struct clk *c, struct clk *parent);
+};
+
 struct clk {
 	struct list_head      list;
 	struct module        *owner;
@@ -21,11 +45,8 @@ struct clk {
 	unsigned long         rate;
 	unsigned long         ctrlbit;
 
+	struct clk_ops		*ops;
 	int		    (*enable)(struct clk *, int enable);
-	int		    (*set_rate)(struct clk *c, unsigned long rate);
-	unsigned long	    (*get_rate)(struct clk *c);
-	unsigned long	    (*round_rate)(struct clk *c, unsigned long rate);
-	int		    (*set_parent)(struct clk *c, struct clk *parent);
 };
 
 /* other clocks which may be registered by board support */
@@ -54,6 +75,9 @@ extern struct clk clk_h2;
 extern struct clk clk_27m;
 extern struct clk clk_48m;
 
+extern int clk_default_setrate(struct clk *clk, unsigned long rate);
+extern struct clk_ops clk_ops_def_setrate;
+
 /* exports for arch/arm/mach-s3c2410
  *
  * Please DO NOT use these outside of arch/arm/mach-s3c2410
@@ -65,6 +89,8 @@ extern int s3c2410_clkcon_enable(struct clk *clk, int enable);
 
 extern int s3c24xx_register_clock(struct clk *clk);
 extern int s3c24xx_register_clocks(struct clk **clk, int nr_clks);
+
+extern void s3c_register_clocks(struct clk *clk, int nr_clks);
 
 extern int s3c24xx_register_baseclocks(unsigned long xtal);
 

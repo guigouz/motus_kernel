@@ -150,8 +150,8 @@ unsigned long clk_get_rate(struct clk *clk)
 	if (clk->rate != 0)
 		return clk->rate;
 
-	if (clk->get_rate != NULL)
-		return (clk->get_rate)(clk);
+	if (clk->ops != NULL && clk->ops->get_rate != NULL)
+		return (clk->ops->get_rate)(clk);
 
 	if (clk->parent != NULL)
 		return clk_get_rate(clk->parent);
@@ -161,8 +161,8 @@ unsigned long clk_get_rate(struct clk *clk)
 
 long clk_round_rate(struct clk *clk, unsigned long rate)
 {
-	if (!IS_ERR(clk) && clk->round_rate)
-		return (clk->round_rate)(clk, rate);
+	if (!IS_ERR(clk) && clk->ops && clk->ops->round_rate)
+		return (clk->ops->round_rate)(clk, rate);
 
 	return rate;
 }
@@ -178,13 +178,14 @@ int clk_set_rate(struct clk *clk, unsigned long rate)
 	 * the clock may have been made this way by choice.
 	 */
 
-	WARN_ON(clk->set_rate == NULL);
+	WARN_ON(clk->ops == NULL);
+	WARN_ON(clk->ops && clk->ops->set_rate == NULL);
 
-	if (clk->set_rate == NULL)
+	if (clk->ops == NULL || clk->ops->set_rate == NULL)
 		return -EINVAL;
 
 	spin_lock(&clocks_lock);
-	ret = (clk->set_rate)(clk, rate);
+	ret = (clk->ops->set_rate)(clk, rate);
 	spin_unlock(&clocks_lock);
 
 	return ret;
@@ -204,8 +205,8 @@ int clk_set_parent(struct clk *clk, struct clk *parent)
 
 	spin_lock(&clocks_lock);
 
-	if (clk->set_parent)
-		ret = (clk->set_parent)(clk, parent);
+	if (clk->ops && clk->ops->set_parent)
+		ret = (clk->ops->set_parent)(clk, parent);
 
 	spin_unlock(&clocks_lock);
 
@@ -224,11 +225,15 @@ EXPORT_SYMBOL(clk_set_parent);
 
 /* base clocks */
 
-static int clk_default_setrate(struct clk *clk, unsigned long rate)
+int clk_default_setrate(struct clk *clk, unsigned long rate)
 {
 	clk->rate = rate;
 	return 0;
 }
+
+struct clk_ops clk_ops_def_setrate = {
+	.set_rate	= clk_default_setrate,
+};
 
 struct clk clk_xtal = {
 	.name		= "xtal",
@@ -251,7 +256,7 @@ struct clk clk_epll = {
 struct clk clk_mpll = {
 	.name		= "mpll",
 	.id		= -1,
-	.set_rate	= clk_default_setrate,
+	.ops		= &clk_ops_def_setrate,
 };
 
 struct clk clk_upll = {
@@ -267,7 +272,6 @@ struct clk clk_f = {
 	.rate		= 0,
 	.parent		= &clk_mpll,
 	.ctrlbit	= 0,
-	.set_rate	= clk_default_setrate,
 };
 
 struct clk clk_h = {
@@ -276,7 +280,7 @@ struct clk clk_h = {
 	.rate		= 0,
 	.parent		= NULL,
 	.ctrlbit	= 0,
-	.set_rate	= clk_default_setrate,
+	.ops		= &clk_ops_def_setrate,
 };
 
 struct clk clk_p = {
@@ -285,7 +289,7 @@ struct clk clk_p = {
 	.rate		= 0,
 	.parent		= NULL,
 	.ctrlbit	= 0,
-	.set_rate	= clk_default_setrate,
+	.ops		= &clk_ops_def_setrate,
 };
 
 struct clk clk_usb_bus = {
@@ -294,7 +298,6 @@ struct clk clk_usb_bus = {
 	.rate		= 0,
 	.parent		= &clk_upll,
 };
-
 
 
 struct clk s3c24xx_uclk = {
@@ -331,6 +334,28 @@ int s3c24xx_register_clocks(struct clk **clks, int nr_clks)
 	}
 
 	return fails;
+}
+
+/**
+ * s3c_register_clocks() - register an array of clocks
+ * @clkp: Pointer to the first clock in the array.
+ * @nr_clks: Number of clocks to register.
+ *
+ * Call s3c24xx_register_clock() on the @clkp array given, printing an
+ * error if it fails to register the clock (unlikely).
+ */
+void __initdata s3c_register_clocks(struct clk *clkp, int nr_clks)
+{
+	int ret;
+
+	for (; nr_clks > 0; nr_clks--, clkp++) {
+		ret = s3c24xx_register_clock(clkp);
+
+		if (ret < 0) {
+			printk(KERN_ERR "Failed to register clock %s (%d)\n",
+			       clkp->name, ret);
+		}
+	}
 }
 
 /* initalise all the clocks */
