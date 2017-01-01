@@ -90,9 +90,8 @@ static int tomoyo_bprm_check_security(struct linux_binprm *bprm)
 	}
 	/*
 	 * Read permission is checked against interpreters using next domain.
-	 * '1' is the result of open_to_namei_flags(O_RDONLY).
 	 */
-	return tomoyo_check_open_permission(domain, &bprm->file->f_path, 1);
+	return tomoyo_check_open_permission(domain, &bprm->file->f_path, O_RDONLY);
 }
 
 #ifdef CONFIG_SYSCTL
@@ -271,10 +270,6 @@ static int tomoyo_file_fcntl(struct file *file, unsigned int cmd,
 static int tomoyo_dentry_open(struct file *f, const struct cred *cred)
 {
 	int flags = f->f_flags;
-
-	if ((flags + 1) & O_ACCMODE)
-		flags++;
-	flags |= f->f_flags & (O_APPEND | O_TRUNC);
 	/* Don't check read permission here if called from do_execve(). */
 	if (current->in_execve)
 		return 0;
