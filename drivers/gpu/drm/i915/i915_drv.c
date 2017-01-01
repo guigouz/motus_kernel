@@ -307,7 +307,6 @@ int i965_reset(struct drm_device *dev, u8 flags)
 		}
 	} else {
 		DRM_ERROR("Error occurred. Don't know how to reset this chip.\n");
-		mutex_unlock(&dev->struct_mutex);
 		return -ENODEV;
 	}
 
@@ -465,8 +464,11 @@ static struct drm_driver driver = {
 	.lastclose = i915_driver_lastclose,
 	.preclose = i915_driver_preclose,
 	.postclose = i915_driver_postclose,
+
+	/* Used in place of i915_pm_ops for non-DRIVER_MODESET */
 	.suspend = i915_suspend,
 	.resume = i915_resume,
+
 	.device_is_agp = i915_driver_device_is_agp,
 	.enable_vblank = i915_enable_vblank,
 	.disable_vblank = i915_disable_vblank,

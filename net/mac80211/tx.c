@@ -180,6 +180,71 @@ static int inline is_ieee80211_device(struct ieee80211_local *local,
 }
 
 /* tx handlers */
+static ieee80211_tx_result debug_noinline
+ieee80211_tx_h_dynamic_ps(struct ieee80211_tx_data *tx)
+{
+	struct ieee80211_local *local = tx->local;
+	struct ieee80211_if_managed *ifmgd;
+
+	/* driver doesn't support power save */
+	if (!(local->hw.flags & IEEE80211_HW_SUPPORTS_PS))
+		return TX_CONTINUE;
+
+	/* hardware does dynamic power save */
+	if (local->hw.flags & IEEE80211_HW_SUPPORTS_DYNAMIC_PS)
+		return TX_CONTINUE;
+
+	/* dynamic power save disabled */
+	if (local->hw.conf.dynamic_ps_timeout <= 0)
+		return TX_CONTINUE;
+
+	/* we are scanning, don't enable power save */
+	if (local->scanning)
+		return TX_CONTINUE;
+
+	if (!local->ps_sdata)
+		return TX_CONTINUE;
+
+	/* No point if we're going to suspend */
+	if (local->quiescing)
+		return TX_CONTINUE;
+
+	/* dynamic ps is supported only in managed mode */
+	if (tx->sdata->vif.type != NL80211_IFTYPE_STATION)
+		return TX_CONTINUE;
+
+	ifmgd = &tx->sdata->u.mgd;
+
+	/*
+	 * Don't wakeup from power save if u-apsd is enabled, voip ac has
+	 * u-apsd enabled and the frame is in voip class. This effectively
+	 * means that even if all access categories have u-apsd enabled, in
+	 * practise u-apsd is only used with the voip ac. This is a
+	 * workaround for the case when received voip class packets do not
+	 * have correct qos tag for some reason, due the network or the
+	 * peer application.
+	 *
+	 * Note: local->uapsd_queues access is racy here. If the value is
+	 * changed via debugfs, user needs to reassociate manually to have
+	 * everything in sync.
+	 */
+	if ((ifmgd->flags & IEEE80211_STA_UAPSD_ENABLED)
+	    && (local->uapsd_queues & IEEE80211_WMM_IE_STA_QOSINFO_AC_VO)
+	    && skb_get_queue_mapping(tx->skb) == 0)
+		return TX_CONTINUE;
+
+	if (local->hw.conf.flags & IEEE80211_CONF_PS) {
+		ieee80211_stop_queues_by_reason(&local->hw,
+						IEEE80211_QUEUE_STOP_REASON_PS);
+		ieee80211_queue_work(&local->hw,
+				     &local->dynamic_ps_disable_work);
+	}
+
+	mod_timer(&local->dynamic_ps_timer, jiffies +
+		  msecs_to_jiffies(local->hw.conf.dynamic_ps_timeout));
+
+	return TX_CONTINUE;
+}
 
 static ieee80211_tx_result debug_noinline
 ieee80211_tx_h_check_assoc(struct ieee80211_tx_data *tx)
@@ -1224,6 +1289,7 @@ static int invoke_tx_handlers(struct ieee80211_tx_data *tx)
 			goto txh_done;	\
 	} while (0)
 
+	CALL_TXH(ieee80211_tx_h_dynamic_ps);
 	CALL_TXH(ieee80211_tx_h_check_assoc);
 	CALL_TXH(ieee80211_tx_h_ps_buf);
 	CALL_TXH(ieee80211_tx_h_select_key);
@@ -1406,34 +1472,6 @@ static int ieee80211_skb_resize(struct ieee80211_local *local,
 	return 0;
 }
 
-static bool need_dynamic_ps(struct ieee80211_local *local)
-{
-	/* driver doesn't support power save */
-	if (!(local->hw.flags & IEEE80211_HW_SUPPORTS_PS))
-		return false;
-
-	/* hardware does dynamic power save */
-	if (local->hw.flags & IEEE80211_HW_SUPPORTS_DYNAMIC_PS)
-		return false;
-
-	/* dynamic power save disabled */
-	if (local->hw.conf.dynamic_ps_timeout <= 0)
-		return false;
-
-	/* we are scanning, don't enable power save */
-	if (local->scanning)
-		return false;
-
-	if (!local->ps_sdata)
-		return false;
-
-	/* No point if we're going to suspend */
-	if (local->quiescing)
-		return false;
-
-	return true;
-}
-
 static void ieee80211_xmit(struct ieee80211_sub_if_data *sdata,
 			   struct sk_buff *skb)
 {
@@ -1443,18 +1481,6 @@ static void ieee80211_xmit(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_sub_if_data *tmp_sdata;
 	int headroom;
 	bool may_encrypt;
-
-	if (need_dynamic_ps(local)) {
-		if (local->hw.conf.flags & IEEE80211_CONF_PS) {
-			ieee80211_stop_queues_by_reason(&local->hw,
-					IEEE80211_QUEUE_STOP_REASON_PS);
-			ieee80211_queue_work(&local->hw,
-					&local->dynamic_ps_disable_work);
-		}
-
-		mod_timer(&local->dynamic_ps_timer, jiffies +
-		        msecs_to_jiffies(local->hw.conf.dynamic_ps_timeout));
-	}
 
 	rcu_read_lock();
 
