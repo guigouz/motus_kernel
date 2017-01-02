@@ -232,8 +232,13 @@ extern void xfs_buf_lock(xfs_buf_t *);
 extern void xfs_buf_unlock(xfs_buf_t *);
 
 /* Buffer Read and Write Routines */
+extern int xfs_bwrite(struct xfs_mount *mp, struct xfs_buf *bp);
 extern int xfs_bawrite(void *mp, xfs_buf_t *bp);
 extern void xfs_bdwrite(void *mp, xfs_buf_t *bp);
+
+extern void xfsbdstrat(struct xfs_mount *, struct xfs_buf *);
+extern int xfs_bdstrat_cb(struct xfs_buf *);
+
 extern void xfs_buf_ioend(xfs_buf_t *,	int);
 extern void xfs_buf_ioerror(xfs_buf_t *, int);
 extern int xfs_buf_iorequest(xfs_buf_t *);
@@ -389,26 +394,6 @@ static inline void xfs_buf_relse(xfs_buf_t *bp)
 
 #define xfs_biozero(bp, off, len) \
 	    xfs_buf_iomove((bp), (off), (len), NULL, XBRW_ZERO)
-
-
-static inline int XFS_bwrite(xfs_buf_t *bp)
-{
-	int	iowait = (bp->b_flags & XBF_ASYNC) == 0;
-	int	error = 0;
-
-	if (!iowait)
-		bp->b_flags |= _XBF_RUN_QUEUES;
-
-	xfs_buf_delwri_dequeue(bp);
-	xfs_buf_iostrategy(bp);
-	if (iowait) {
-		error = xfs_buf_iowait(bp);
-		xfs_buf_relse(bp);
-	}
-	return error;
-}
-
-#define XFS_bdstrat(bp) xfs_buf_iorequest(bp)
 
 #define xfs_iowait(bp)	xfs_buf_iowait(bp)
 

@@ -201,6 +201,38 @@ xfs_uuid_unmount(
 
 
 /*
+ * Reference counting access wrappers to the perag structures.
+ */
+struct xfs_perag *
+xfs_perag_get(struct xfs_mount *mp, xfs_agnumber_t agno)
+{
+	struct xfs_perag	*pag;
+	int			ref = 0;
+
+	spin_lock(&mp->m_perag_lock);
+	pag = radix_tree_lookup(&mp->m_perag_tree, agno);
+	if (pag) {
+		ASSERT(atomic_read(&pag->pag_ref) >= 0);
+		/* catch leaks in the positive direction during testing */
+		ASSERT(atomic_read(&pag->pag_ref) < 1000);
+		ref = atomic_inc_return(&pag->pag_ref);
+	}
+	spin_unlock(&mp->m_perag_lock);
+	trace_xfs_perag_get(mp, agno, ref, _RET_IP_);
+	return pag;
+}
+
+void
+xfs_perag_put(struct xfs_perag *pag)
+{
+	int	ref;
+
+	ASSERT(atomic_read(&pag->pag_ref) > 0);
+	ref = atomic_dec_return(&pag->pag_ref);
+	trace_xfs_perag_put(pag->pag_mount, pag->pag_agno, ref, _RET_IP_);
+}
+
+/*
  * Free up the resources associated with a mount structure.  Assume that
  * the structure was initially zeroed, so we can tell which fields got
  * initialized.
@@ -215,9 +247,9 @@ xfs_free_perag(
 	for (agno = 0; agno < mp->m_sb.sb_agcount; agno++) {
 		spin_lock(&mp->m_perag_lock);
 		pag = radix_tree_delete(&mp->m_perag_tree, agno);
-		spin_unlock(&mp->m_perag_lock);
 		ASSERT(pag);
-		kmem_free(pag->pagb_list);
+		ASSERT(atomic_read(&pag->pag_ref) == 0);
+		spin_unlock(&mp->m_perag_lock);
 		kmem_free(pag);
 	}
 }
@@ -399,11 +431,13 @@ xfs_initialize_perag(
 	xfs_agnumber_t	*maxagi)
 {
 	xfs_agnumber_t	index, max_metadata;
+	xfs_agnumber_t	first_initialised = 0;
 	xfs_perag_t	*pag;
 	xfs_agino_t	agino;
 	xfs_ino_t	ino;
 	xfs_sb_t	*sbp = &mp->m_sb;
 	xfs_ino_t	max_inum = XFS_MAXINUMBER_32;
+	int		error = -ENOMEM;
 
 	/* Check to see if the filesystem can overflow 32 bit inodes */
 	agino = XFS_OFFBNO_TO_AGINO(mp, sbp->sb_agblocks - 1, 0);
@@ -420,18 +454,23 @@ xfs_initialize_perag(
 			xfs_perag_put(pag);
 			continue;
 		}
+		if (!first_initialised)
+			first_initialised = index;
 		pag = kmem_zalloc(sizeof(*pag), KM_MAYFAIL);
 		if (!pag)
-			return -ENOMEM;
+			goto out_unwind;
 		if (radix_tree_preload(GFP_NOFS))
-			return -ENOMEM;
+			goto out_unwind;
 		spin_lock(&mp->m_perag_lock);
 		if (radix_tree_insert(&mp->m_perag_tree, index, pag)) {
 			BUG();
 			spin_unlock(&mp->m_perag_lock);
-			kmem_free(pag);
-			return -EEXIST;
+			radix_tree_preload_end();
+			error = -EEXIST;
+			goto out_unwind;
 		}
+		pag->pag_agno = index;
+		pag->pag_mount = mp;
 		spin_unlock(&mp->m_perag_lock);
 		radix_tree_preload_end();
 	}
@@ -488,6 +527,14 @@ xfs_initialize_perag(
 	if (maxagi)
 		*maxagi = index;
 	return 0;
+
+out_unwind:
+	kmem_free(pag);
+	for (; index > first_initialised; index--) {
+		pag = radix_tree_delete(&mp->m_perag_tree, index);
+		kmem_free(pag);
+	}
+	return error;
 }
 
 void

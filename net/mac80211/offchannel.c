@@ -156,6 +156,9 @@ void ieee80211_offchannel_return(struct ieee80211_local *local,
 			netif_wake_queue(sdata->dev);
 		}
 
+		if (sdata->vif.type != NL80211_IFTYPE_MONITOR)
+			netif_tx_wake_all_queues(sdata->dev);
+
 		/* re-enable beaconing */
 		if (enable_beaconing &&
 		    (sdata->vif.type == NL80211_IFTYPE_AP ||

@@ -386,24 +386,10 @@ xfs_daddr_to_agbno(struct xfs_mount *mp, xfs_daddr_t d)
 }
 
 /*
- * perag get/put wrappers for eventual ref counting
+ * perag get/put wrappers for ref counting
  */
-static inline struct xfs_perag *
-xfs_perag_get(struct xfs_mount *mp, xfs_agnumber_t agno)
-{
-	struct xfs_perag	*pag;
-
-	spin_lock(&mp->m_perag_lock);
-	pag = radix_tree_lookup(&mp->m_perag_tree, agno);
-	spin_unlock(&mp->m_perag_lock);
-	return pag;
-}
-
-static inline void
-xfs_perag_put(struct xfs_perag *pag)
-{
-	/* nothing to see here, move along */
-}
+struct xfs_perag *xfs_perag_get(struct xfs_mount *mp, xfs_agnumber_t agno);
+void	xfs_perag_put(struct xfs_perag *pag);
 
 /*
  * Per-cpu superblock locking functions
