@@ -104,20 +104,20 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
     struct isp_sysc isp_sysconfig;
 
     if (!bHaveResetGpio) {
-      ddbg_print("Requesting reset gpio\n");
+      ddbg_print("Requesting reset gpio");
       rc = gpio_request(gpio_reset, "camera reset");
       if (!rc) {
 	bHaveResetGpio = 1;
       }
     }
     if (!bHavePowerDownGpio) {
-      ddbg_print("Requesting powerdown gpio\n");
+      ddbg_print("Requesting powerdown gpio");
       rc = gpio_request(gpio_powerdown, "camera powerdown");
       if (!rc) {
 	bHavePowerDownGpio = 1 ;
       }
     }
-    ddbg_print( "camera ioctl cmd = %u, arg = %lu\n", cmd, arg);
+    ddbg_print( "camera ioctl cmd = %u, arg = %lu", cmd, arg);
 
     switch(cmd)
     {
@@ -126,7 +126,7 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
             {
 	      gpio_direction_output(gpio_reset, 0);
 	      gpio_set_value(gpio_reset, (arg ? 1 : 0));
-	      dbg_print("CAMERA_MISC set RESET line to %u\n", (arg ? 1 : 0));
+	      dbg_print("CAMERA_MISC set RESET line to %u", (arg ? 1 : 0));
             }
 	  
 	  if (!bHaveResetGpio)
@@ -148,7 +148,7 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
                 {
 		  gpio_set_value(gpio_powerdown, 1);
                 }
-                dbg_print( "CAMERA_MISC set POWERDOWN line to %u\n", (arg ? 1 : 0));
+                dbg_print( "CAMERA_MISC set POWERDOWN line to %u", (arg ? 1 : 0));
             }
             if (!bHavePowerDownGpio)
             {
@@ -180,7 +180,7 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
 	    isp_put();
 	    isp_count_local--;
 	  }
-	  dbg_print( "CAMERA_MISC turned off MCLK done\n");
+	  dbg_print( "CAMERA_MISC turned off MCLK done");
 	  break;
 
         case CAMERA_CLOCK_ENABLE:
@@ -200,7 +200,7 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
 	    msleep(10);
 	  }
 	  isp_set_xclk(arg, 0);
-	  dbg_print( "CAMERA_MISC set MCLK to %d\n", (int) arg);
+	  dbg_print( "CAMERA_MISC set MCLK to %d", (int) arg);
 	  break;
         case CAMERA_AVDD_POWER_ENABLE:
 	case CAMERA_AVDD_POWER_DISABLE:
@@ -210,18 +210,18 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
 	     {
 	       /* turn on digital power */
 	       if (regulator != NULL) {
-		 err_print("Already have regulator\n");
+		 err_print("Already have regulator");
 	       } else {
 		 regulator = regulator_get(NULL, "vcam");
 		 if (IS_ERR(regulator)) {
-		   err_print("Cannot get vcam regulator, err=%ld\n",PTR_ERR(regulator));
+		   err_print("Cannot get vcam regulator, err=%ld",PTR_ERR(regulator));
 		   return PTR_ERR(regulator);
 		 }
 	       }
 		   /* No longer enabling regulator since VCAM is left on all the time for Ruth */
 		   /*
 	       if (regulator_enable(regulator) != 0) {
-		 err_print("Cannot enable vcam regulator\n");
+		 err_print("Cannot enable vcam regulator");
 		 return -EIO;
 	       }
 		   */
@@ -238,14 +238,14 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
 		 regulator_disable(regulator);
 		 regulator = NULL;
 	       } else {
-		 err_print("Regulator for vcam is notinitialized\n");
+		 err_print("Regulator for vcam is notinitialized");
 		 return -EIO;
 	       }
 	       _camera_lines_lowpower_mode();
 	     }
 	   break;
     default:
-            err_print( "CAMERA_MISC received unsupported cmd; cmd = %u\n", cmd);
+            err_print( "CAMERA_MISC received unsupported cmd; cmd = %u", cmd);
             return -EIO;
             break;
     }
@@ -258,7 +258,7 @@ static int __init camera_misc_init(void)
 	struct device_node *feat_node;
 	const void *feat_prop;
 	
-	ddbg_print("camera misc init\n");
+	ddbg_print("camera misc init");
 	
 	/* Check sensor Type */
 	feat_node = of_find_node_by_path(DT_HIGH_LEVEL_FEATURE);
@@ -267,7 +267,7 @@ static int __init camera_misc_init(void)
 					"feature_smart_cam", NULL);
 		if (NULL != feat_prop) {
 			is_smart_cam = *(u8 *)feat_prop;
-			printk(KERN_INFO "feature_smart_cam %d\n", is_smart_cam) ;
+			printk(KERN_INFO "feature_smart_cam %d", is_smart_cam) ;
 		}
 		
 	}
@@ -293,7 +293,7 @@ static int __init camera_misc_init(void)
 
     if(misc_register( &cam_misc_device0 ))
     {
-        err_print( "error in register camera misc device!\n" );
+        err_print( "error in register camera misc device!" );
         return -EIO;
     }
     return 0;
@@ -301,7 +301,7 @@ static int __init camera_misc_init(void)
 
 static void __exit camera_misc_exit(void)
 {
-  ddbg_print("camera misc exit\n");
+  ddbg_print("camera misc exit");
   misc_deregister(&cam_misc_device0);
   if (!bHaveResetGpio) {
     gpio_free(gpio_reset);

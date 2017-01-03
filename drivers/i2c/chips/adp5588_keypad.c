@@ -54,24 +54,24 @@
 /* This will be the name of the device and must match the KL and KCM filenames */
 #define  ADP5588_DEVNAME "adp5588_keypad"
 
-extern unsigned long msleep_interruptible(unsigned int);
+extern unsigned long msleep_interruptible (unsigned int);
 
 #define clk_busy_wait(time)	msleep_interruptible(time/1000)
 
-#define    ADP5588_I2C_ADDRESS   0x34
+#define ADP5588_I2C_ADDRESS   0x34
 
-#define    ADP5588_KEYPAD_FLIP_DETECT 42
-#define    ADP5588_KEYPAD_RESET_GPIO  32
-#define    ADP5588_MAX_KEYS           80
+#define ADP5588_KEYPAD_FLIP_DETECT 42
+#define ADP5588_KEYPAD_RESET_GPIO  32
+#define ADP5588_MAX_KEYS           80
 
 #define ADP5588_GPIO_KEY	0x70
 
-#define    SW_MUTE		0x05	/* ringer mute  switch */
+#define SW_MUTE		0x05	/* ringer mute  switch */
 
-#define    ADP5588_COL_NUM	7
-#define    ADP5588_ROW_NUM	8
+#define ADP5588_COL_NUM	7
+#define ADP5588_ROW_NUM	8
 
-#define    KEY_SYSRQ_PROXY	57 /*99*/
+#define KEY_SYSRQ_PROXY	57	/*99 */
 
 /******************************************************************************
  *  Registers IDs
@@ -242,6 +242,7 @@ static struct adp5588_keypad_data {
 	struct hrtimer timer;
 	struct work_struct work;
 	struct work_struct lock_work;
+	uint16_t last_code_flag;
 	uint16_t last_key;
 	uint16_t last_key_state;
 	uint8_t ringer_switch;
@@ -250,62 +251,64 @@ static struct adp5588_keypad_data {
 	struct mutex mutex;
 	struct switch_dev sw_lid_dev;
 	struct switch_dev sw_mute_dev;
-#ifdef  CONFIG_HAS_EARLYSUSPEND
+#ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
 #endif
 } adp5588_data;
 
-#define   I2C_MUTEX_LOCK        mutex_lock(&adp5588_data.mutex)
-#define   I2C_MUTEX_UNLOCK        mutex_unlock(&adp5588_data.mutex)
-//#define   I2C_MUTEX_LOCK         printk("ADP5588   mutex_lock")
-//#define   I2C_MUTEX_UNLOCK       printk("ADP5588   mutex_UNlock")
+#define I2C_MUTEX_LOCK        mutex_lock(&adp5588_data.mutex)
+#define I2C_MUTEX_UNLOCK        mutex_unlock(&adp5588_data.mutex)
 
-#ifdef  CONFIG_HAS_EARLYSUSPEND
-static void adp5588_early_suspend(struct early_suspend *handler);
-static void adp5588_early_resume(struct early_suspend *handler);
+#ifdef CONFIG_HAS_EARLYSUSPEND
+static void adp5588_early_suspend (struct early_suspend *handler);
+static void adp5588_early_resume (struct early_suspend *handler);
 #endif
 
 void
-lid_set_state(int lid, int tt)
+lid_set_state (int lid, int tt)
 {
-	switch_set_state(&adp5588_data.sw_lid_dev, tt << 1 | lid);
+	switch_set_state (&adp5588_data.sw_lid_dev, tt << 1 | lid);
 }
 
 static void
-lid_switch_event(struct input_handle *handle, unsigned int type,
-		 unsigned int code, int value)
+lid_switch_event (struct input_handle *handle, unsigned int type,
+		  unsigned int code, int value)
 {
+	// FIX: check moving switch_set_state into delayed work
+	//if (type == EV_SW && code == SW_TABLET_MODE) {
+	if (type == EV_SW && ((code == SW_TABLET_MODE) || (code == SW_LID))) {
+		if (code == SW_TABLET_MODE) {
+			printk (KERN_DEBUG
+				"%s(%s): Event.  Type: %d, Code: %d, Value: %d   KEYPAD  : %s \n",
+				__FILE__, __FUNCTION__, type, code, value,
+				value ? "UNLOCKED" : "LOCKED");
 
-	if (type == EV_SW && code == SW_TABLET_MODE) {
-		printk(KERN_DEBUG
-		       "%s(%s): Event.  Type: %d, Code: %d, Value: %d   KEYPAD  : %s \n",
-		       __FILE__, __FUNCTION__, type, code, value,
-		       value ? "UNLOCKED" : "LOCKED");
-
-		adp5588_data.update_config = value + 1;
-		schedule_work(&adp5588_data.lock_work);
+			adp5588_data.update_config = value + 1;
+		}
+		adp5588_data.last_code_flag = ~(1 << code) | (value << code);
+		schedule_work (&adp5588_data.lock_work);
 	}
 
-	if (type == EV_SW && ((code == SW_TABLET_MODE) || (code == SW_LID)))
-		switch_set_state(&adp5588_data.sw_lid_dev,
-				 (switch_get_state(&adp5588_data.sw_lid_dev) &
-				  ~(1 << code)) | (value << code));
+	/*if (type == EV_SW && ((code == SW_TABLET_MODE) || (code == SW_LID)))
+	 switch_set_state(&adp5588_data.sw_lid_dev,
+	 (switch_get_state(&adp5588_data.sw_lid_dev) &
+	 ~(1 << code)) | (value << code)); */
 }
 
 static int
-lid_switch_connect(struct input_handler *handler, struct input_dev *dev,
-		   const struct input_device_id *id)
+lid_switch_connect (struct input_handler *handler, struct input_dev *dev,
+		    const struct input_device_id *id)
 {
 	struct input_handle *handle;
 	int error, sw_value;
 
-	if (!test_bit(SW_TABLET_MODE, dev->swbit))
+	if (!test_bit (SW_TABLET_MODE, dev->swbit))
 		return -ENODEV;
 
 	if (adp5588_data.input_dev == dev)
 		return -ENODEV;
 
-	handle = kzalloc(sizeof (struct input_handle), GFP_KERNEL);
+	handle = kzalloc (sizeof (struct input_handle), GFP_KERNEL);
 	if (!handle)
 		return -ENOMEM;
 
@@ -313,52 +316,52 @@ lid_switch_connect(struct input_handler *handler, struct input_dev *dev,
 	handle->handler = handler;
 	handle->name = "keypad_lock_switch";
 	adp5588_data.sw_dev = dev;
-	error = input_register_handle(handle);
+	error = input_register_handle (handle);
 	if (error)
 		goto err_free_handle;
 
-	error = input_open_device(handle);
+	error = input_open_device (handle);
 	if (error)
 		goto err_unregister_handle;
-	sw_value = ! !test_bit(SW_TABLET_MODE, dev->sw);
+	sw_value = ! !test_bit (SW_TABLET_MODE, dev->sw);
 
-	lid_set_state(! !test_bit(SW_LID, dev->sw), sw_value);
-	printk(KERN_DEBUG
-	       "%s(%s): Connected device: \"%s\", %s\n  sw state  %d ",
-	       __FILE__, __FUNCTION__, dev->name, dev->phys, sw_value);
+	lid_set_state (! !test_bit (SW_LID, dev->sw), sw_value);
+	printk (KERN_DEBUG
+		"%s(%s): Connected device: \"%s\", %s\n  sw state  %d ",
+		__FILE__, __FUNCTION__, dev->name, dev->phys, sw_value);
 
 	adp5588_data.update_config = sw_value + 1;
-	schedule_work(&adp5588_data.lock_work);
+	schedule_work (&adp5588_data.lock_work);
 
 	return 0;
 
-      err_unregister_handle:
-	input_unregister_handle(handle);
-      err_free_handle:
-	kfree(handle);
+err_unregister_handle:
+	input_unregister_handle (handle);
+err_free_handle:
+	kfree (handle);
 	return error;
 }
 
 static void
-lid_switch_disconnect(struct input_handle *handle)
+lid_switch_disconnect (struct input_handle *handle)
 {
-	printk(KERN_DEBUG "%s(%s): Disconnected device: %s\n", __FILE__,
-	       __FUNCTION__, handle->dev->phys);
+	printk (KERN_DEBUG "%s(%s): Disconnected device: %s\n", __FILE__,
+		__FUNCTION__, handle->dev->phys);
 
-	input_close_device(handle);
-	input_unregister_handle(handle);
-	kfree(handle);
+	input_close_device (handle);
+	input_unregister_handle (handle);
+	kfree (handle);
 }
 
 static const struct input_device_id lid_switch_ids[] = {
 	{
-	 .flags = INPUT_DEVICE_ID_MATCH_EVBIT,
-	 .evbit = {BIT_MASK(EV_SW)},
-	 },
-	{},			/* Terminating zero entry */
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT,
+		.evbit = {BIT_MASK (EV_SW)},
+	},
+	{},				/* Terminating zero entry */
 };
 
-MODULE_DEVICE_TABLE(input, lid_switch_ids);
+MODULE_DEVICE_TABLE (input, lid_switch_ids);
 
 static struct input_handler lid_switch_handler = {
 	.event = lid_switch_event,
@@ -369,35 +372,35 @@ static struct input_handler lid_switch_handler = {
 };
 
 static int
-adp5588_read_register(struct i2c_client *client, uint8_t address,
-		      uint8_t * value)
+adp5588_read_register (struct i2c_client *client, uint8_t address,
+		       uint8_t * value)
 {
 	uint8_t data[1];
 	int rc;
 
 	I2C_MUTEX_LOCK;
 
-	data[0] = address;	//reg 0
-	if ((rc = i2c_master_send(client, data, 1)) < 0) {
-		dev_err(&client->dev, " %s(%s):i2c_master_send error %d\n",
+	data[0] = address;		//reg 0
+	if ((rc = i2c_master_send (client, data, 1)) < 0) {
+		dev_err (&client->dev, " %s(%s):i2c_master_send error %d\n",
 			__FILE__, __FUNCTION__, rc);
 		I2C_MUTEX_UNLOCK;
 		return rc;
 	}
 
-	clk_busy_wait(1000);
+	clk_busy_wait (1000);
 
 	*value = 0;
-	if ((rc = i2c_master_recv(client, value, 1)) < 0)
-		dev_err(&client->dev, " %s(%s):i2c_master_recv error %d\n",
+	if ((rc = i2c_master_recv (client, value, 1)) < 0)
+		dev_err (&client->dev, " %s(%s):i2c_master_recv error %d\n",
 			__FILE__, __FUNCTION__, rc);
 	I2C_MUTEX_UNLOCK;
 	return (rc);
 }
 
 static int
-adp5588_write_register(struct i2c_client *client, uint8_t address,
-		       uint8_t value)
+adp5588_write_register (struct i2c_client *client, uint8_t address,
+			uint8_t value)
 {
 	int rc;
 	ADP5588_CMD_T msg;
@@ -405,8 +408,8 @@ adp5588_write_register(struct i2c_client *client, uint8_t address,
 	msg.reg = address;
 	msg.data = value;
 	I2C_MUTEX_LOCK;
-	if ((rc = i2c_master_send(client, (uint8_t *) & msg, sizeof (msg))) < 0)
-		dev_err(&client->dev, " %s(%s):i2c_master_send error %d\n",
+	if ((rc = i2c_master_send (client, (uint8_t *) & msg, sizeof (msg))) < 0)
+		dev_err (&client->dev, " %s(%s):i2c_master_send error %d\n",
 			__FILE__, __FUNCTION__, rc);
 	I2C_MUTEX_UNLOCK;
 	return rc;
@@ -414,25 +417,23 @@ adp5588_write_register(struct i2c_client *client, uint8_t address,
 
 /* adp5588 write configuration */
 static int
-adp5588_write_config(struct i2c_client *client, ADP5588_cfg * cfg)
+adp5588_write_config (struct i2c_client *client, ADP5588_cfg * cfg)
 {
 	int ret = 0, i;
 	ADP5588_CMD_T msg;
 
 	if (!client || !cfg)
-		return -1;
+	return -1;
 	I2C_MUTEX_LOCK;
 	for (i = 0; cfg[i].reg != 0; i++) {
 
 		msg.reg = cfg[i].reg;
 		msg.data = cfg[i].data;
-		if ((ret =
-		     i2c_master_send(client, (uint8_t *) & msg,
-				     sizeof (msg))) < 0)
-			dev_err(&client->dev,
+		if ((ret = i2c_master_send (client, (uint8_t *) & msg, sizeof (msg))) < 0)
+			dev_err (&client->dev,
 				" %s(%s):i2c_master_send error %d\n", __FILE__,
 				__FUNCTION__, ret);
-		clk_busy_wait(1000);
+		clk_busy_wait (1000);
 	}
 	I2C_MUTEX_UNLOCK;
 	return ret;
@@ -441,104 +442,100 @@ adp5588_write_config(struct i2c_client *client, ADP5588_cfg * cfg)
 /* adp5588 initial configuration */
 
 static int
-adp5588_config(struct i2c_client *client)
+adp5588_config (struct i2c_client *client)
 {
-	clk_busy_wait(1000);
+	clk_busy_wait (1000);
 	return (adp5588_write_config
 		(client,
-		 adp5588_data.
-		 device_type ? adp5588_init_seq_motus : adp5588_init_seq));
+		adp5588_data.device_type ? adp5588_init_seq_motus :
+		adp5588_init_seq));
 }
 
 /* adp5588 lock/unlock  motus keypad */
 
 static int
-adp5588_lock_motus_keypad(int state)
+adp5588_lock_motus_keypad (int state)
 {
 	return (adp5588_write_config
 		(adp5588_data.client,
-		 state ? adp5588_unlock_seq_motus : adp5588_lock_seq_motus));
+		state ? adp5588_unlock_seq_motus : adp5588_lock_seq_motus));
 }
 
 static int
-adp5588_clear_irq(struct i2c_client *client)
+adp5588_clear_irq (struct i2c_client *client)
 {
 	// clear  key event & key lock irq
-	return (adp5588_write_register(client, ADP5588_REG_INT_STAT, 0x5));
+	return (adp5588_write_register (client, ADP5588_REG_INT_STAT, 0x5));
 }
 
 /* SET  backlight drive register . Bit 0  = EL_EN1  , Bit 1 =EL_EN2  */
-
 int
-adp5588_set_backlight(uint8_t mask)
+adp5588_set_backlight (uint8_t mask)
 {
 	if (adp5588_data.client)
 		return (adp5588_write_register
 			(adp5588_data.client, ADP5588_REG_GPIO_DAT_OUT3, mask));
 	return -ENOTSUPP;
 }
-
 EXPORT_SYMBOL(adp5588_set_backlight);
 
 /* GET   backlight drive register  value. Bit 0  = EL_EN1  , Bit 1 =EL_EN2  */
-
 int
-adp5588_get_backlight(void)
+adp5588_get_backlight (void)
 {
 	uint8_t mask;
 	int rc;
 	if (adp5588_data.client) {
-		if ((rc = adp5588_read_register(adp5588_data.client,
-						ADP5588_REG_GPIO_DAT_OUT3,
-						&mask)) < 0)
+		if ((rc = adp5588_read_register (adp5588_data.client,
+						 ADP5588_REG_GPIO_DAT_OUT3, &mask)) < 0)
 			return rc;
 		else
 			return mask;
 	}
 	return -ENOTSUPP;
 }
-
 EXPORT_SYMBOL(adp5588_get_backlight);
 
 static void
-adp5588_lock_work_func(struct work_struct *work)
+adp5588_lock_work_func (struct work_struct *work)
 {
 	//struct adp5588_keypad_data *kp = container_of(work, struct adp5588_keypad_data, lock_work);
+	switch_set_state (&adp5588_data.sw_lid_dev,
+		(switch_get_state (&adp5588_data.sw_lid_dev) &
+		 adp5588_data.last_code_flag));
+
 	/*  Keypad lock switch changed. update ADP5588 configuration */
 	if (adp5588_data.update_config) {
-		adp5588_lock_motus_keypad(adp5588_data.update_config - 1);
+		adp5588_lock_motus_keypad (adp5588_data.update_config - 1);
 		adp5588_data.update_config = 0;
 	}
 }
 
 static void
-adp5588_work_func(struct work_struct *work)
+adp5588_work_func (struct work_struct *work)
 {
 	int rc, i;
 	uint8_t reg = ADP5588_REG_KEY_EVENTA;
 	struct adp5588_keypad_data *kp =
-	    container_of(work, struct adp5588_keypad_data, work);
+		container_of (work, struct adp5588_keypad_data, work);
 	struct i2c_client *client = kp->client;
 	uint8_t scan_code;
 
 	/* set  read address */
-
 	I2C_MUTEX_LOCK;
 
-	if ((rc = i2c_master_send(client, &reg, 1)) < 0) {
-		dev_err(&client->dev, " %s(%s):i2c_master_send error %d\n",
+	if ((rc = i2c_master_send (client, &reg, 1)) < 0) {
+		dev_err (&client->dev, " %s(%s):i2c_master_send error %d\n",
 			__FILE__, __FUNCTION__, rc);
-		/* I2c Write error  .  exit now , enable IRQ and read again if IRQ pin  still low */
-
+	/* I2c Write error  .  exit now , enable IRQ and read again if IRQ pin  still low */
 	} else {
-
 		/* read scancodes until queue is empty */
 		i = 0;
 		do {
 			scan_code = ADP5588_KEY_FIFO_EMPTY;
 
-			if ((rc = i2c_master_recv(client, &scan_code, 1)) < 0) {
-				dev_err(&client->dev,
+			if ((rc = i2c_master_recv (client, &scan_code, 1)) < 0) {
+				dev_err (&client->dev,
 					" %s(%s):i2c_master_recv error %d\n",
 					__FILE__, __FUNCTION__, rc);
 				break;
@@ -546,122 +543,109 @@ adp5588_work_func(struct work_struct *work)
 
 			if (scan_code != ADP5588_KEY_FIFO_EMPTY) {
 				kp->last_key = ADP5588_KEY_CODE & scan_code;
-				kp->last_key_state =
-				    ! !(ADP5588_KEY_RELEASE & scan_code);
+				kp->last_key_state = ! !(ADP5588_KEY_RELEASE & scan_code);
 
-				dev_dbg(&client->dev,
+				dev_dbg (&client->dev,
 					"ADP5588 got scancode %d ,keycode 0x%x ( %d ) state %d \n",
-					scan_code, kp->last_key, kp->last_key,
-					kp->last_key_state);
+					scan_code, kp->last_key, kp->last_key, kp->last_key_state);
 				if (kp->last_key == ADP5588_GPIO_KEY) {
 					/* got RINGER/SILENCE switch event */
-					adp5588_data.ringer_switch =
-					    kp->last_key_state;
-					switch_set_state(&adp5588_data.
-							 sw_mute_dev,
-							 !adp5588_data.
-							 ringer_switch);
+					adp5588_data.ringer_switch = kp->last_key_state;
+					switch_set_state (&adp5588_data.sw_mute_dev,
+							!adp5588_data.ringer_switch);
 				} else {
 					/* replace proxy code with KEY_SYSRQ code */
 					if (kp->last_key == KEY_SYSRQ_PROXY)
 						kp->last_key = KEY_SYSRQ;
 
 					/* got regular key event */
-					input_report_key(kp->input_dev,
-							 kp->last_key,
-							 kp->last_key_state);
+					input_report_key (kp->input_dev, kp->last_key, kp->last_key_state);
 				}
 
-				/*  Sync is removed. It does not required  for key event */
-				/* input_sync(kp->input_dev); */
+			/*  Sync is removed. It does not required  for key event */
+			/* input_sync(kp->input_dev); */
 			} else if (i == 0) {
-				/* IRQ without the code ? , must be  key release  HW problem , Wait  5ms  */
-				clk_busy_wait(5000);
+				/* IRQ without the code ? , must be  key release  HW problem , Wait 5ms */
+				clk_busy_wait (5000);
 			}
-
 		} while (scan_code && (i++ < 10));
 	}
 	I2C_MUTEX_UNLOCK;
 
 	/* Clear IRQ and enable it */
 	if (kp->use_irq) {
-		if (adp5588_clear_irq(client) < 0) {
+		if (adp5588_clear_irq (client) < 0) {
 			/* I2c Problem , do not enable IRQ but wait 1 sec */
-			hrtimer_start(&kp->timer, ktime_set(1, 0),
-				      HRTIMER_MODE_REL);
-		} else
-			enable_irq(client->irq);
+			hrtimer_start (&kp->timer, ktime_set (1, 0), HRTIMER_MODE_REL);
+	} else
+		enable_irq (client->irq);
 	}
-
 }
 
 /* adp5588 retry work function */
-
 static enum hrtimer_restart
-adp5588_retry_work(struct hrtimer *timer)
+adp5588_retry_work (struct hrtimer *timer)
 {
 	struct adp5588_keypad_data *kp =
-	    container_of(timer, struct adp5588_keypad_data, timer);
+		container_of (timer, struct adp5588_keypad_data, timer);
 
-	schedule_work(&kp->work);
+	schedule_work (&kp->work);
 
 	return HRTIMER_NORESTART;
 }
 
 /* adp5588 timer handler */
-
 static enum hrtimer_restart
-adp5588_timer_func(struct hrtimer *timer)
+adp5588_timer_func (struct hrtimer *timer)
 {
 	struct adp5588_keypad_data *kp =
-	    container_of(timer, struct adp5588_keypad_data, timer);
+		container_of (timer, struct adp5588_keypad_data, timer);
 
-	schedule_work(&kp->work);
+	schedule_work (&kp->work);
 
-	hrtimer_start(&kp->timer, ktime_set(0, 125000000), HRTIMER_MODE_REL);
+	hrtimer_start (&kp->timer, ktime_set (0, 125000000), HRTIMER_MODE_REL);
 	return HRTIMER_NORESTART;
 }
 
 /* adp5588 interrupt handler */
-
 static irqreturn_t
-adp5588_irq_handler(int irq, void *dev_id)
+adp5588_irq_handler (int irq, void *dev_id)
 {
 	struct adp5588_keypad_data *kp = (struct adp5588_keypad_data *) dev_id;
-	disable_irq(irq);
-	schedule_work(&kp->work);
+	disable_irq (irq);
+	schedule_work (&kp->work);
 	return IRQ_HANDLED;
 }
 
 static ssize_t
-print_lid_switch_name(struct switch_dev *sw_lid_dev, char *buf)
+print_lid_switch_name (struct switch_dev *sw_lid_dev, char *buf)
 {
-	switch (switch_get_state(sw_lid_dev)) {
-	case 1:		// CLOSED
-		return sprintf(buf, "Closed\n");
-	case 2:		// Open
-		return sprintf(buf, "Open\n");
-	case 0:		// Table top
-		return sprintf(buf, "Table top\n");
+	switch (switch_get_state (sw_lid_dev)) {
+		case 1:			// CLOSED
+			return sprintf (buf, "Closed\n");
+		case 2:			// Open
+			return sprintf (buf, "Open\n");
+		case 0:			// Table top
+			return sprintf (buf, "Table top\n");
 	}
 	return -EINVAL;
 }
 
 static ssize_t
-print_mute_switch_name(struct switch_dev *sw_lid_dev, char *buf)
+print_mute_switch_name (struct switch_dev *sw_lid_dev, char *buf)
 {
-	switch (switch_get_state(sw_lid_dev)) {
-	case 0:		// CLOSED
-		return sprintf(buf, "Closed\n");
-	case 1:		// Open
-		return sprintf(buf, "Open\n");
+	switch (switch_get_state (sw_lid_dev)) {
+		case 0:			// CLOSED
+			return sprintf (buf, "Closed\n");
+		case 1:			// Open
+		return sprintf (buf, "Open\n");
 	}
 	return -EINVAL;
 }
 
 /* This function is called by i2c_probe */
 static int
-adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
+adp5588_probe (struct i2c_client *client, const struct i2c_device_id *id)
 {
 	int err = 0, i, j;
 	uint8_t reg;
@@ -670,24 +654,23 @@ adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	/* GET  ADP5588 OUT of RESET   */
 	/*  done in board-mot.c
-	   err = gpio_request(ADP5588_KEYPAD_RESET_GPIO, "adp5588_nRST");
-	   if (err) {
-	   dev_err(&client->dev," %s(%s):Can't request gpio %d\n",
-	   __FILE__, __FUNCTION__, ADP5588_KEYPAD_RESET_GPIO);
-	   return err;
-	   }
-	   err=gpio_direction_output(ADP5588_KEYPAD_RESET_GPIO, 1);   // enable chip nRST
-	   if (err) {
-	   dev_err(&client->dev," %s(%s):Can't config output gpio %d\n",
-	   __FILE__, __FUNCTION__, ADP5588_KEYPAD_RESET_GPIO);
-	   goto exit_gpio_free;
-	   }
-	 */
-	mutex_init(&adp5588_data.mutex);
+	 err = gpio_request(ADP5588_KEYPAD_RESET_GPIO, "adp5588_nRST");
+	 if (err) {
+	 dev_err(&client->dev," %s(%s):Can't request gpio %d\n",
+	 __FILE__, __FUNCTION__, ADP5588_KEYPAD_RESET_GPIO);
+	 return err;
+	 }
+	 err=gpio_direction_output(ADP5588_KEYPAD_RESET_GPIO, 1);   // enable chip nRST
+	 if (err) {
+	 dev_err(&client->dev," %s(%s):Can't config output gpio %d\n",
+	 __FILE__, __FUNCTION__, ADP5588_KEYPAD_RESET_GPIO);
+	 goto exit_gpio_free;
+	 }
+	*/
+	mutex_init (&adp5588_data.mutex);
 
-	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
-		dev_err(&client->dev,
-			"No supported i2c func what we need?!!\n");
+	if (!i2c_check_functionality (client->adapter, I2C_FUNC_I2C)) {
+		dev_err (&client->dev, "No supported i2c func what we need?!!\n");
 		err = -ENOTSUPP;
 		goto exit_gpio_free;
 	}
@@ -695,30 +678,29 @@ adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	pdev = (struct platform_device *) client->dev.platform_data;
 
 	adp5588_data.client = client;
-	i2c_set_clientdata(client, &adp5588_data);
+	i2c_set_clientdata (client, &adp5588_data);
 
 	/*  device type : 0 - morrison , 1 - motus */
 	adp5588_data.device_type = pdev->id;
-	/* Configure   APD5588 chip */
 
-	adp5588_config(client);
+	/* Configure   APD5588 chip */
+	adp5588_config (client);
 
 	/* Get  Chip ID */
-	adp5588_read_register(client, ADP5588_REG_DEV_ID, &adp5588_data.dev_id);
+	adp5588_read_register (client, ADP5588_REG_DEV_ID, &adp5588_data.dev_id);
 
-	printk("ADP5588 Keypad Dev ID : 0x%x,Body ID %d  Name : %s , RST %d\n",
-	       adp5588_data.dev_id, adp5588_data.device_type, pdev->name,
-	       gpio_get_value(ADP5588_KEYPAD_RESET_GPIO));
+	printk ("ADP5588 Keypad Dev ID : 0x%x,Body ID %d  Name : %s , RST %d\n",
+		adp5588_data.dev_id, adp5588_data.device_type, pdev->name,
+		gpio_get_value (ADP5588_KEYPAD_RESET_GPIO));
 
-	INIT_WORK(&adp5588_data.work, adp5588_work_func);
-
-	INIT_WORK(&adp5588_data.lock_work, adp5588_lock_work_func);
+	INIT_WORK (&adp5588_data.work, adp5588_work_func);
+	INIT_WORK (&adp5588_data.lock_work, adp5588_lock_work_func);
 
 	/* Configure and  Register  Linux Input Device  */
-	adp5588_data.input_dev = input_allocate_device();
+	adp5588_data.input_dev = input_allocate_device ();
 	if (adp5588_data.input_dev == NULL) {
 		err = -ENOMEM;
-		dev_err(&client->dev, " %s(%s):Can't allocate input device \n",
+		dev_err (&client->dev, " %s(%s):Can't allocate input device \n",
 			__FILE__, __FUNCTION__);
 		goto err_input_dev_alloc_failed;
 	}
@@ -729,111 +711,107 @@ adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	adp5588_data.input_dev->id.product = adp5588_data.dev_id | 0xf;
 	adp5588_data.input_dev->id.version = 0x0100;
 
-	set_bit(EV_KEY, adp5588_data.input_dev->evbit);
-	set_bit(EV_SW, adp5588_data.input_dev->evbit);
+	set_bit (EV_KEY, adp5588_data.input_dev->evbit);
+	set_bit (EV_SW, adp5588_data.input_dev->evbit);
 
 	for (i = 0; i < ADP5588_ROW_NUM; i++)
 		for (j = 1; j <= ADP5588_COL_NUM; j++) {
-			set_bit(j + i * 10, adp5588_data.input_dev->keybit);
+			set_bit (j + i * 10, adp5588_data.input_dev->keybit);
 		}
 
 #if defined(CONFIG_DEBUG_FS)
 	/* test only :  Add GPIO keys to be able report them for testing */
-
-	set_bit(KEY_MENU, adp5588_data.input_dev->keybit);
-	set_bit(KEY_POWER, adp5588_data.input_dev->keybit);
-	set_bit(KEY_HOME, adp5588_data.input_dev->keybit);
-	set_bit(KEY_BACK, adp5588_data.input_dev->keybit);
-	set_bit(KEY_MEDIA, adp5588_data.input_dev->keybit);
+	set_bit (KEY_MENU, adp5588_data.input_dev->keybit);
+	set_bit (KEY_POWER, adp5588_data.input_dev->keybit);
+	set_bit (KEY_HOME, adp5588_data.input_dev->keybit);
+	set_bit (KEY_BACK, adp5588_data.input_dev->keybit);
+	set_bit (KEY_MEDIA, adp5588_data.input_dev->keybit);
 	//set_bit(SW_LID, adp5588_data.input_dev->swbit);
 	if (adp5588_data.device_type) {	/* MOTUS */
-		set_bit(SW_TABLET_MODE, adp5588_data.input_dev->swbit);
+		set_bit (SW_TABLET_MODE, adp5588_data.input_dev->swbit);
 	}
 #endif
 
 	//set_bit(SW_MUTE, adp5588_data.input_dev->swbit);
-	set_bit(ADP5588_GPIO_KEY, adp5588_data.input_dev->keybit);
-	err = input_register_device(adp5588_data.input_dev);
+	set_bit (ADP5588_GPIO_KEY, adp5588_data.input_dev->keybit);
+	err = input_register_device (adp5588_data.input_dev);
 
 	if (err) {
-		dev_err(&client->dev,
+		dev_err (&client->dev,
 			" %s(%s): Unable to register %s input device\n",
 			__FILE__, __FUNCTION__, adp5588_data.input_dev->name);
 		goto err_input_register_device_failed;
 	}
 
 	if (client->irq) {
-		err =
-		    request_irq(client->irq, adp5588_irq_handler, request_flags,
+		err = request_irq (client->irq, adp5588_irq_handler, request_flags,
 				ADP5588NAME, &adp5588_data);
 		if (err == 0) {
 			adp5588_data.use_irq = 1;
-			err = set_irq_wake(client->irq, 1);
+			err = set_irq_wake (client->irq, 1);
 		} else {
-			dev_err(&client->dev,
+			dev_err (&client->dev,
 				" %s(%s):request irq  %d  failed\n", __FILE__,
 				__FUNCTION__, client->irq);
 			adp5588_data.use_irq = 0;
-			free_irq(client->irq, &adp5588_data);
+			free_irq (client->irq, &adp5588_data);
 		}
 	}
 
-	hrtimer_init(&adp5588_data.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_init (&adp5588_data.timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	if (!adp5588_data.use_irq) {
 		adp5588_data.timer.function = adp5588_timer_func;
-		hrtimer_start(&adp5588_data.timer, ktime_set(1, 0),
-			      HRTIMER_MODE_REL);
+		hrtimer_start (&adp5588_data.timer, ktime_set (1, 0), HRTIMER_MODE_REL);
 	} else {
 		adp5588_data.timer.function = adp5588_retry_work;
 	}
-	printk(KERN_INFO "ADP5588 : Start keypad %s in %s mode irq %d \n",
-	       adp5588_data.input_dev->name,
-	       adp5588_data.use_irq ? "interrupt" : "polling", client->irq);
+	printk (KERN_INFO "ADP5588 : Start keypad %s in %s mode irq %d \n",
+		adp5588_data.input_dev->name,
+		adp5588_data.use_irq ? "interrupt" : "polling", client->irq);
+
 	if (!adp5588_data.device_type) {
-
-		if (adp5588_read_register
-		    (client, ADP5588_REG_GPIO_DAT_STAT2, &reg) < 0) {
-			adp5588_data.ringer_switch = 1;
-			dev_err(&client->dev,
-				" %s(%s):Can't read Ringer/Silent switch state.Set it to ON\n",
-				__FILE__, __FUNCTION__);
+		if (adp5588_read_register (client, ADP5588_REG_GPIO_DAT_STAT2, &reg) < 0) {
+		  adp5588_data.ringer_switch = 1;
+		  dev_err (&client->dev,
+			   " %s(%s):Can't read Ringer/Silent switch state.Set it to ON\n",
+			   __FILE__, __FUNCTION__);
 		} else {
-			adp5588_data.ringer_switch =
-			    !(ADP5588_RINGER_KEY_BIT & reg);
-
+			adp5588_data.ringer_switch = !(ADP5588_RINGER_KEY_BIT & reg);
 		}
-		dev_dbg(&client->dev, " %s(%s):Ringer/Silent switch is %s\n",
+
+		dev_dbg (&client->dev, " %s(%s):Ringer/Silent switch is %s\n",
 			__FILE__, __FUNCTION__,
 			adp5588_data.ringer_switch ? "ON" : "MUTE");
 	} else
 		/* No MUTE switch on Motus , set to default */
 		adp5588_data.ringer_switch = 1;
 
-	if (adp5588_data.device_type) {	/* it is MOTUS  .  start lock switch handler */
-		adp5588_data.sw_lid_dev.name = "lid";
-		adp5588_data.sw_lid_dev.print_name = print_lid_switch_name;
+		if (adp5588_data.device_type) {	
+			/* it is MOTUS  .  start lock switch handler */
+			adp5588_data.sw_lid_dev.name = "lid";
+			adp5588_data.sw_lid_dev.print_name = print_lid_switch_name;
 
-		err = switch_dev_register(&adp5588_data.sw_lid_dev);
-		if (err < 0)
-			goto err_switch_dev_register;
+			err = switch_dev_register (&adp5588_data.sw_lid_dev);
+			if (err < 0)
+				goto err_switch_dev_register;
 
-		err = input_register_handler(&lid_switch_handler);
-		if (err) {
-			dev_err(&client->dev,
-				" %s(%s): Unable to register  key lock  input handler e\n",
-				__FILE__, __FUNCTION__);
-			goto err_input_register_device_failed;
-		}
-	} else {		/* It is morrison, start mute switch */
-		adp5588_data.sw_mute_dev.name = "ringer_switch";
-		adp5588_data.sw_mute_dev.print_name = print_mute_switch_name;
+			err = input_register_handler (&lid_switch_handler);
+			if (err) {
+				dev_err (&client->dev,
+					" %s(%s): Unable to register  key lock  input handler e\n",
+					__FILE__, __FUNCTION__);
+				goto err_input_register_device_failed;
+			}
+		} else {
+			/* It is morrison, start mute switch */
+			adp5588_data.sw_mute_dev.name = "ringer_switch";
+			adp5588_data.sw_mute_dev.print_name = print_mute_switch_name;
 
-		err = switch_dev_register(&adp5588_data.sw_mute_dev);
-		if (err < 0)
-			goto err_switch_dev_register;
+			err = switch_dev_register (&adp5588_data.sw_mute_dev);
+			if (err < 0)
+				goto err_switch_dev_register;
 
-		switch_set_state(&adp5588_data.sw_mute_dev,
-				 !adp5588_data.ringer_switch);
+			switch_set_state (&adp5588_data.sw_mute_dev, !adp5588_data.ringer_switch);
 	}
 
 #ifdef  CONFIG_HAS_EARLYSUSPEND
@@ -841,24 +819,28 @@ adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	adp5588_data.early_suspend.level = EARLY_SUSPEND_LEVEL_BLANK_SCREEN + 1;
 	adp5588_data.early_suspend.suspend = adp5588_early_suspend;
 	adp5588_data.early_suspend.resume = adp5588_early_resume;
-	register_early_suspend(&(adp5588_data.early_suspend));
+	register_early_suspend (&(adp5588_data.early_suspend));
 #endif
 
 	return 0;
-      err_input_register_device_failed:
-      err_switch_dev_register:
+
+err_input_register_device_failed:
+err_switch_dev_register:
 	if (adp5588_data.device_type)
-		switch_dev_unregister(&adp5588_data.sw_lid_dev);
+		switch_dev_unregister (&adp5588_data.sw_lid_dev);
 	else
-		switch_dev_unregister(&adp5588_data.sw_mute_dev);
-	input_free_device(adp5588_data.input_dev);
-      err_input_dev_alloc_failed:
-      exit_gpio_free:
-	gpio_free(ADP5588_KEYPAD_RESET_GPIO);
+		switch_dev_unregister (&adp5588_data.sw_mute_dev);
+	
+	input_free_device (adp5588_data.input_dev);
+
+err_input_dev_alloc_failed:
+exit_gpio_free:
+	gpio_free (ADP5588_KEYPAD_RESET_GPIO);
 	return err;
 }
 
 #if defined(CONFIG_DEBUG_FS)
+
 #define TEST_SCANCODE_GET(code)         (code&0xffff)
 #define TEST_IS_SWITCH(code)            (code&0xff00)
 #define TEST_SWITCH_GET(code)           (code&0xff)
@@ -866,20 +848,20 @@ adp5588_probe(struct i2c_client *client, const struct i2c_device_id *id)
 #define TEST_SCANCODE_SET(code,state,lid,ringer)  ((state<<16)| code|(lid<<8)|(ringer<13))
 
 static int
-adp5588_debug_set(void *data, u64 val)
+adp5588_debug_set (void *data, u64 val)
 {
-	dev_dbg(&(adp5588_data.client->dev),
+	dev_dbg (&(adp5588_data.client->dev),
 		" %s(%s):code %llu , state %llu \n", __FILE__, __FUNCTION__,
-		TEST_SCANCODE_GET(val), TEST_STATE_GET(val));
-	if (TEST_IS_SWITCH(val)) {
-		/* Simulate a switch  event */
-		input_report_switch(adp5588_data.input_dev,
-				    TEST_SWITCH_GET(val), TEST_STATE_GET(val));
+		TEST_SCANCODE_GET (val), TEST_STATE_GET (val));
 
+	if (TEST_IS_SWITCH (val)) {
+		/* Simulate a switch  event */
+		input_report_switch (adp5588_data.input_dev,
+			TEST_SWITCH_GET (val), TEST_STATE_GET (val));
 	} else {
 		/* Simulate a  key press/release  */
-		input_report_key(adp5588_data.input_dev, TEST_SCANCODE_GET(val),
-				 TEST_STATE_GET(val));
+		input_report_key (adp5588_data.input_dev, TEST_SCANCODE_GET (val),
+			TEST_STATE_GET (val));
 		//  Sync is removed.  It does not required  for key event
 		//  input_sync(adp5588_data.input_dev);
 	}
@@ -887,63 +869,64 @@ adp5588_debug_set(void *data, u64 val)
 }
 
 static int
-adp5588_debug_get(void *data, u64 * val)
+adp5588_debug_get (void *data, u64 * val)
 {
 	/* return last keypress */
-	*val =
-	    TEST_SCANCODE_SET(adp5588_data.last_key,
-			      adp5588_data.last_key_state,
-			      gpio_get_value(ADP5588_KEYPAD_FLIP_DETECT),
-			      adp5588_data.ringer_switch);
+	*val = TEST_SCANCODE_SET (adp5588_data.last_key,
+			 adp5588_data.last_key_state,
+			 gpio_get_value (ADP5588_KEYPAD_FLIP_DETECT),
+			 adp5588_data.ringer_switch);
 	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(adp5588_debug_fops, adp5588_debug_get,
-			adp5588_debug_set, "%llu\n");
+DEFINE_SIMPLE_ATTRIBUTE (adp5588_debug_fops, adp5588_debug_get,
+			 adp5588_debug_set, "%llu\n");
 
 static int __init
-adp5588_debug_init(void)
+adp5588_debug_init (void)
 {
 	struct dentry *dent;
 
-	dent = debugfs_create_dir("adp5588", 0);
-	if (IS_ERR(dent))
-		return PTR_ERR(dent);
+	dent = debugfs_create_dir ("adp5588", 0);
+	if (IS_ERR (dent))
+		return PTR_ERR (dent);
 
-	debugfs_create_file("scancode", 0644, dent, NULL, &adp5588_debug_fops);
+	debugfs_create_file ("scancode", 0644, dent, NULL, &adp5588_debug_fops);
 
 	return 0;
 }
+device_initcall (adp5588_debug_init);
 
-device_initcall(adp5588_debug_init);
-#endif
+#endif /* CONFIG_DEBUG_FS */
 
 static int
-adp5588_remove(struct i2c_client *client)
+adp5588_remove (struct i2c_client *client)
 {
-	struct adp5588_keypad_data *kp = i2c_get_clientdata(client);
-	dev_dbg(&client->dev, "%s: enter.\n", __FUNCTION__);
+	struct adp5588_keypad_data *kp = i2c_get_clientdata (client);
+	dev_dbg (&client->dev, "%s: enter.\n", __FUNCTION__);
 
-	if (adp5588_data.device_type) {	/* it is MOTUS  */
-		switch_dev_unregister(&adp5588_data.sw_lid_dev);
-		input_unregister_handler(&lid_switch_handler);
-	} else {		/* morrison */
-		switch_dev_unregister(&adp5588_data.sw_mute_dev);
+	if (adp5588_data.device_type) {
+		/* it is MOTUS  */
+		switch_dev_unregister (&adp5588_data.sw_lid_dev);
+		input_unregister_handler (&lid_switch_handler);
+	} else {
+		/* morrison */
+		switch_dev_unregister (&adp5588_data.sw_mute_dev);
 	}
 
 	//    if (kp->use_irq)
 	//    {
-	free_irq(client->irq, kp);
+	free_irq (client->irq, kp);
 	//        }else
-	hrtimer_cancel(&kp->timer);
-	gpio_free(ADP5588_KEYPAD_RESET_GPIO);
-	input_unregister_device(kp->input_dev);
-	kfree(kp);
+	hrtimer_cancel (&kp->timer);
+	gpio_free (ADP5588_KEYPAD_RESET_GPIO);
+	input_unregister_device (kp->input_dev);
+	kfree (kp);
 	return 0;
 }
 
 static int
-adp5588_suspend(struct i2c_client *client, pm_message_t mesg)
+adp5588_suspend (struct i2c_client *client, pm_message_t mesg)
 {
 	client = client;
 	mesg = mesg;
@@ -952,39 +935,41 @@ adp5588_suspend(struct i2c_client *client, pm_message_t mesg)
 }
 
 static int
-adp5588_resume(struct i2c_client *client)
+adp5588_resume (struct i2c_client *client)
 {
 	int lock = 0;
-	struct adp5588_keypad_data *kp = i2c_get_clientdata(client);
+	struct adp5588_keypad_data *kp = i2c_get_clientdata (client);
 	if (kp->device_type && adp5588_data.sw_dev)
-		lock = !test_bit(SW_TABLET_MODE, adp5588_data.sw_dev->sw);
+		lock = !test_bit (SW_TABLET_MODE, adp5588_data.sw_dev->sw);
+	
 	//  printk( "%s: enter.  lock %d , type %d   sw_dev %x\n", __FUNCTION__,lock,kp->device_type,adp5588_data.sw_dev);
-	adp5588_write_config(client,
-			     kp->
-			     device_type ? (lock ? adp5588_init_seq_motus_lock :
-					    adp5588_init_seq_motus) :
-			     adp5588_init_seq);
+	adp5588_write_config (client,
+		kp->device_type ? (lock ? adp5588_init_seq_motus_lock
+				: adp5588_init_seq_motus) :
+		adp5588_init_seq);
 
 	return (0);
 }
 
-#ifdef  CONFIG_HAS_EARLYSUSPEND
+#ifdef CONFIG_HAS_EARLYSUSPEND
+
 static void
-adp5588_early_suspend(struct early_suspend *handler)
+adp5588_early_suspend (struct early_suspend *handler)
 {
 	//    dev_dbg(NULL, "%s: enter.\n", __FUNCTION__);
-	adp5588_suspend(adp5588_data.client, PMSG_SUSPEND);
+	adp5588_suspend (adp5588_data.client, PMSG_SUSPEND);
 
 }
 
 static void
-adp5588_early_resume(struct early_suspend *handler)
+adp5588_early_resume (struct early_suspend *handler)
 {
 	//    dev_dbg(NULL, "%s: enter.\n", __FUNCTION__);
-	adp5588_resume(adp5588_data.client);
-
+	adp5588_resume (adp5588_data.client);
 }
+
 #endif
+
 static const struct i2c_device_id adp5588_id[] = {
 	{ADP5588NAME, 0},
 	{}
@@ -992,7 +977,7 @@ static const struct i2c_device_id adp5588_id[] = {
 
 /* This is the driver that will be inserted */
 static struct i2c_driver adp5588_keypad_driver = {
-#ifndef  CONFIG_HAS_EARLYSUSPEND
+#ifndef CONFIG_HAS_EARLYSUSPEND
 	.suspend = adp5588_suspend,
 	.resume = adp5588_resume,
 #endif
@@ -1000,25 +985,25 @@ static struct i2c_driver adp5588_keypad_driver = {
 	.remove = adp5588_remove,
 	.id_table = adp5588_id,
 	.driver = {
-		   .name = ADP5588NAME,
-		   },
+		.name = ADP5588NAME,
+	},
 };
 
 static int __devinit
-adp5588_init(void)
+adp5588_init (void)
 {
-	return i2c_add_driver(&adp5588_keypad_driver);
+	return i2c_add_driver (&adp5588_keypad_driver);
 }
 
 static void __exit
-adp5588_exit(void)
+adp5588_exit (void)
 {
-	i2c_del_driver(&adp5588_keypad_driver);
+	i2c_del_driver (&adp5588_keypad_driver);
 }
 
-device_initcall(adp5588_init);
-module_exit(adp5588_exit);
+device_initcall (adp5588_init);
+module_exit (adp5588_exit);
 
-MODULE_DESCRIPTION("ADP5588 KEYPAD DRIVER");
-MODULE_AUTHOR("Vladimir Karpovich <Vladimir.Karpovich@motorola.com>");
-MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION ("ADP5588 KEYPAD DRIVER");
+MODULE_AUTHOR ("Vladimir Karpovich <Vladimir.Karpovich@motorola.com>");
+MODULE_LICENSE ("GPL");
