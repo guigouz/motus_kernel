@@ -13,6 +13,7 @@ obj-				:=
 # Core files
 
 obj-y				+= dev-uart.o
+obj-y				+= dev-rtc.o
 obj-y				+= cpu.o
 obj-y				+= irq.o
 obj-y				+= irq-eint.o
@@ -34,6 +35,10 @@ obj-$(CONFIG_PM)		+= irq-pm.o
 # DMA support
 
 obj-$(CONFIG_S3C64XX_DMA)	+= dma.o
+
+# ADC support
+
+obj-$(CONFIG_S3C_ADC)		+= dev-adc.o
 
 # Device setup
 
