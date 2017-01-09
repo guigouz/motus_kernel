@@ -8,7 +8,7 @@
  *  Copyright (C) 2002 Alan Cox
  *  ALi (now ULi M5228) support by Clear Zhang <Clear.Zhang@ali.com.tw>
  *  Copyright (C) 2007 MontaVista Software, Inc. <source@mvista.com>
- *  Copyright (C) 2007 Bartlomiej Zolnierkiewicz <bzolnier@gmail.com>
+ *  Copyright (C) 2007-2010 Bartlomiej Zolnierkiewicz
  *
  *  (U)DMA capable version of ali 1533/1543(C), 1535(D)
  *
@@ -48,6 +48,19 @@ static u8 m5229_revision;
 static u8 chip_is_1543c_e;
 static struct pci_dev *isa_dev;
 
+static void ali_fifo_control(ide_hwif_t *hwif, ide_drive_t *drive, int on)
+{
+	struct pci_dev *pdev = to_pci_dev(hwif->dev);
+	int pio_fifo = 0x54 + hwif->channel;
+	u8 fifo;
+	int shift = 4 * (drive->dn & 1);
+
+	pci_read_config_byte(pdev, pio_fifo, &fifo);
+	fifo &= ~(0x0F << shift);
+	fifo |= (on << shift);
+	pci_write_config_byte(pdev, pio_fifo, fifo);
+}
+
 /**
  *	ali_set_pio_mode	-	set host controller for PIO mode
  *	@drive: drive
@@ -60,49 +73,26 @@ static void ali_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	ide_hwif_t *hwif = drive->hwif;
 	struct pci_dev *dev = to_pci_dev(hwif->dev);
-	struct ide_timing *t = ide_timing_find_mode(XFER_PIO_0 + pio);
-	int s_time = t->setup, a_time = t->active, c_time = t->cycle;
-	u8 s_clc, a_clc, r_clc;
-	unsigned long flags;
 	int bus_speed = ide_pci_clk ? ide_pci_clk : 33;
+	unsigned long T =  1000000 / bus_speed; /* PCI clock based */
 	int port = hwif->channel ? 0x5c : 0x58;
-	int portFIFO = hwif->channel ? 0x55 : 0x54;
-	u8 cd_dma_fifo = 0, unit = drive->dn & 1;
+	u8 unit = drive->dn & 1;
+	struct ide_timing t;
 
-	if ((s_clc = (s_time * bus_speed + 999) / 1000) >= 8)
-		s_clc = 0;
-	if ((a_clc = (a_time * bus_speed + 999) / 1000) >= 8)
-		a_clc = 0;
+	ide_timing_compute(drive, XFER_PIO_0 + pio, &t, T, 1);
 
-	if (!(r_clc = (c_time * bus_speed + 999) / 1000 - a_clc - s_clc)) {
-		r_clc = 1;
-	} else {
-		if (r_clc >= 16)
-			r_clc = 0;
-	}
-	local_irq_save(flags);
-	
+	t.setup = clamp_val(t.setup, 1, 8) & 7;
+	t.active = clamp_val(t.active, 1, 8) & 7;
+	t.recover = clamp_val(t.recover, 1, 16) & 15;
+
 	/* 
 	 * PIO mode => ATA FIFO on, ATAPI FIFO off
 	 */
-	pci_read_config_byte(dev, portFIFO, &cd_dma_fifo);
-	if (drive->media==ide_disk) {
-		if (unit) {
-			pci_write_config_byte(dev, portFIFO, (cd_dma_fifo & 0x0F) | 0x50);
-		} else {
-			pci_write_config_byte(dev, portFIFO, (cd_dma_fifo & 0xF0) | 0x05);
-		}
-	} else {
-		if (unit) {
-			pci_write_config_byte(dev, portFIFO, cd_dma_fifo & 0x0F);
-		} else {
-			pci_write_config_byte(dev, portFIFO, cd_dma_fifo & 0xF0);
-		}
-	}
-	
-	pci_write_config_byte(dev, port, s_clc);
-	pci_write_config_byte(dev, port + unit + 2, (a_clc << 4) | r_clc);
-	local_irq_restore(flags);
+	ali_fifo_control(hwif, drive, (drive->media == ide_disk) ? 0x05 : 0x00);
+
+	pci_write_config_byte(dev, port, t.setup);
+	pci_write_config_byte(dev, port + unit + 2,
+			      (t.active << 4) | t.recover);
 }
 
 /**
@@ -355,18 +345,12 @@ static int ali_cable_override(struct pci_dev *pdev)
  *
  *	This checks if the controller and the cable are capable
  *	of UDMA66 transfers. It doesn't check the drives.
- *	But see note 2 below!
- *
- *	FIXME: frobs bits that are not defined on newer ALi devicea
  */
 
 static u8 ali_cable_detect(ide_hwif_t *hwif)
 {
 	struct pci_dev *dev = to_pci_dev(hwif->dev);
-	unsigned long flags;
 	u8 cbl = ATA_CBL_PATA40, tmpbyte;
-
-	local_irq_save(flags);
 
 	if (m5229_revision >= 0xC2) {
 		/*
@@ -386,8 +370,6 @@ static u8 ali_cable_detect(ide_hwif_t *hwif)
 				cbl = ATA_CBL_PATA80;
 		}
 	}
-
-	local_irq_restore(flags);
 
 	return cbl;
 }
@@ -588,6 +570,6 @@ static void __exit ali15x3_ide_exit(void)
 module_init(ali15x3_ide_init);
 module_exit(ali15x3_ide_exit);
 
-MODULE_AUTHOR("Michael Aubry, Andrzej Krzysztofowicz, CJ, Andre Hedrick, Alan Cox");
+MODULE_AUTHOR("Michael Aubry, Andrzej Krzysztofowicz, CJ, Andre Hedrick, Alan Cox, Bartlomiej Zolnierkiewicz");
 MODULE_DESCRIPTION("PCI driver module for ALi 15x3 IDE");
 MODULE_LICENSE("GPL");
