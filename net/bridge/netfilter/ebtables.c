@@ -561,13 +561,14 @@ ebt_get_udc_positions(struct ebt_entry *e, struct ebt_table_info *newinfo,
 }
 
 static inline int
-ebt_cleanup_match(struct ebt_entry_match *m, unsigned int *i)
+ebt_cleanup_match(struct ebt_entry_match *m, struct net *net, unsigned int *i)
 {
 	struct xt_mtdtor_param par;
 
 	if (i && (*i)-- == 0)
 		return 1;
 
+	par.net       = net;
 	par.match     = m->u.match;
 	par.matchinfo = m->data;
 	par.family    = NFPROTO_BRIDGE;
@@ -595,7 +596,7 @@ ebt_cleanup_watcher(struct ebt_entry_watcher *w, unsigned int *i)
 }
 
 static inline int
-ebt_cleanup_entry(struct ebt_entry *e, unsigned int *cnt)
+ebt_cleanup_entry(struct ebt_entry *e, struct net *net, unsigned int *cnt)
 {
 	struct xt_tgdtor_param par;
 	struct ebt_entry_target *t;
@@ -606,7 +607,7 @@ ebt_cleanup_entry(struct ebt_entry *e, unsigned int *cnt)
 	if (cnt && (*cnt)-- == 0)
 		return 1;
 	EBT_WATCHER_ITERATE(e, ebt_cleanup_watcher, NULL);
-	EBT_MATCH_ITERATE(e, ebt_cleanup_match, NULL);
+	EBT_MATCH_ITERATE(e, ebt_cleanup_match, net, NULL);
 	t = (struct ebt_entry_target *)(((char *)e) + e->target_offset);
 
 	par.target   = t->u.target;
@@ -619,7 +620,9 @@ ebt_cleanup_entry(struct ebt_entry *e, unsigned int *cnt)
 }
 
 static inline int
-ebt_check_entry(struct ebt_entry *e, struct ebt_table_info *newinfo,
+ebt_check_entry(struct ebt_entry *e,
+   struct net *net,
+   struct ebt_table_info *newinfo,
    const char *name, unsigned int *cnt,
    struct ebt_cl_stack *cl_s, unsigned int udc_cnt)
 {
@@ -671,6 +674,7 @@ ebt_check_entry(struct ebt_entry *e, struct ebt_table_info *newinfo,
 	}
 	i = 0;
 
+	mtpar.net	= net;
 	mtpar.table     = tgpar.table     = name;
 	mtpar.entryinfo = tgpar.entryinfo = e;
 	mtpar.hook_mask = tgpar.hook_mask = hookmask;
@@ -728,7 +732,7 @@ ebt_check_entry(struct ebt_entry *e, struct ebt_table_info *newinfo,
 cleanup_watchers:
 	EBT_WATCHER_ITERATE(e, ebt_cleanup_watcher, &j);
 cleanup_matches:
-	EBT_MATCH_ITERATE(e, ebt_cleanup_match, &i);
+	EBT_MATCH_ITERATE(e, ebt_cleanup_match, net, &i);
 	return ret;
 }
 
@@ -808,7 +812,8 @@ letscontinue:
 }
 
 /* do the parsing of the table/chains/entries/matches/watchers/targets, heh */
-static int translate_table(char *name, struct ebt_table_info *newinfo)
+static int translate_table(struct net *net, char *name,
+			   struct ebt_table_info *newinfo)
 {
 	unsigned int i, j, k, udc_cnt;
 	int ret;
@@ -917,10 +922,10 @@ static int translate_table(char *name, struct ebt_table_info *newinfo)
 	/* used to know what we need to clean up if something goes wrong */
 	i = 0;
 	ret = EBT_ENTRY_ITERATE(newinfo->entries, newinfo->entries_size,
-	   ebt_check_entry, newinfo, name, &i, cl_s, udc_cnt);
+	   ebt_check_entry, net, newinfo, name, &i, cl_s, udc_cnt);
 	if (ret != 0) {
 		EBT_ENTRY_ITERATE(newinfo->entries, newinfo->entries_size,
-		   ebt_cleanup_entry, &i);
+				  ebt_cleanup_entry, net, &i);
 	}
 	vfree(cl_s);
 	return ret;
@@ -1019,7 +1024,7 @@ static int do_replace(struct net *net, void __user *user, unsigned int len)
 	if (ret != 0)
 		goto free_counterstmp;
 
-	ret = translate_table(tmp.name, newinfo);
+	ret = translate_table(net, tmp.name, newinfo);
 
 	if (ret != 0)
 		goto free_counterstmp;
@@ -1072,7 +1077,7 @@ static int do_replace(struct net *net, void __user *user, unsigned int len)
 
 	/* decrease module count and free resources */
 	EBT_ENTRY_ITERATE(table->entries, table->entries_size,
-	   ebt_cleanup_entry, NULL);
+			  ebt_cleanup_entry, net, NULL);
 
 	vfree(table->entries);
 	if (table->chainstack) {
@@ -1089,7 +1094,7 @@ free_unlock:
 	mutex_unlock(&ebt_mutex);
 free_iterate:
 	EBT_ENTRY_ITERATE(newinfo->entries, newinfo->entries_size,
-	   ebt_cleanup_entry, NULL);
+			  ebt_cleanup_entry, net, NULL);
 free_counterstmp:
 	vfree(counterstmp);
 	/* can be initialized in translate_table() */
@@ -1156,7 +1161,7 @@ ebt_register_table(struct net *net, const struct ebt_table *input_table)
 			newinfo->hook_entry[i] = p +
 				((char *)repl->hook_entry[i] - repl->entries);
 	}
-	ret = translate_table(repl->name, newinfo);
+	ret = translate_table(net, repl->name, newinfo);
 	if (ret != 0) {
 		BUGPRINT("Translate_table failed\n");
 		goto free_chainstack;
@@ -1206,7 +1211,7 @@ out:
 	return ERR_PTR(ret);
 }
 
-void ebt_unregister_table(struct ebt_table *table)
+void ebt_unregister_table(struct net *net, struct ebt_table *table)
 {
 	int i;
 
@@ -1218,7 +1223,7 @@ void ebt_unregister_table(struct ebt_table *table)
 	list_del(&table->list);
 	mutex_unlock(&ebt_mutex);
 	EBT_ENTRY_ITERATE(table->private->entries, table->private->entries_size,
-			  ebt_cleanup_entry, NULL);
+			  ebt_cleanup_entry, net, NULL);
 	if (table->private->nentries)
 		module_put(table->me);
 	vfree(table->private->entries);
