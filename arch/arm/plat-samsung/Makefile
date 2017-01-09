@@ -13,8 +13,10 @@ obj-				:=
 
 obj-y				+= clock.o
 obj-y				+= pwm-clock.o
+obj-y				+= gpio.o
 obj-y				+= gpio-config.o
 
+obj-$(CONFIG_SAMSUNG_GPIOLIB_4BIT)	+= gpiolib.o
 obj-$(CONFIG_SAMSUNG_CLKSRC)	+= clock-clksrc.o
 
 obj-$(CONFIG_SAMSUNG_IRQ_UART)	+= irq-uart.o
@@ -36,3 +38,7 @@ obj-y				+= dev-uart.o
 obj-$(CONFIG_S3C_DEV_USB_HOST)	+= dev-usb.o
 obj-$(CONFIG_S3C_DEV_USB_HSOTG)	+= dev-usb-hsotg.o
 obj-$(CONFIG_S3C_DEV_NAND)	+= dev-nand.o
+
+# PM support
+
+obj-$(CONFIG_PM)		+= pm-gpio.o

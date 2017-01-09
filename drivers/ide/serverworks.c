@@ -106,12 +106,13 @@ static u8 svwks_csb_check (struct pci_dev *dev)
 	return 0;
 }
 
-static void svwks_set_pio_mode(ide_drive_t *drive, const u8 pio)
+static void svwks_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 {
 	static const u8 pio_modes[] = { 0x5d, 0x47, 0x34, 0x22, 0x20 };
 	static const u8 drive_pci[] = { 0x41, 0x40, 0x43, 0x42 };
 
-	struct pci_dev *dev = to_pci_dev(drive->hwif->dev);
+	struct pci_dev *dev = to_pci_dev(hwif->dev);
+	const u8 pio = drive->pio_mode - XFER_PIO_0;
 
 	pci_write_config_byte(dev, drive_pci[drive->dn], pio_modes[pio]);
 
@@ -127,14 +128,14 @@ static void svwks_set_pio_mode(ide_drive_t *drive, const u8 pio)
 	}
 }
 
-static void svwks_set_dma_mode(ide_drive_t *drive, const u8 speed)
+static void svwks_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 {
 	static const u8 udma_modes[]		= { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05 };
 	static const u8 dma_modes[]		= { 0x77, 0x21, 0x20 };
 	static const u8 drive_pci2[]		= { 0x45, 0x44, 0x47, 0x46 };
 
-	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
+	const u8 speed		= drive->dma_mode;
 	u8 unit			= drive->dn & 1;
 
 	u8 ultra_enable	 = 0, ultra_timing = 0, dma_timing = 0;
