@@ -93,7 +93,6 @@ static void icedcc_putc(int ch)
 #endif
 
 #define putc(ch)	icedcc_putc(ch)
-#define flush()	do { } while (0)
 #endif
 
 static void putstr(const char *ptr)

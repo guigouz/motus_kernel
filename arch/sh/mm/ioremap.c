@@ -1,12 +1,12 @@
 /*
  * arch/sh/mm/ioremap.c
  *
+ * (C) Copyright 1995 1996 Linus Torvalds
+ * (C) Copyright 2005 - 2010  Paul Mundt
+ *
  * Re-map IO memory to kernel address space so that we can access it.
  * This is needed for high PCI addresses that aren't mapped in the
  * 640k-1MB IO memory area on PC's
- *
- * (C) Copyright 1995 1996 Linus Torvalds
- * (C) Copyright 2005, 2006 Paul Mundt
  *
  * This file is subject to the terms and conditions of the GNU General
  * Public License. See the file "COPYING" in the main directory of this
@@ -33,8 +33,9 @@
  * have to convert them into an offset in a page-aligned mapping, but the
  * caller shouldn't need to know that small detail.
  */
-void __iomem *__ioremap_caller(unsigned long phys_addr, unsigned long size,
-			       unsigned long flags, void *caller)
+void __iomem * __init_refok
+__ioremap_caller(unsigned long phys_addr, unsigned long size,
+		 unsigned long flags, void *caller)
 {
 	struct vm_struct *area;
 	unsigned long offset, last_addr, addr, orig_addr;
@@ -63,6 +64,12 @@ void __iomem *__ioremap_caller(unsigned long phys_addr, unsigned long size,
 	offset = phys_addr & ~PAGE_MASK;
 	phys_addr &= PAGE_MASK;
 	size = PAGE_ALIGN(last_addr+1) - phys_addr;
+
+	/*
+	 * If we can't yet use the regular approach, go the fixmap route.
+	 */
+	if (!mem_init_done)
+		return ioremap_fixed(phys_addr, size, __pgprot(flags));
 
 	/*
 	 * Ok, go for it..
@@ -134,6 +141,12 @@ void __iounmap(void __iomem *addr)
 	 * Nothing to do if there is no translatable mapping.
 	 */
 	if (iomapping_nontranslatable(vaddr))
+		return;
+
+	/*
+	 * There's no VMA if it's from an early fixed mapping.
+	 */
+	if (iounmap_fixed(addr) == 0)
 		return;
 
 #ifdef CONFIG_PMB
