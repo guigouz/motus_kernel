@@ -86,29 +86,52 @@ ENTRY(_stext)
 #endif
 
 #if defined(CONFIG_PMB) && !defined(CONFIG_PMB_LEGACY)
-	/*
-	 * Reconfigure the initial PMB mappings setup by the hardware.
-	 *
-	 * When we boot in 32-bit MMU mode there are 2 PMB entries already
-	 * setup for us.
-	 *
-	 * Entry       VPN	   PPN	    V	SZ	C	UB	WT
-	 * ---------------------------------------------------------------
-	 *   0	    0x80000000 0x00000000   1  512MB	1	0	1
-	 *   1	    0xA0000000 0x00000000   1  512MB	0	0	0
-	 *
-	 * But we reprogram them here because we want complete control over
-	 * our address space and the initial mappings may not map PAGE_OFFSET
-	 * to __MEMORY_START (or even map all of our RAM).
-	 *
-	 * Once we've setup cached and uncached mappings for all of RAM we
-	 * clear the rest of the PMB entries.
-	 *
-	 * This clearing also deals with the fact that PMB entries can persist
-	 * across reboots. The PMB could have been left in any state when the
-	 * reboot occurred, so to be safe we clear all entries and start with
-	 * with a clean slate.
-	 */
+/*
+ * Reconfigure the initial PMB mappings setup by the hardware.
+ *
+ * When we boot in 32-bit MMU mode there are 2 PMB entries already
+ * setup for us.
+ *
+ * Entry       VPN	   PPN	    V	SZ	C	UB	WT
+ * ---------------------------------------------------------------
+ *   0	    0x80000000 0x00000000   1  512MB	1	0	1
+ *   1	    0xA0000000 0x00000000   1  512MB	0	0	0
+ *
+ * But we reprogram them here because we want complete control over
+ * our address space and the initial mappings may not map PAGE_OFFSET
+ * to __MEMORY_START (or even map all of our RAM).
+ *
+ * Once we've setup cached and uncached mappings we clear the rest of the
+ * PMB entries. This clearing also deals with the fact that PMB entries
+ * can persist across reboots. The PMB could have been left in any state
+ * when the reboot occurred, so to be safe we clear all entries and start
+ * with with a clean slate.
+ *
+ * The uncached mapping is constructed using the smallest possible
+ * mapping with a single unbufferable page. Only the kernel text needs to
+ * be covered via the uncached mapping so that certain functions can be
+ * run uncached.
+ *
+ * Drivers and the like that have previously abused the 1:1 identity
+ * mapping are unsupported in 32-bit mode and must specify their caching
+ * preference when page tables are constructed.
+ *
+ * This frees up the P2 space for more nefarious purposes.
+ *
+ * Register utilization is as follows:
+ *
+ *	r0 = PMB_DATA data field
+ *	r1 = PMB_DATA address field
+ *	r2 = PMB_ADDR data field
+ *	r3 = PMB_ADDR address field
+ *	r4 = PMB_E_SHIFT
+ *	r5 = remaining amount of RAM to map
+ *	r6 = PMB mapping size we're trying to use
+ *	r7 = cached_to_uncached
+ *	r8 = scratch register
+ *	r9 = scratch register
+ *	r10 = number of PMB entries we've setup
+ */
 
 	mov.l	.LMMUCR, r1	/* Flush the TLB */
 	mov.l	@r1, r0
@@ -130,46 +153,11 @@ ENTRY(_stext)
 	mov	#0, r10
 
 	/*
-	 * r0 = PMB_DATA data field
-	 * r1 = PMB_DATA address field
-	 * r2 = PMB_ADDR data field
-	 * r3 = PMB_ADDR address field
-	 * r4 = PMB_E_SHIFT
-	 * r5 = remaining amount of RAM to map
-	 * r6 = PMB mapping size we're trying to use
-	 * r7 = cached_to_uncached
-	 * r8 = scratch register
-	 * r9 = scratch register
-	 * r10 = number of PMB entries we've setup
-	 */
-.L512:
-	mov	#(512 >> 4), r6
-	shll16	r6
-	shll8	r6
-
-	cmp/hi	r5, r6
-	bt	.L128
-
-	mov	#(PMB_SZ_512M >> 2), r9
-	shll2	r9
-
-	/*
-	 * Cached mapping
-	 */
-	mov	#PMB_C, r8
-	or	r0, r8
-	or	r9, r8
-	mov.l	r8, @r1
-	mov.l	r2, @r3
-
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
-
-	add	#1, r10		/* Increment number of PMB entries */
-
-	/*
 	 * Uncached mapping
 	 */
+	mov	#(PMB_SZ_16M >> 2), r9
+	shll2	r9
+
 	mov	#(PMB_UB >> 8), r8
 	shll8	r8
 
@@ -180,118 +168,65 @@ ENTRY(_stext)
 	add	r7, r8
 	mov.l	r8, @r3
 
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
+	add	r4, r1
+	add	r4, r3
+	add	#1, r10
 
-	add	#1, r10		/* Increment number of PMB entries */
+/*
+ * Iterate over all of the available sizes from largest to
+ * smallest for constructing the cached mapping.
+ */
+#define __PMB_ITER_BY_SIZE(size)			\
+.L##size:						\
+	mov	#(size >> 4), r6;			\
+	shll16	r6;					\
+	shll8	r6;					\
+							\
+	cmp/hi	r5, r6;					\
+	bt	9999f;					\
+							\
+	mov	#(PMB_SZ_##size##M >> 2), r9;		\
+	shll2	r9;					\
+							\
+	/*						\
+	 * Cached mapping				\
+	 */						\
+	mov	#PMB_C, r8;				\
+	or	r0, r8;					\
+	or	r9, r8;					\
+	mov.l	r8, @r1;				\
+	mov.l	r2, @r3;				\
+							\
+	/* Increment to the next PMB_DATA entry */	\
+	add	r4, r1;					\
+	/* Increment to the next PMB_ADDR entry */	\
+	add	r4, r3;					\
+	/* Increment number of PMB entries */		\
+	add	#1, r10;				\
+							\
+	sub	r6, r5;					\
+	add	r6, r0;					\
+	add	r6, r2;					\
+							\
+	bra	.L##size;				\
+9999:
 
-	sub	r6, r5
-	add	r6, r0
-	add	r6, r2
-
-	bra	.L512
-
-.L128:
-	mov	#(128 >> 4), r6
-	shll16	r6
-	shll8	r6
-
-	cmp/hi	r5, r6
-	bt	.L64
-
-	mov	#(PMB_SZ_128M >> 2), r9
-	shll2	r9
-
-	/*
-	 * Cached mapping
-	 */
-	mov	#PMB_C, r8
-	or	r0, r8
-	or	r9, r8
-	mov.l	r8, @r1
-	mov.l	r2, @r3
-
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
-
-	add	#1, r10		/* Increment number of PMB entries */
-
-	/*
-	 * Uncached mapping
-	 */
-	mov	#(PMB_UB >> 8), r8
-	shll8	r8
-
-	or	r0, r8
-	or	r9, r8
-	mov.l	r8, @r1
-	mov	r2, r8
-	add	r7, r8
-	mov.l	r8, @r3
-
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
-
-	add	#1, r10		/* Increment number of PMB entries */
-
-	sub	r6, r5
-	add	r6, r0
-	add	r6, r2
-
-	bra	.L128
-
-.L64:
-	mov	#(64 >> 4), r6
-	shll16	r6
-	shll8	r6
-
-	cmp/hi	r5, r6
-	bt	.Ldone
-
-	mov	#(PMB_SZ_64M >> 2), r9
-	shll2	r9
+	__PMB_ITER_BY_SIZE(512)
+	__PMB_ITER_BY_SIZE(128)
+	__PMB_ITER_BY_SIZE(64)
+	__PMB_ITER_BY_SIZE(16)
 
 	/*
-	 * Cached mapping
+	 * Now that we can access it, update cached_to_uncached and
+	 * uncached_size.
 	 */
-	mov	#PMB_C, r8
-	or	r0, r8
-	or	r9, r8
-	mov.l	r8, @r1
-	mov.l	r2, @r3
-
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
-
-	add	#1, r10		/* Increment number of PMB entries */
-
-	/*
-	 * Uncached mapping
-	 */
-	mov	#(PMB_UB >> 8), r8
-	shll8	r8
-
-	or	r0, r8
-	or	r9, r8
-	mov.l	r8, @r1
-	mov	r2, r8
-	add	r7, r8
-	mov.l	r8, @r3
-
-	add	r4, r1		/* Increment to the next PMB_DATA entry */
-	add	r4, r3		/* Increment to the next PMB_ADDR entry */
-
-	add	#1, r10		/* Increment number of PMB entries */
-
-	sub	r6, r5
-	add	r6, r0
-	add	r6, r2
-
-	bra	.L64
-
-.Ldone:
-	/* Update cached_to_uncached */
 	mov.l	.Lcached_to_uncached, r0
+	mov.l	r7, @r0
+
+	mov.l	.Luncached_size, r0
+	mov	#1, r7
+	shll16	r7
+	shll8	r7
 	mov.l	r7, @r0
 
 	/*
@@ -372,5 +307,6 @@ ENTRY(stack_start)
 .LFIRST_DATA_ENTRY:	.long	__MEMORY_START | PMB_V
 .LMMUCR:		.long	MMUCR
 .Lcached_to_uncached:	.long	cached_to_uncached
+.Luncached_size:	.long	uncached_size
 .LMEMORY_SIZE:		.long	__MEMORY_SIZE
 #endif
