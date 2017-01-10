@@ -1103,6 +1103,7 @@ static struct mmc_platform_data mot_7x01_sdcc2_data = {
 	.status         = mot_7x01_sdcc_slot2_status,
 	.register_status_notify    = mot_sdcc_wifi_status_notify_register,
 #endif
+	.sdiowakeup_irq = 0 /*MSM_GPIO_TO_INT(BT_HOST_WAKE_SIGNAL)*/,
 };
 
 static void __init mot_7x01_init_mmc(void)
