@@ -282,7 +282,8 @@ int ecryptfs_lookup_and_interpose_lower(struct dentry *ecryptfs_dentry,
 		goto out;
 	}
 	rc = ecryptfs_interpose(lower_dentry, ecryptfs_dentry,
-				ecryptfs_dir_inode->i_sb, 1);
+				ecryptfs_dir_inode->i_sb,
+				ECRYPTFS_INTERPOSE_FLAG_D_ADD);
 	if (rc) {
 		printk(KERN_ERR "%s: Error interposing; rc = [%d]\n",
 		       __func__, rc);
@@ -463,9 +464,6 @@ out_lock:
 	unlock_dir(lower_dir_dentry);
 	dput(lower_new_dentry);
 	dput(lower_old_dentry);
-	d_drop(lower_old_dentry);
-	d_drop(new_dentry);
-	d_drop(old_dentry);
 	return rc;
 }
 
@@ -614,6 +612,7 @@ ecryptfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct dentry *lower_new_dentry;
 	struct dentry *lower_old_dir_dentry;
 	struct dentry *lower_new_dir_dentry;
+	struct dentry *trap = NULL;
 
 	lower_old_dentry = ecryptfs_dentry_to_lower(old_dentry);
 	lower_new_dentry = ecryptfs_dentry_to_lower(new_dentry);
@@ -621,7 +620,17 @@ ecryptfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	dget(lower_new_dentry);
 	lower_old_dir_dentry = dget_parent(lower_old_dentry);
 	lower_new_dir_dentry = dget_parent(lower_new_dentry);
-	lock_rename(lower_old_dir_dentry, lower_new_dir_dentry);
+	trap = lock_rename(lower_old_dir_dentry, lower_new_dir_dentry);
+	/* source should not be ancestor of target */
+	if (trap == lower_old_dentry) {
+		rc = -EINVAL;
+		goto out_lock;
+	}
+	/* target should not be ancestor of source */
+	if (trap == lower_new_dentry) {
+		rc = -ENOTEMPTY;
+		goto out_lock;
+	}
 	rc = vfs_rename(lower_old_dir_dentry->d_inode, lower_old_dentry,
 			lower_new_dir_dentry->d_inode, lower_new_dentry);
 	if (rc)
