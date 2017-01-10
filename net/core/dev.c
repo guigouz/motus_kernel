@@ -2594,7 +2594,7 @@ out:
 	return netif_receive_skb(skb);
 }
 
-void napi_gro_flush(struct napi_struct *napi)
+static void napi_gro_flush(struct napi_struct *napi)
 {
 	struct sk_buff *skb, *next;
 
@@ -2607,7 +2607,6 @@ void napi_gro_flush(struct napi_struct *napi)
 	napi->gro_count = 0;
 	napi->gro_list = NULL;
 }
-EXPORT_SYMBOL(napi_gro_flush);
 
 enum gro_result dev_gro_receive(struct napi_struct *napi, struct sk_buff *skb)
 {
