@@ -32,7 +32,7 @@
 #define MD5STEP(f, w, x, y, z, in, s) \
 	(w += f(x, y, z) + in, w = (w<<s | w>>(32-s)) + x)
 
-static void md5_transform(u32 *hash, u32 const *in)
+void md5_transform(u32 *hash, u32 const *in)
 {
 	u32 a, b, c, d;
 
