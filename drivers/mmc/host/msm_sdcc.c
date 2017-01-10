@@ -1856,6 +1856,7 @@ msmsdcc_runtime_resume(struct device *dev)
 		 */
 		if (host->plat->sdiowakeup_irq && release_lock)
 			wake_lock_timeout(&host->sdio_wlock, HZ / 2);
+
 	}
 	return 0;
 }
