@@ -1192,7 +1192,6 @@ static void usb_reset(struct usb_info *ui)
 
 	/* Reset link and phy */
 	/*otg->reset(ui->xceiv, 1);*/
-	ui->phy_reset();
 
 	/* set usb controller interrupt threshold to zero*/
 	writel((readl(USB_USBCMD) & ~USBCMD_ITC_MASK) | USBCMD_ITC(0),
@@ -1290,7 +1289,9 @@ static void usb_do_work(struct work_struct *w)
 				pm_runtime_resume(&ui->pdev->dev);
 				dev_info(&ui->pdev->dev,
 					"msm72k_udc: IDLE -> ONLINE\n");
+#ifndef CONFIG_MACH_MOT
 				usb_reset(ui);
+#endif
 				ret = request_irq(otg->irq, usb_interrupt,
 							IRQF_SHARED,
 							ui->pdev->name, ui);

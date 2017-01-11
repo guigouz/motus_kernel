@@ -137,7 +137,9 @@ struct user_struct *alloc_uid(struct user_namespace *ns, uid_t uid)
 	struct hlist_head *hashent = uidhashentry(ns, uid);
 	struct user_struct *up, *new;
 
-	/* Make uid_hash_find() + uid_hash_insert() atomic. */
+	/* Make uid_hash_find() + uids_user_create() + uid_hash_insert()
+	 * atomic.
+	 */
 	spin_lock_irq(&uidhash_lock);
 	up = uid_hash_find(uid, hashent);
 	spin_unlock_irq(&uidhash_lock);
@@ -171,6 +173,8 @@ struct user_struct *alloc_uid(struct user_namespace *ns, uid_t uid)
 
 	return up;
 
+	put_user_ns(new->user_ns);
+	kmem_cache_free(uid_cachep, new);
 out_unlock:
 	return NULL;
 }
