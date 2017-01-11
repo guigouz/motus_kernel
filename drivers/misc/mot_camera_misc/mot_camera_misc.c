@@ -257,9 +257,9 @@ static int __init camera_misc_init(void)
 {
 	struct device_node *feat_node;
 	const void *feat_prop;
-	
+
 	ddbg_print("camera misc init");
-	
+
 	/* Check sensor Type */
 	feat_node = of_find_node_by_path(DT_HIGH_LEVEL_FEATURE);
 	if (NULL != feat_node) {
@@ -269,9 +269,9 @@ static int __init camera_misc_init(void)
 			is_smart_cam = *(u8 *)feat_prop;
 			printk(KERN_INFO "feature_smart_cam %d", is_smart_cam) ;
 		}
-		
+
 	}
-	
+
 	if ( is_smart_cam ) {
     	gpio_reset = get_gpio_by_name("gpio_cam_reset");
     	gpio_powerdown = get_gpio_by_name("gpio_cam_pwdn");	

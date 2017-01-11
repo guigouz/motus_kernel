@@ -2918,8 +2918,6 @@ int sysctl_ms_jiffies(struct ctl_table *table,
 	return -ENOSYS;
 }
 
-#endif /* CONFIG_SYSCTL_SYSCALL */
-
 static int deprecated_sysctl_warning(struct __sysctl_args *args)
 {
 	static int msg_count;
@@ -2950,6 +2948,8 @@ static int deprecated_sysctl_warning(struct __sysctl_args *args)
 	}
 	return 0;
 }
+
+#endif /* CONFIG_SYSCTL_SYSCALL */
 
 /*
  * No sense putting this after each symbol definition, twice,

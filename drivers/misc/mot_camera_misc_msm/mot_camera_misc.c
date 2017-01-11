@@ -155,7 +155,7 @@ static int camera_dev_ioctl(struct inode *inode, struct file *file, unsigned int
 
 static int __init camera_misc_init(void)
 {
-    ddbg_print("camera misc init\n" );
+    ddbg_print("camera misc init");
 
     if(misc_register( &cam_misc_device0 ))
     {
@@ -167,7 +167,7 @@ static int __init camera_misc_init(void)
 
 static void __exit camera_misc_exit(void)
 {
-    ddbg_print("camera misc exit\n" );
+    ddbg_print("camera misc exit" );
     misc_deregister( &cam_misc_device0 );
 }
 

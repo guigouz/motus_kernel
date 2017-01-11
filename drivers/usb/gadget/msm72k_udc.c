@@ -1192,7 +1192,7 @@ static void usb_reset(struct usb_info *ui)
 
 	/* Reset link and phy */
 	/*otg->reset(ui->xceiv, 1);*/
-	otg->phy_reset();
+	ui->phy_reset();
 
 	/* set usb controller interrupt threshold to zero*/
 	writel((readl(USB_USBCMD) & ~USBCMD_ITC_MASK) | USBCMD_ITC(0),

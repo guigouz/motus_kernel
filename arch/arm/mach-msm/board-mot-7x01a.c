@@ -35,6 +35,7 @@
 #include <linux/mot_battery_info.h>
 #include <linux/proc_fs.h>
 #include <linux/power_supply.h>
+#include <linux/usb/android_composite.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -646,6 +647,8 @@ static void hsusb_gpio_init(void)
 		pr_err("failed to request gpio ulpi_stop\n");
 }
 
+#if defined(CONFIG_USB_FUNCTION)
+
 static unsigned usb_gpio_lpm_config[] = {
 	GPIO_CFG(111, 1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_8MA),	/* DATA 0 */
 	GPIO_CFG(112, 1, GPIO_INPUT,  GPIO_NO_PULL, GPIO_8MA),	/* DATA 1 */
@@ -705,7 +708,6 @@ static int usb_config_gpio(int config)
 	return 0;
 }
 
-#if defined(CONFIG_USB_FUNCTION)
 /* bit shifts for USB functions */
 static struct usb_function_map usb_functions_map[] = {
 	{"diag",		0},
@@ -802,14 +804,120 @@ static void msm_hsusb_gadget_phy_reset(void)
 static struct msm_hsusb_gadget_platform_data msm_gadget_pdata = {
 	.phy_reset = msm_hsusb_gadget_phy_reset,
 };
+
+/* TODO: fix android gadget USB Kconfig -> drivers/usb/gadget/Makefile */
+#define CONFIG_USB_ANDROID_ACM
+#define CONFIG_USB_ANDROID_DIAG
+//#define CONFIG_USB_ANDROID_RNDIS
+
+static char *usb_functions_ums[] = { "usb_mass_storage" };
+static char *usb_functions_ums_adb[] = { "usb_mass_storage", "adb" };
+
+#ifdef CONFIG_USB_ANDROID_RNDIS
+#ifdef CONFIG_USB_ANDROID_DIAG
+static char *usb_functions_rndis_adb_diag[] = {
+	"rndis",
+	"adb",
+	"diag",
+};
+static char *usb_functions_rndis_diag[] = {
+	"rndis",
+	"diag",
+};
+#endif
 #endif
 
-#ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
+static char *usb_functions_all[] = {
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	"rndis",
+#endif
+	"usb_mass_storage",
+	"adb",
+#ifdef CONFIG_USB_ANDROID_ACM
+	"acm",
+#endif
+#ifdef CONFIG_USB_ANDROID_DIAG
+	"diag",
+#endif
+};
+
+static struct android_usb_product usb_products[] = {
+#if defined(CONFIG_USB_ANDROID_RNDIS) && \
+	defined(CONFIG_USB_ANDROID_DIAG) && defined(CONFIG_USB_ANDROID_ACM)
+    {
+        .product_id = 0x2d61,
+        .num_functions	= ARRAY_SIZE(usb_functions_all),
+		.functions	= usb_functions_all,
+    },
+#endif
+	{
+		.product_id	= 0x2d66,
+		.num_functions	= ARRAY_SIZE(usb_functions_ums_adb),
+		.functions	= usb_functions_ums_adb,
+	},
+	{
+		.product_id	= 0x2d67,
+		.num_functions	= ARRAY_SIZE(usb_functions_ums),
+		.functions	= usb_functions_ums,
+	},
+#if defined(CONFIG_USB_ANDROID_RNDIS) && defined(CONFIG_USB_ANDROID_DIAG)
+	{
+		.product_id	= 0x2d68,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis_adb_diag),
+		.functions	= usb_functions_rndis_adb_diag,
+	},
+	{
+		.product_id	= 0x2d69,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis_diag),
+		.functions	= usb_functions_rndis_diag,
+	},
+#endif
+};
+
+#ifdef CONFIG_USB_ANDROID_RNDIS
+static struct usb_ether_platform_data rndis_pdata = {
+	/* ethaddr is filled by board_serialno_setup */
+	.vendorID	= 0x18d1,
+	.vendorDescr	= "Google, Inc.",
+};
+
+static struct platform_device rndis_device = {
+	.name	= "rndis",
+	.id	= -1,
+	.dev	= {
+		.platform_data = &rndis_pdata,
+	},
+};
+#endif
+
+static struct android_usb_platform_data android_usb_pdata = {
+	.vendor_id	= 0x22b8,
+	.product_id	= 0x2d61,
+	.version	= 0x0100,
+	.product_name		= "Motus",
+	.manufacturer_name	= "Motorola",
+	.num_products = ARRAY_SIZE(usb_products),
+	.products = usb_products,
+	.num_functions = ARRAY_SIZE(usb_functions_all),
+	.functions = usb_functions_all,
+};
+
+static struct platform_device android_usb_device = {
+	.name	= "android_usb",
+	.id		= -1,
+	.dev		= {
+		.platform_data = &android_usb_pdata,
+	},
+};
+
+#endif /* CONFIG_USB_GADGET_MSM_72K */
+
+//#ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
+
 static struct usb_mass_storage_platform_data mass_storage_pdata = {
 	.nluns = 1,
-	.buf_size = 16384,
-	.vendor = "Motorola ",
-	.product = "Morrison",
+	.vendor = "Motorola",
+	.product = "Motus",
 	.release = 0x0010,
 };
 
@@ -820,7 +928,7 @@ static struct platform_device usb_mass_storage_device = {
 		.platform_data = &mass_storage_pdata,
 	},
 };
-#endif
+//#endif
 
 
 /* 
@@ -1425,12 +1533,14 @@ static struct platform_device *devices[] __initdata = {
 #endif
 #ifdef CONFIG_USB_GADGET_MSM_72K
 	&msm_device_gadget_peripheral,
+	&android_usb_device,
 #endif
 #ifdef CONFIG_USB_MSM_OTG_72K
 	&msm_device_otg,
 #endif
-#ifdef CONFIG_USB_FUNCTION_MASS_STORAGE
 	&usb_mass_storage_device,
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	&rndis_device,
 #endif
 #ifdef CONFIG_BT
 	&msm_bt_power_device,
