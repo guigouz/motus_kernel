@@ -152,6 +152,7 @@ static void mrst_spi_debugfs_remove(struct dw_spi *dws)
 #else
 static inline int mrst_spi_debugfs_init(struct dw_spi *dws)
 {
+	return 0;
 }
 
 static inline void mrst_spi_debugfs_remove(struct dw_spi *dws)
@@ -168,7 +169,7 @@ static void wait_till_not_busy(struct dw_spi *dws)
 			return;
 	}
 	dev_err(&dws->master->dev,
-		"DW SPI: Stutus keeps busy for 1000us after a read/write!\n");
+		"DW SPI: Status keeps busy for 1000us after a read/write!\n");
 }
 
 static void flush(struct dw_spi *dws)
@@ -407,12 +408,9 @@ static irqreturn_t dw_spi_irq(int irq, void *dev_id)
 /* Must be called inside pump_transfers() */
 static void poll_transfer(struct dw_spi *dws)
 {
-	if (dws->tx) {
-		while (dws->write(dws))
-			dws->read(dws);
-	}
+	while (dws->write(dws))
+		dws->read(dws);
 
-	dws->read(dws);
 	transfer_complete(dws);
 }
 
@@ -538,6 +536,22 @@ static void pump_transfers(unsigned long data)
 			| (chip->tmode << SPI_TMOD_OFFSET);
 	}
 	message->state = RUNNING_STATE;
+
+	/*
+	 * Adjust transfer mode if necessary. Requires platform dependent
+	 * chipselect mechanism.
+	 */
+	if (dws->cs_control) {
+		if (dws->rx && dws->tx)
+			chip->tmode = 0x00;
+		else if (dws->rx)
+			chip->tmode = 0x02;
+		else
+			chip->tmode = 0x01;
+
+		cr0 &= ~(0x3 << SPI_MODE_OFFSET);
+		cr0 |= (chip->tmode << SPI_TMOD_OFFSET);
+	}
 
 	/* Check if current transfer is a DMA transaction */
 	dws->dma_mapped = map_dma_buffers(dws);
@@ -831,6 +845,22 @@ static void spi_hw_init(struct dw_spi *dws)
 	spi_mask_intr(dws, 0xff);
 	spi_enable_chip(dws, 1);
 	flush(dws);
+
+	/*
+	 * Try to detect the FIFO depth if not set by interface driver,
+	 * the depth could be from 2 to 256 from HW spec
+	 */
+	if (!dws->fifo_len) {
+		u32 fifo;
+		for (fifo = 2; fifo <= 257; fifo++) {
+			dw_writew(dws, txfltr, fifo);
+			if (fifo != dw_readw(dws, txfltr))
+				break;
+		}
+
+		dws->fifo_len = (fifo == 257) ? 0 : fifo;
+		dw_writew(dws, txfltr, 0);
+	}
 }
 
 int __devinit dw_spi_add_host(struct dw_spi *dws)
@@ -927,6 +957,7 @@ void __devexit dw_spi_remove_host(struct dw_spi *dws)
 	/* Disconnect from the SPI framework */
 	spi_unregister_master(dws->master);
 }
+EXPORT_SYMBOL(dw_spi_remove_host);
 
 int dw_spi_suspend_host(struct dw_spi *dws)
 {
