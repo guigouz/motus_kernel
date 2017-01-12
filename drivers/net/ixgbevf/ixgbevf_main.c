@@ -956,9 +956,16 @@ static irqreturn_t ixgbevf_msix_mbx(int irq, void *data)
 	struct ixgbevf_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
 	u32 eicr;
+	u32 msg;
 
 	eicr = IXGBE_READ_REG(hw, IXGBE_VTEICS);
 	IXGBE_WRITE_REG(hw, IXGBE_VTEICR, eicr);
+
+	hw->mbx.ops.read(hw, &msg, 1);
+
+	if ((msg & IXGBE_MBVFICR_VFREQ_MASK) == IXGBE_PF_CONTROL_MSG)
+		mod_timer(&adapter->watchdog_timer,
+			  round_jiffies(jiffies + 10));
 
 	return IRQ_HANDLED;
 }
@@ -1686,8 +1693,10 @@ static void ixgbevf_clean_rx_ring(struct ixgbevf_adapter *adapter,
 	unsigned long size;
 	unsigned int i;
 
-	/* Free all the Rx ring sk_buffs */
+	if (!rx_ring->rx_buffer_info)
+		return;
 
+	/* Free all the Rx ring sk_buffs */
 	for (i = 0; i < rx_ring->count; i++) {
 		struct ixgbevf_rx_buffer *rx_buffer_info;
 
@@ -1743,6 +1752,9 @@ static void ixgbevf_clean_tx_ring(struct ixgbevf_adapter *adapter,
 	struct ixgbevf_tx_buffer *tx_buffer_info;
 	unsigned long size;
 	unsigned int i;
+
+	if (!tx_ring->tx_buffer_info)
+		return;
 
 	/* Free all the Tx ring sk_buffs */
 
@@ -1836,12 +1848,24 @@ void ixgbevf_down(struct ixgbevf_adapter *adapter)
 
 void ixgbevf_reinit_locked(struct ixgbevf_adapter *adapter)
 {
+	struct ixgbe_hw *hw = &adapter->hw;
+
 	WARN_ON(in_interrupt());
+
 	while (test_and_set_bit(__IXGBEVF_RESETTING, &adapter->state))
 		msleep(1);
 
-	ixgbevf_down(adapter);
-	ixgbevf_up(adapter);
+	/*
+	 * Check if PF is up before re-init.  If not then skip until
+	 * later when the PF is up and ready to service requests from
+	 * the VF via mailbox.  If the VF is up and running then the
+	 * watchdog task will continue to schedule reset tasks until
+	 * the PF is up and running.
+	 */
+	if (!hw->mac.ops.reset_hw(hw)) {
+		ixgbevf_down(adapter);
+		ixgbevf_up(adapter);
+	}
 
 	clear_bit(__IXGBEVF_RESETTING, &adapter->state);
 }
@@ -2357,6 +2381,8 @@ static void ixgbevf_watchdog_task(struct work_struct *work)
 					    &link_up, false)) != 0) {
 			adapter->link_up = link_up;
 			adapter->link_speed = link_speed;
+			netif_carrier_off(netdev);
+			netif_tx_stop_all_queues(netdev);
 			schedule_work(&adapter->reset_task);
 			goto pf_has_reset;
 		}
@@ -2415,7 +2441,6 @@ void ixgbevf_free_tx_resources(struct ixgbevf_adapter *adapter,
 			       struct ixgbevf_ring *tx_ring)
 {
 	struct pci_dev *pdev = adapter->pdev;
-
 
 	ixgbevf_clean_tx_ring(adapter, tx_ring);
 
@@ -2756,7 +2781,7 @@ static int ixgbevf_tso(struct ixgbevf_adapter *adapter,
 								 IPPROTO_TCP,
 								 0);
 			adapter->hw_tso_ctxt++;
-		} else if (skb_shinfo(skb)->gso_type == SKB_GSO_TCPV6) {
+		} else if (skb_is_gso_v6(skb)) {
 			ipv6_hdr(skb)->payload_len = 0;
 			tcp_hdr(skb)->check =
 			    ~csum_ipv6_magic(&ipv6_hdr(skb)->saddr,

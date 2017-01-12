@@ -2432,15 +2432,17 @@ static void ixgbe_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
+	int pool_ndx = adapter->num_vfs;
 
 	/* add VID to filter table */
-	hw->mac.ops.set_vfta(&adapter->hw, vid, 0, true);
+	hw->mac.ops.set_vfta(&adapter->hw, vid, pool_ndx, true);
 }
 
 static void ixgbe_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 {
 	struct ixgbe_adapter *adapter = netdev_priv(netdev);
 	struct ixgbe_hw *hw = &adapter->hw;
+	int pool_ndx = adapter->num_vfs;
 
 	if (!test_bit(__IXGBE_DOWN, &adapter->state))
 		ixgbe_irq_disable(adapter);
@@ -2451,7 +2453,7 @@ static void ixgbe_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
 		ixgbe_irq_enable(adapter);
 
 	/* remove VID from filter table */
-	hw->mac.ops.set_vfta(&adapter->hw, vid, 0, false);
+	hw->mac.ops.set_vfta(&adapter->hw, vid, pool_ndx, false);
 }
 
 static void ixgbe_vlan_rx_register(struct net_device *netdev,
@@ -2824,6 +2826,7 @@ static int ixgbe_up_complete(struct ixgbe_adapter *adapter)
 	u32 txdctl, rxdctl, mhadd;
 	u32 dmatxctl;
 	u32 gpie;
+	u32 ctrl_ext;
 
 	ixgbe_get_hw_control(adapter);
 
@@ -3013,6 +3016,12 @@ static int ixgbe_up_complete(struct ixgbe_adapter *adapter)
 	adapter->flags |= IXGBE_FLAG_NEED_LINK_UPDATE;
 	adapter->link_check_timeout = jiffies;
 	mod_timer(&adapter->watchdog_timer, jiffies);
+
+	/* Set PF Reset Done bit so PF/VF Mail Ops can work */
+	ctrl_ext = IXGBE_READ_REG(hw, IXGBE_CTRL_EXT);
+	ctrl_ext |= IXGBE_CTRL_EXT_PFRSTD;
+	IXGBE_WRITE_REG(hw, IXGBE_CTRL_EXT, ctrl_ext);
+
 	return 0;
 }
 
@@ -3193,6 +3202,17 @@ void ixgbe_down(struct ixgbe_adapter *adapter)
 
 	/* signal that we are down to the interrupt handler */
 	set_bit(__IXGBE_DOWN, &adapter->state);
+
+	/* disable receive for all VFs and wait one second */
+	if (adapter->num_vfs) {
+		for (i = 0 ; i < adapter->num_vfs; i++)
+			adapter->vfinfo[i].clear_to_send = 0;
+
+		/* ping all the active vfs to let them know we are going down */
+		ixgbe_ping_all_vfs(adapter);
+		/* Disable all VFTE/VFRE TX/RX */
+		ixgbe_disable_tx_rx(adapter);
+	}
 
 	/* disable receives */
 	rxctrl = IXGBE_READ_REG(hw, IXGBE_RXCTRL);
@@ -5113,7 +5133,7 @@ static int ixgbe_tso(struct ixgbe_adapter *adapter,
 			                                         iph->daddr, 0,
 			                                         IPPROTO_TCP,
 			                                         0);
-		} else if (skb_shinfo(skb)->gso_type == SKB_GSO_TCPV6) {
+		} else if (skb_is_gso_v6(skb)) {
 			ipv6_hdr(skb)->payload_len = 0;
 			tcp_hdr(skb)->check =
 			    ~csum_ipv6_magic(&ipv6_hdr(skb)->saddr,

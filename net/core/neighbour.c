@@ -2422,8 +2422,7 @@ EXPORT_SYMBOL(neigh_seq_stop);
 
 static void *neigh_stat_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	struct proc_dir_entry *pde = seq->private;
-	struct neigh_table *tbl = pde->data;
+	struct neigh_table *tbl = seq->private;
 	int cpu;
 
 	if (*pos == 0)
@@ -2440,8 +2439,7 @@ static void *neigh_stat_seq_start(struct seq_file *seq, loff_t *pos)
 
 static void *neigh_stat_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 {
-	struct proc_dir_entry *pde = seq->private;
-	struct neigh_table *tbl = pde->data;
+	struct neigh_table *tbl = seq->private;
 	int cpu;
 
 	for (cpu = *pos; cpu < nr_cpu_ids; ++cpu) {
@@ -2460,8 +2458,7 @@ static void neigh_stat_seq_stop(struct seq_file *seq, void *v)
 
 static int neigh_stat_seq_show(struct seq_file *seq, void *v)
 {
-	struct proc_dir_entry *pde = seq->private;
-	struct neigh_table *tbl = pde->data;
+	struct neigh_table *tbl = seq->private;
 	struct neigh_statistics *st = v;
 
 	if (v == SEQ_START_TOKEN) {
@@ -2506,7 +2503,7 @@ static int neigh_stat_seq_open(struct inode *inode, struct file *file)
 
 	if (!ret) {
 		struct seq_file *sf = file->private_data;
-		sf->private = PDE(inode);
+		sf->private = PDE(inode)->data;
 	}
 	return ret;
 };
