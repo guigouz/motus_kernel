@@ -87,26 +87,6 @@ struct pccard_resource_ops {
 #define SOCKET_CARDBUS		0x8000
 #define SOCKET_CARDBUS_CONFIG	0x10000
 
-static inline int cs_socket_get(struct pcmcia_socket *skt)
-{
-	int ret;
-
-	WARN_ON(skt->state & SOCKET_INUSE);
-
-	ret = try_module_get(skt->owner);
-	if (ret)
-		skt->state |= SOCKET_INUSE;
-	return ret;
-}
-
-static inline void cs_socket_put(struct pcmcia_socket *skt)
-{
-	if (skt->state & SOCKET_INUSE) {
-		skt->state &= ~SOCKET_INUSE;
-		module_put(skt->owner);
-	}
-}
-
 
 /*
  * Stuff internal to module "pcmcia_core":
@@ -114,9 +94,6 @@ static inline void cs_socket_put(struct pcmcia_socket *skt)
 
 /* cistpl.c */
 int verify_cis_cache(struct pcmcia_socket *s);
-
-/* rsrc_mgr.c */
-void release_resource_db(struct pcmcia_socket *s);
 
 /* socket_sysfs.c */
 extern int pccard_sysfs_add_socket(struct device *dev);
@@ -191,14 +168,6 @@ int pccard_get_tuple_data(struct pcmcia_socket *s, tuple_t *tuple);
 
 /* rsrc_mgr.c */
 int pcmcia_validate_mem(struct pcmcia_socket *s);
-struct resource *pcmcia_find_io_region(unsigned long base,
-				       int num,
-				       unsigned long align,
-				       struct pcmcia_socket *s);
-int pcmcia_adjust_io_region(struct resource *res,
-			    unsigned long r_start,
-			    unsigned long r_end,
-			    struct pcmcia_socket *s);
 struct resource *pcmcia_find_mem_region(u_long base,
 					u_long num,
 					u_long align,

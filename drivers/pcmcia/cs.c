@@ -283,7 +283,8 @@ void pcmcia_unregister_socket(struct pcmcia_socket *socket)
 	up_write(&pcmcia_socket_list_rwsem);
 
 	/* wait for sysfs to drop all references */
-	release_resource_db(socket);
+	if (socket->resource_ops->exit)
+		socket->resource_ops->exit(socket);
 	wait_for_completion(&socket->socket_released);
 } /* pcmcia_unregister_socket */
 EXPORT_SYMBOL(pcmcia_unregister_socket);
@@ -407,7 +408,7 @@ static void socket_shutdown(struct pcmcia_socket *s)
 			   "*** DANGER *** unable to remove socket power\n");
 	}
 
-	cs_socket_put(s);
+	s->state &= ~SOCKET_INUSE;
 }
 
 static int socket_setup(struct pcmcia_socket *skt, int initial_delay)
@@ -496,8 +497,8 @@ static int socket_insert(struct pcmcia_socket *skt)
 
 	dev_dbg(&skt->dev, "insert\n");
 
-	if (!cs_socket_get(skt))
-		return -ENODEV;
+	WARN_ON(skt->state & SOCKET_INUSE);
+	skt->state |= SOCKET_INUSE;
 
 	ret = socket_setup(skt, setup_delay);
 	if (ret == 0) {
@@ -696,6 +697,13 @@ static int pccardd(void *__skt)
 	}
 	/* make sure we are running before we exit */
 	set_current_state(TASK_RUNNING);
+
+	/* shut down socket, if a device is still present */
+	if (skt->state & SOCKET_PRESENT) {
+		mutex_lock(&skt->skt_mutex);
+		socket_remove(skt);
+		mutex_unlock(&skt->skt_mutex);
+	}
 
 	/* remove from the device core */
 	pccard_sysfs_remove_socket(&skt->dev);
