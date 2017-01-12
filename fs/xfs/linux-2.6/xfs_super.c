@@ -1064,7 +1064,7 @@ xfs_fs_write_inode(
 		xfs_ilock(ip, XFS_ILOCK_SHARED);
 		xfs_iflock(ip);
 
-		error = xfs_iflush(ip, XFS_IFLUSH_SYNC);
+		error = xfs_iflush(ip, SYNC_WAIT);
 	} else {
 		error = EAGAIN;
 		if (!xfs_ilock_nowait(ip, XFS_ILOCK_SHARED))
@@ -1072,7 +1072,7 @@ xfs_fs_write_inode(
 		if (xfs_ipincount(ip) || !xfs_iflock_nowait(ip))
 			goto out_unlock;
 
-		error = xfs_iflush(ip, XFS_IFLUSH_ASYNC_NOBLOCK);
+		error = xfs_iflush(ip, 0);
 	}
 
  out_unlock:
@@ -1256,6 +1256,29 @@ xfs_fs_statfs(
 	return 0;
 }
 
+STATIC void
+xfs_save_resvblks(struct xfs_mount *mp)
+{
+	__uint64_t resblks = 0;
+
+	mp->m_resblks_save = mp->m_resblks;
+	xfs_reserve_blocks(mp, &resblks, NULL);
+}
+
+STATIC void
+xfs_restore_resvblks(struct xfs_mount *mp)
+{
+	__uint64_t resblks;
+
+	if (mp->m_resblks_save) {
+		resblks = mp->m_resblks_save;
+		mp->m_resblks_save = 0;
+	} else
+		resblks = xfs_default_resblks(mp);
+
+	xfs_reserve_blocks(mp, &resblks, NULL);
+}
+
 STATIC int
 xfs_fs_remount(
 	struct super_block	*sb,
@@ -1335,11 +1358,27 @@ xfs_fs_remount(
 			}
 			mp->m_update_flags = 0;
 		}
+
+		/*
+		 * Fill out the reserve pool if it is empty. Use the stashed
+		 * value if it is non-zero, otherwise go with the default.
+		 */
+		xfs_restore_resvblks(mp);
 	}
 
 	/* rw -> ro */
 	if (!(mp->m_flags & XFS_MOUNT_RDONLY) && (*flags & MS_RDONLY)) {
+		/*
+		 * After we have synced the data but before we sync the
+		 * metadata, we need to free up the reserve block pool so that
+		 * the used block count in the superblock on disk is correct at
+		 * the end of the remount. Stash the current reserve pool size
+		 * so that if we get remounted rw, we can return it to the same
+		 * size.
+		 */
+
 		xfs_quiesce_data(mp);
+		xfs_save_resvblks(mp);
 		xfs_quiesce_attr(mp);
 		mp->m_flags |= XFS_MOUNT_RDONLY;
 	}
@@ -1358,8 +1397,19 @@ xfs_fs_freeze(
 {
 	struct xfs_mount	*mp = XFS_M(sb);
 
+	xfs_save_resvblks(mp);
 	xfs_quiesce_attr(mp);
 	return -xfs_fs_log_dummy(mp);
+}
+
+STATIC int
+xfs_fs_unfreeze(
+	struct super_block	*sb)
+{
+	struct xfs_mount	*mp = XFS_M(sb);
+
+	xfs_restore_resvblks(mp);
+	return 0;
 }
 
 STATIC int
@@ -1584,6 +1634,7 @@ static const struct super_operations xfs_super_operations = {
 	.put_super		= xfs_fs_put_super,
 	.sync_fs		= xfs_fs_sync_fs,
 	.freeze_fs		= xfs_fs_freeze,
+	.unfreeze_fs		= xfs_fs_unfreeze,
 	.statfs			= xfs_fs_statfs,
 	.remount_fs		= xfs_fs_remount,
 	.show_options		= xfs_fs_show_options,
