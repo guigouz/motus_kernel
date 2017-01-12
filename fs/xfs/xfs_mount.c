@@ -665,7 +665,7 @@ xfs_readsb(xfs_mount_t *mp, int flags)
 	 * access to the superblock.
 	 */
 	sector_size = xfs_getsize_buftarg(mp->m_ddev_targp);
-	extra_flags = XFS_BUF_LOCK | XFS_BUF_MANAGE | XFS_BUF_MAPPED;
+	extra_flags = XBF_LOCK | XBF_FS_MANAGED | XBF_MAPPED;
 
 	bp = xfs_buf_read(mp->m_ddev_targp, XFS_SB_DADDR, BTOBB(sector_size),
 			  extra_flags);
@@ -1455,7 +1455,7 @@ xfs_unmountfs(
 	 * push out the iclog we will never get that unlocked. hence we
 	 * need to force the log first.
 	 */
-	xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE | XFS_LOG_SYNC);
+	xfs_log_force(mp, XFS_LOG_SYNC);
 	xfs_reclaim_inodes(mp, XFS_IFLUSH_ASYNC);
 
 	xfs_qm_unmount(mp);
@@ -1465,7 +1465,7 @@ xfs_unmountfs(
 	 * that nothing is pinned.  This is important because bflush()
 	 * will skip pinned buffers.
 	 */
-	xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE | XFS_LOG_SYNC);
+	xfs_log_force(mp, XFS_LOG_SYNC);
 
 	xfs_binval(mp->m_ddev_targp);
 	if (mp->m_rtdev_targp) {
@@ -1969,7 +1969,7 @@ xfs_getsb(
 
 	ASSERT(mp->m_sb_bp != NULL);
 	bp = mp->m_sb_bp;
-	if (flags & XFS_BUF_TRYLOCK) {
+	if (flags & XBF_TRYLOCK) {
 		if (!XFS_BUF_CPSEMA(bp)) {
 			return NULL;
 		}

@@ -234,7 +234,7 @@ xfs_sync_inode_data(
 	}
 
 	error = xfs_flush_pages(ip, 0, -1, (flags & SYNC_WAIT) ?
-				0 : XFS_B_ASYNC, FI_NONE);
+				0 : XBF_ASYNC, FI_NONE);
 	xfs_iunlock(ip, XFS_IOLOCK_SHARED);
 
  out_wait:
@@ -296,10 +296,7 @@ xfs_sync_data(
 	if (error)
 		return XFS_ERROR(error);
 
-	xfs_log_force(mp, 0,
-		      (flags & SYNC_WAIT) ?
-		       XFS_LOG_FORCE | XFS_LOG_SYNC :
-		       XFS_LOG_FORCE);
+	xfs_log_force(mp, (flags & SYNC_WAIT) ? XFS_LOG_SYNC : 0);
 	return 0;
 }
 
@@ -325,10 +322,6 @@ xfs_commit_dummy_trans(
 	struct xfs_inode	*ip = mp->m_rootip;
 	struct xfs_trans	*tp;
 	int			error;
-	int			log_flags = XFS_LOG_FORCE;
-
-	if (flags & SYNC_WAIT)
-		log_flags |= XFS_LOG_SYNC;
 
 	/*
 	 * Put a dummy transaction in the log to tell recovery
@@ -350,7 +343,7 @@ xfs_commit_dummy_trans(
 	xfs_iunlock(ip, XFS_ILOCK_EXCL);
 
 	/* the log force ensures this transaction is pushed to disk */
-	xfs_log_force(mp, 0, log_flags);
+	xfs_log_force(mp, (flags & SYNC_WAIT) ? XFS_LOG_SYNC : 0);
 	return error;
 }
 
@@ -370,7 +363,7 @@ xfs_sync_fsdata(
 	if (flags & SYNC_TRYLOCK) {
 		ASSERT(!(flags & SYNC_WAIT));
 
-		bp = xfs_getsb(mp, XFS_BUF_TRYLOCK);
+		bp = xfs_getsb(mp, XBF_TRYLOCK);
 		if (!bp)
 			goto out;
 
@@ -390,7 +383,7 @@ xfs_sync_fsdata(
 		 * become pinned in between there and here.
 		 */
 		if (XFS_BUF_ISPINNED(bp))
-			xfs_log_force(mp, 0, XFS_LOG_FORCE);
+			xfs_log_force(mp, 0);
 	}
 
 
@@ -575,7 +568,7 @@ xfs_flush_inodes(
 	igrab(inode);
 	xfs_syncd_queue_work(ip->i_mount, inode, xfs_flush_inodes_work, &completion);
 	wait_for_completion(&completion);
-	xfs_log_force(ip->i_mount, (xfs_lsn_t)0, XFS_LOG_FORCE|XFS_LOG_SYNC);
+	xfs_log_force(ip->i_mount, XFS_LOG_SYNC);
 }
 
 /*
@@ -591,7 +584,7 @@ xfs_sync_worker(
 	int		error;
 
 	if (!(mp->m_flags & XFS_MOUNT_RDONLY)) {
-		xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE);
+		xfs_log_force(mp, 0);
 		xfs_reclaim_inodes(mp, XFS_IFLUSH_DELWRI_ELSE_ASYNC);
 		/* dgc: errors ignored here */
 		error = xfs_qm_sync(mp, SYNC_TRYLOCK);

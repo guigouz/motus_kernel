@@ -74,11 +74,11 @@ xfs_qm_dquot_logitem_format(
 
 	logvec->i_addr = (xfs_caddr_t)&logitem->qli_format;
 	logvec->i_len  = sizeof(xfs_dq_logformat_t);
-	XLOG_VEC_SET_TYPE(logvec, XLOG_REG_TYPE_QFORMAT);
+	logvec->i_type = XLOG_REG_TYPE_QFORMAT;
 	logvec++;
 	logvec->i_addr = (xfs_caddr_t)&logitem->qli_dquot->q_core;
 	logvec->i_len  = sizeof(xfs_disk_dquot_t);
-	XLOG_VEC_SET_TYPE(logvec, XLOG_REG_TYPE_DQUOT);
+	logvec->i_type = XLOG_REG_TYPE_DQUOT;
 
 	ASSERT(2 == logitem->qli_item.li_desc->lid_size);
 	logitem->qli_format.qlf_size = 2;
@@ -190,7 +190,7 @@ xfs_qm_dqunpin_wait(
 	/*
 	 * Give the log a push so we don't wait here too long.
 	 */
-	xfs_log_force(dqp->q_mount, (xfs_lsn_t)0, XFS_LOG_FORCE);
+	xfs_log_force(dqp->q_mount, 0);
 	wait_event(dqp->q_pinwait, (atomic_read(&dqp->q_pincount) == 0));
 }
 
@@ -237,8 +237,7 @@ xfs_qm_dquot_logitem_pushbuf(
 	}
 	mp = dqp->q_mount;
 	bp = xfs_incore(mp->m_ddev_targp, qip->qli_format.qlf_blkno,
-		    XFS_QI_DQCHUNKLEN(mp),
-		    XFS_INCORE_TRYLOCK);
+		    XFS_QI_DQCHUNKLEN(mp), XBF_TRYLOCK);
 	if (bp != NULL) {
 		if (XFS_BUF_ISDELAYWRITE(bp)) {
 			dopush = ((qip->qli_item.li_flags & XFS_LI_IN_AIL) &&
@@ -246,10 +245,9 @@ xfs_qm_dquot_logitem_pushbuf(
 			qip->qli_pushbuf_flag = 0;
 			xfs_dqunlock(dqp);
 
-			if (XFS_BUF_ISPINNED(bp)) {
-				xfs_log_force(mp, (xfs_lsn_t)0,
-					      XFS_LOG_FORCE);
-			}
+			if (XFS_BUF_ISPINNED(bp))
+				xfs_log_force(mp, 0);
+
 			if (dopush) {
 				int	error;
 #ifdef XFSRACEDEBUG
@@ -467,7 +465,7 @@ xfs_qm_qoff_logitem_format(xfs_qoff_logitem_t	*qf,
 
 	log_vector->i_addr = (xfs_caddr_t)&(qf->qql_format);
 	log_vector->i_len = sizeof(xfs_qoff_logitem_t);
-	XLOG_VEC_SET_TYPE(log_vector, XLOG_REG_TYPE_QUOTAOFF);
+	log_vector->i_type = XLOG_REG_TYPE_QUOTAOFF;
 	qf->qql_format.qf_size = 1;
 }
 

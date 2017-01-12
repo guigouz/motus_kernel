@@ -1248,13 +1248,11 @@ xfs_qm_dqflush(
 	 */
 	if (XFS_BUF_ISPINNED(bp)) {
 		trace_xfs_dqflush_force(dqp);
-		xfs_log_force(mp, (xfs_lsn_t)0, XFS_LOG_FORCE);
+		xfs_log_force(mp, 0);
 	}
 
 	if (flags & XFS_QMOPT_DELWRI) {
 		xfs_bdwrite(mp, bp);
-	} else if (flags & XFS_QMOPT_ASYNC) {
-		error = xfs_bawrite(mp, bp);
 	} else {
 		error = xfs_bwrite(mp, bp);
 	}
@@ -1529,16 +1527,13 @@ xfs_qm_dqflock_pushbuf_wait(
 	 * the flush lock when the I/O completes.
 	 */
 	bp = xfs_incore(dqp->q_mount->m_ddev_targp, dqp->q_blkno,
-		    XFS_QI_DQCHUNKLEN(dqp->q_mount),
-		    XFS_INCORE_TRYLOCK);
+		    XFS_QI_DQCHUNKLEN(dqp->q_mount), XBF_TRYLOCK);
 	if (bp != NULL) {
 		if (XFS_BUF_ISDELAYWRITE(bp)) {
 			int	error;
-			if (XFS_BUF_ISPINNED(bp)) {
-				xfs_log_force(dqp->q_mount,
-					      (xfs_lsn_t)0,
-					      XFS_LOG_FORCE);
-			}
+
+			if (XFS_BUF_ISPINNED(bp))
+				xfs_log_force(dqp->q_mount, 0);
 			error = xfs_bawrite(dqp->q_mount, bp);
 			if (error)
 				xfs_fs_cmn_err(CE_WARN, dqp->q_mount,

@@ -2180,7 +2180,7 @@ xfs_alloc_read_agf(
 	ASSERT(agno != NULLAGNUMBER);
 
 	error = xfs_read_agf(mp, tp, agno,
-			(flags & XFS_ALLOC_FLAG_TRYLOCK) ? XFS_BUF_TRYLOCK : 0,
+			(flags & XFS_ALLOC_FLAG_TRYLOCK) ? XBF_TRYLOCK : 0,
 			bpp);
 	if (error)
 		return error;
@@ -2601,5 +2601,5 @@ xfs_alloc_search_busy(xfs_trans_t *tp,
 	 * transaction that freed the block
 	 */
 	if (lsn)
-		xfs_log_force(tp->t_mountp, lsn, XFS_LOG_FORCE|XFS_LOG_SYNC);
+		xfs_log_force_lsn(tp->t_mountp, lsn, XFS_LOG_SYNC);
 }
