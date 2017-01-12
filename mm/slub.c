@@ -2062,7 +2062,7 @@ init_kmem_cache_node(struct kmem_cache_node *n, struct kmem_cache *s)
 #endif
 }
 
-static DEFINE_PER_CPU(struct kmem_cache_cpu, kmalloc_percpu[SLUB_PAGE_SHIFT]);
+static DEFINE_PER_CPU(struct kmem_cache_cpu, kmalloc_percpu[KMALLOC_CACHES]);
 
 static inline int alloc_kmem_cache_cpus(struct kmem_cache *s, gfp_t flags)
 {
@@ -2148,7 +2148,8 @@ static int init_kmem_cache_nodes(struct kmem_cache *s, gfp_t gfpflags)
 	int node;
 	int local_node;
 
-	if (slab_state >= UP)
+	if (slab_state >= UP && (s < kmalloc_caches ||
+			s > kmalloc_caches + KMALLOC_CACHES))
 		local_node = page_to_nid(virt_to_page(s));
 	else
 		local_node = 0;
@@ -2641,7 +2642,7 @@ static noinline struct kmem_cache *dma_kmalloc_cache(int index, gfp_t flags)
 	if (slab_state >= SYSFS)
 		slabflags |= __SYSFS_ADD_DEFERRED;
 
-	if (!s || !text || !kmem_cache_open(s, flags, text,
+	if (!text || !kmem_cache_open(s, flags, text,
 			realsize, ARCH_KMALLOC_MINALIGN, slabflags, NULL)) {
 		s->size = 0;
 		kfree(text);
