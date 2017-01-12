@@ -1,4 +1,4 @@
-/* linux/arch/arm/mach-s3c6410/cpu.c
+/* linux/arch/arm/mach-s3c64xx/cpu.c
  *
  * Copyright 2009 Simtec Electronics
  *	Ben Dooks <ben@simtec.co.uk>
