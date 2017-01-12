@@ -837,27 +837,6 @@ static void add_verb(struct alc_spec *spec, const struct hda_verb *verb)
 	spec->init_verbs[spec->num_init_verbs++] = verb;
 }
 
-#ifdef CONFIG_PROC_FS
-/*
- * hook for proc
- */
-static void print_realtek_coef(struct snd_info_buffer *buffer,
-			       struct hda_codec *codec, hda_nid_t nid)
-{
-	int coeff;
-
-	if (nid != 0x20)
-		return;
-	coeff = snd_hda_codec_read(codec, nid, 0, AC_VERB_GET_PROC_COEF, 0);
-	snd_iprintf(buffer, "  Processing Coefficient: 0x%02x\n", coeff);
-	coeff = snd_hda_codec_read(codec, nid, 0,
-				   AC_VERB_GET_COEF_INDEX, 0);
-	snd_iprintf(buffer, "  Coefficient Index: 0x%02x\n", coeff);
-}
-#else
-#define print_realtek_coef	NULL
-#endif
-
 /*
  * set up from the preset table
  */
@@ -1162,6 +1141,7 @@ static void alc_auto_init_amp(struct hda_codec *codec, int type)
 		case 0x10ec0888:
 			alc888_coef_init(codec);
 			break;
+#if 0 /* XXX: This may cause the silent output on speaker on some machines */
 		case 0x10ec0267:
 		case 0x10ec0268:
 			snd_hda_codec_write(codec, 0x20, 0,
@@ -1174,6 +1154,7 @@ static void alc_auto_init_amp(struct hda_codec *codec, int type)
 					    AC_VERB_SET_PROC_COEF,
 					    tmp | 0x3000);
 			break;
+#endif /* XXX */
 		}
 		break;
 	}
@@ -4974,7 +4955,6 @@ static int patch_alc880(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc880_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -6582,7 +6562,6 @@ static int patch_alc260(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc260_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -10201,7 +10180,6 @@ static int patch_alc882(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc882_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -12041,7 +12019,6 @@ static int patch_alc262(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc262_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -13105,8 +13082,6 @@ static int patch_alc268(struct hda_codec *codec)
 	if (board_config == ALC268_AUTO)
 		spec->init_hook = alc268_auto_init;
 
-	codec->proc_widget_hook = print_realtek_coef;
-
 	return 0;
 }
 
@@ -13821,7 +13796,6 @@ static int patch_alc269(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc269_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -14945,7 +14919,6 @@ static int patch_alc861(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc861_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -15925,7 +15898,6 @@ static int patch_alc861vd(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc861vd_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
@@ -18060,7 +18032,6 @@ static int patch_alc662(struct hda_codec *codec)
 	if (!spec->loopback.amplist)
 		spec->loopback.amplist = alc662_loopbacks;
 #endif
-	codec->proc_widget_hook = print_realtek_coef;
 
 	return 0;
 }
