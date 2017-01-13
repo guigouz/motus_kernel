@@ -780,10 +780,13 @@ static void check_section(const char *modname, struct elf_info *elf,
 #define ALL_EXIT_TEXT_SECTIONS \
 	".exit.text$", ".devexit.text$", ".cpuexit.text$", ".memexit.text$"
 
-#define ALL_INIT_SECTIONS INIT_SECTIONS, DEV_INIT_SECTIONS, \
-	CPU_INIT_SECTIONS, MEM_INIT_SECTIONS
-#define ALL_EXIT_SECTIONS EXIT_SECTIONS, DEV_EXIT_SECTIONS, \
-	CPU_EXIT_SECTIONS, MEM_EXIT_SECTIONS
+#define ALL_XXXINIT_SECTIONS DEV_INIT_SECTIONS, CPU_INIT_SECTIONS, \
+	MEM_INIT_SECTIONS
+#define ALL_XXXEXIT_SECTIONS DEV_EXIT_SECTIONS, CPU_EXIT_SECTIONS, \
+	MEM_EXIT_SECTIONS
+
+#define ALL_INIT_SECTIONS INIT_SECTIONS, ALL_XXXINIT_SECTIONS
+#define ALL_EXIT_SECTIONS EXIT_SECTIONS, ALL_XXXEXIT_SECTIONS
 
 #define DATA_SECTIONS ".data$", ".data.rel$"
 #define TEXT_SECTIONS ".text$"
@@ -875,7 +878,7 @@ const struct sectioncheck sectioncheck[] = {
 },
 /* Do not reference init code/data from devinit/cpuinit/meminit code/data */
 {
-	.fromsec = { DEV_INIT_SECTIONS, CPU_INIT_SECTIONS, MEM_INIT_SECTIONS, NULL },
+	.fromsec = { ALL_XXXINIT_SECTIONS, NULL },
 	.tosec   = { INIT_SECTIONS, NULL },
 	.mismatch = XXXINIT_TO_INIT,
 },
@@ -893,7 +896,7 @@ const struct sectioncheck sectioncheck[] = {
 },
 /* Do not reference exit code/data from devexit/cpuexit/memexit code/data */
 {
-	.fromsec = { DEV_EXIT_SECTIONS, CPU_EXIT_SECTIONS, MEM_EXIT_SECTIONS, NULL },
+	.fromsec = { ALL_XXXEXIT_SECTIONS, NULL },
 	.tosec   = { EXIT_SECTIONS, NULL },
 	.mismatch = XXXEXIT_TO_EXIT,
 },
@@ -960,7 +963,7 @@ static int section_mismatch(const char *fromsec, const char *tosec)
  * Pattern 2:
  *   Many drivers utilise a *driver container with references to
  *   add, remove, probe functions etc.
- *   These functions may often be marked __init and we do not want to
+ *   These functions may often be marked __devinit and we do not want to
  *   warn here.
  *   the pattern is identified by:
  *   tosec   = init or exit section
