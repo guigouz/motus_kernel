@@ -832,8 +832,6 @@ source "arch/arm/mach-netx/Kconfig"
 
 source "arch/arm/mach-nuc93x/Kconfig"
 
-source "arch/arm/mach-sa1100/Kconfig"
-
 source "arch/arm/plat-omap/Kconfig"
 
 source "arch/arm/mach-omap1/Kconfig"
@@ -879,10 +877,6 @@ source "arch/arm/mach-s5pc100/Kconfig"
 endif
 
 source "arch/arm/mach-u300/Kconfig"
-
-source "arch/arm/mach-w90x900/Kconfig"
-
-source "arch/arm/mach-bcmring/Kconfig"
 
 source "arch/arm/mach-ux500/Kconfig"
 

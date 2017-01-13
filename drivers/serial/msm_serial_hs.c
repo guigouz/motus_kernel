@@ -1247,7 +1247,7 @@ static int uartdm_init_port(struct uart_port *uport)
 	return 0;
 }
 
-static int __init msm_hs_probe(struct platform_device *pdev)
+static int msm_hs_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct uart_port *uport;
@@ -1306,7 +1306,7 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 		return -ENXIO;
 	msm_uport->dma_tx_channel = resource->start;
 	msm_uport->dma_rx_channel = resource->end;
-	
+
 	resource = platform_get_resource_byname(pdev, IORESOURCE_DMA,
 						"uartdm_crci");
 	if (unlikely(!resource))

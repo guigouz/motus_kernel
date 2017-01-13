@@ -152,7 +152,7 @@ static int ntsc_off(struct platform_device *pdev)
 	return 0;
 }
 
-static int __init ntsc_probe(struct platform_device *pdev)
+static int ntsc_probe(struct platform_device *pdev)
 {
 	msm_fb_add_device(pdev);
 

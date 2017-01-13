@@ -669,7 +669,7 @@ static int hw3d_resume(struct platform_device *pdev)
 	return 0;
 }
 
-static int __init hw3d_probe(struct platform_device *pdev)
+static int hw3d_probe(struct platform_device *pdev)
 {
 	struct hw3d_info *info;
 	struct resource *res[HW3D_NUM_REGIONS];
@@ -803,7 +803,7 @@ static struct platform_driver msm_hw3d_driver = {
 	},
 };
 
-static int __init hw3d_init(void)
+static int hw3d_init(void)
 {
 	return platform_driver_register(&msm_hw3d_driver);
 }

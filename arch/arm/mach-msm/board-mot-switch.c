@@ -427,7 +427,7 @@ device_initcall(hs_debug_init);
 
 
 
-static int __init hs_probe(struct platform_device *pdev)
+static int hs_probe(struct platform_device *pdev)
 {
 	int		rc;
 	unsigned long request_flags =  IRQF_TRIGGER_RISING|IRQF_TRIGGER_FALLING;

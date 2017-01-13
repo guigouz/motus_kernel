@@ -75,7 +75,7 @@ static int msm_camera_remove(struct platform_device *pdev)
 	return msm_camera_drv_remove(pdev);
 }
 
-static int __init msm_camera_probe(struct platform_device *dev)
+static int msm_camera_probe(struct platform_device *dev)
 {
 	int rc;
 	rc = msm_camera_drv_start(dev);

@@ -777,7 +777,7 @@ static int mddi_tpo_nv_lcd_off(struct platform_device *pdev)
          return -EINVAL;
       }
    }
-   
+
    if (tpo_nv_powered_on == TRUE)
    {
       esd_poll_stop(mddi_tpo_nv_esd_poll);
@@ -787,7 +787,7 @@ static int mddi_tpo_nv_lcd_off(struct platform_device *pdev)
    return 0;
 }
 
-static int __init mddi_tpo_nv_probe(struct platform_device *pdev)
+static int mddi_tpo_nv_probe(struct platform_device *pdev)
 {
    extern void lmxxxx_set_pwm (unsigned en_dis);
 
