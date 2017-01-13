@@ -2373,7 +2373,7 @@ static void __ieee80211_rx_handle_packet(struct ieee80211_hw *hw,
 				continue;
 			}
 
-			rx.sta = sta_info_get(prev, hdr->addr2);
+			rx.sta = sta_info_get_bss(prev, hdr->addr2);
 
 			rx.flags |= IEEE80211_RX_RA_MATCH;
 			prepares = prepare_for_handlers(prev, &rx, hdr);
@@ -2409,7 +2409,7 @@ next:
 		}
 
 		if (prev) {
-			rx.sta = sta_info_get(prev, hdr->addr2);
+			rx.sta = sta_info_get_bss(prev, hdr->addr2);
 
 			rx.flags |= IEEE80211_RX_RA_MATCH;
 			prepares = prepare_for_handlers(prev, &rx, hdr);
