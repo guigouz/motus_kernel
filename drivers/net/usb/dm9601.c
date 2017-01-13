@@ -238,7 +238,7 @@ static int dm_write_shared_word(struct usbnet *dev, int phy, u8 reg, __le16 valu
 		goto out;
 
 	dm_write_reg(dev, DM_SHARED_ADDR, phy ? (reg | 0x40) : reg);
-	dm_write_reg(dev, DM_SHARED_CTRL, phy ? 0x1a : 0x12);
+	dm_write_reg(dev, DM_SHARED_CTRL, phy ? 0x1c : 0x14);
 
 	for (i = 0; i < DM_TIMEOUT; i++) {
 		u8 tmp;
@@ -381,13 +381,13 @@ static void dm9601_set_multicast(struct net_device *net)
 
 	if (net->flags & IFF_PROMISC) {
 		rx_ctl |= 0x02;
-	} else if (net->flags & IFF_ALLMULTI || net->mc_count > DM_MAX_MCAST) {
-		rx_ctl |= 0x08;
-	} else if (net->mc_count) {
-		struct dev_mc_list *mc_list = net->mc_list;
-		int i;
+	} else if (net->flags & IFF_ALLMULTI ||
+		   netdev_mc_count(net) > DM_MAX_MCAST) {
+		rx_ctl |= 0x04;
+	} else if (!netdev_mc_empty(net)) {
+		struct dev_mc_list *mc_list;
 
-		for (i = 0; i < net->mc_count; i++, mc_list = mc_list->next) {
+		netdev_for_each_mc_addr(mc_list, net) {
 			u32 crc = ether_crc(ETH_ALEN, mc_list->dmi_addr) >> 26;
 			hashes[crc >> 3] |= 1 << (crc & 0x7);
 		}
