@@ -65,7 +65,9 @@ static const struct qlcnic_stats qlcnic_gstrings_stats[] = {
 
 static const char qlcnic_gstrings_test[][ETH_GSTRING_LEN] = {
 	"Register_Test_on_offline",
-	"Link_Test_on_offline"
+	"Link_Test_on_offline",
+	"Interrupt_Test_offline",
+	"Loopback_Test_offline"
 };
 
 #define QLCNIC_TEST_LEN	ARRAY_SIZE(qlcnic_gstrings_test)
@@ -326,11 +328,11 @@ qlcnic_get_regs(struct net_device *dev, struct ethtool_regs *regs, void *p)
 	regs->version = (1 << 24) | (adapter->ahw.revision_id << 16) |
 	    (adapter->pdev)->device;
 
-	if (adapter->is_up != QLCNIC_ADAPTER_UP_MAGIC)
-		return;
-
 	for (i = 0; diag_registers[i] != -1; i++)
 		regs_buff[i] = QLCRD32(adapter, diag_registers[i]);
+
+	if (adapter->is_up != QLCNIC_ADAPTER_UP_MAGIC)
+		return;
 
 	regs_buff[i++] = 0xFFEFCDAB; /* Marker btw regs and ring count*/
 
@@ -613,11 +615,129 @@ static int qlcnic_get_sset_count(struct net_device *dev, int sset)
 	}
 }
 
+#define QLC_ILB_PKT_SIZE 64
+
+static void qlcnic_create_loopback_buff(unsigned char *data)
+{
+	unsigned char random_data[] = {0xa8, 0x06, 0x45, 0x00};
+	memset(data, 0x4e, QLC_ILB_PKT_SIZE);
+	memset(data, 0xff, 12);
+	memcpy(data + 12, random_data, sizeof(random_data));
+}
+
+int qlcnic_check_loopback_buff(unsigned char *data)
+{
+	unsigned char buff[QLC_ILB_PKT_SIZE];
+	qlcnic_create_loopback_buff(buff);
+	return memcmp(data, buff, QLC_ILB_PKT_SIZE);
+}
+
+static int qlcnic_do_ilb_test(struct qlcnic_adapter *adapter)
+{
+	struct qlcnic_recv_context *recv_ctx = &adapter->recv_ctx;
+	struct qlcnic_host_sds_ring *sds_ring = &recv_ctx->sds_rings[0];
+	struct sk_buff *skb;
+	int i;
+
+	for (i = 0; i < 16; i++) {
+		skb = dev_alloc_skb(QLC_ILB_PKT_SIZE);
+		qlcnic_create_loopback_buff(skb->data);
+		skb_put(skb, QLC_ILB_PKT_SIZE);
+
+		adapter->diag_cnt = 0;
+
+		qlcnic_xmit_frame(skb, adapter->netdev);
+
+		msleep(5);
+
+		qlcnic_process_rcv_ring_diag(sds_ring);
+
+		dev_kfree_skb_any(skb);
+		if (!adapter->diag_cnt)
+			return -1;
+	}
+	return 0;
+}
+
+static int qlcnic_loopback_test(struct net_device *netdev)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+	int max_sds_rings = adapter->max_sds_rings;
+	int ret;
+
+	if (test_and_set_bit(__QLCNIC_RESETTING, &adapter->state))
+		return -EIO;
+
+	ret = qlcnic_diag_alloc_res(netdev, QLCNIC_LOOPBACK_TEST);
+	if (ret)
+		goto clear_it;
+
+	ret = qlcnic_set_ilb_mode(adapter);
+	if (ret)
+		goto done;
+
+	ret = qlcnic_do_ilb_test(adapter);
+
+	qlcnic_clear_ilb_mode(adapter);
+
+done:
+	qlcnic_diag_free_res(netdev, max_sds_rings);
+
+clear_it:
+	adapter->max_sds_rings = max_sds_rings;
+	clear_bit(__QLCNIC_RESETTING, &adapter->state);
+	return ret;
+}
+
+static int qlcnic_irq_test(struct net_device *netdev)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+	int max_sds_rings = adapter->max_sds_rings;
+	int ret;
+
+	if (test_and_set_bit(__QLCNIC_RESETTING, &adapter->state))
+		return -EIO;
+
+	ret = qlcnic_diag_alloc_res(netdev, QLCNIC_INTERRUPT_TEST);
+	if (ret)
+		goto clear_it;
+
+	adapter->diag_cnt = 0;
+	ret = qlcnic_issue_cmd(adapter, adapter->ahw.pci_func,
+			QLCHAL_VERSION, adapter->portnum, 0, 0, 0x00000011);
+	if (ret)
+		goto done;
+
+	msleep(10);
+
+	ret = !adapter->diag_cnt;
+
+done:
+	qlcnic_diag_free_res(netdev, max_sds_rings);
+
+clear_it:
+	adapter->max_sds_rings = max_sds_rings;
+	clear_bit(__QLCNIC_RESETTING, &adapter->state);
+	return ret;
+}
+
 static void
 qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
 		     u64 *data)
 {
 	memset(data, 0, sizeof(u64) * QLCNIC_TEST_LEN);
+
+	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
+		data[2] = qlcnic_irq_test(dev);
+		if (data[2])
+			eth_test->flags |= ETH_TEST_FL_FAILED;
+
+		data[3] = qlcnic_loopback_test(dev);
+		if (data[3])
+			eth_test->flags |= ETH_TEST_FL_FAILED;
+
+	}
+
 	data[0] = qlcnic_reg_test(dev);
 	if (data[0])
 		eth_test->flags |= ETH_TEST_FL_FAILED;
@@ -689,6 +809,30 @@ static int qlcnic_set_tso(struct net_device *dev, u32 data)
 		dev->features |= (NETIF_F_TSO | NETIF_F_TSO6);
 	else
 		dev->features &= ~(NETIF_F_TSO | NETIF_F_TSO6);
+
+	return 0;
+}
+
+static int qlcnic_blink_led(struct net_device *dev, u32 val)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(dev);
+	int ret;
+
+	ret = qlcnic_config_led(adapter, 1, 0xf);
+	if (ret) {
+		dev_err(&adapter->pdev->dev,
+			"Failed to set LED blink state.\n");
+		return ret;
+	}
+
+	msleep_interruptible(val * 1000);
+
+	ret = qlcnic_config_led(adapter, 0, 0xf);
+	if (ret) {
+		dev_err(&adapter->pdev->dev,
+			"Failed to reset LED blink state.\n");
+		return ret;
+	}
 
 	return 0;
 }
@@ -867,4 +1011,5 @@ const struct ethtool_ops qlcnic_ethtool_ops = {
 	.set_coalesce = qlcnic_set_intr_coalesce,
 	.get_flags = ethtool_op_get_flags,
 	.set_flags = qlcnic_set_flags,
+	.phys_id = qlcnic_blink_led,
 };

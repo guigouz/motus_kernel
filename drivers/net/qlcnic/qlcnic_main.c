@@ -65,8 +65,6 @@ static int __devinit qlcnic_probe(struct pci_dev *pdev,
 static void __devexit qlcnic_remove(struct pci_dev *pdev);
 static int qlcnic_open(struct net_device *netdev);
 static int qlcnic_close(struct net_device *netdev);
-static netdev_tx_t qlcnic_xmit_frame(struct sk_buff *,
-					       struct net_device *);
 static void qlcnic_tx_timeout(struct net_device *netdev);
 static void qlcnic_tx_timeout_task(struct work_struct *work);
 static void qlcnic_attach_work(struct work_struct *work);
@@ -88,6 +86,7 @@ static void qlcnic_remove_diag_entries(struct qlcnic_adapter *adapter);
 static void qlcnic_clr_all_drv_state(struct qlcnic_adapter *adapter);
 static int qlcnic_can_start_firmware(struct qlcnic_adapter *adapter);
 
+static irqreturn_t qlcnic_tmp_intr(int irq, void *data);
 static irqreturn_t qlcnic_intr(int irq, void *data);
 static irqreturn_t qlcnic_msi_intr(int irq, void *data);
 static irqreturn_t qlcnic_msix_intr(int irq, void *data);
@@ -102,7 +101,7 @@ static void qlcnic_config_indev_addr(struct net_device *dev, unsigned long);
 
 #define PCI_DEVICE_ID_QLOGIC_QLE824X  0x8020
 
-static const struct pci_device_id qlcnic_pci_tbl[] __devinitdata = {
+static DEFINE_PCI_DEVICE_TABLE(qlcnic_pci_tbl) = {
 	ENTRY(PCI_DEVICE_ID_QLOGIC_QLE824X),
 	{0,}
 };
@@ -720,13 +719,20 @@ qlcnic_request_irq(struct qlcnic_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	struct qlcnic_recv_context *recv_ctx = &adapter->recv_ctx;
 
-	if (adapter->flags & QLCNIC_MSIX_ENABLED)
-		handler = qlcnic_msix_intr;
-	else if (adapter->flags & QLCNIC_MSI_ENABLED)
-		handler = qlcnic_msi_intr;
-	else {
-		flags |= IRQF_SHARED;
-		handler = qlcnic_intr;
+	if (adapter->diag_test == QLCNIC_INTERRUPT_TEST) {
+		handler = qlcnic_tmp_intr;
+		if (!QLCNIC_IS_MSI_FAMILY(adapter))
+			flags |= IRQF_SHARED;
+
+	} else {
+		if (adapter->flags & QLCNIC_MSIX_ENABLED)
+			handler = qlcnic_msix_intr;
+		else if (adapter->flags & QLCNIC_MSI_ENABLED)
+			handler = qlcnic_msi_intr;
+		else {
+			flags |= IRQF_SHARED;
+			handler = qlcnic_intr;
+		}
 	}
 	adapter->irq = netdev->irq;
 
@@ -921,6 +927,64 @@ qlcnic_detach(struct qlcnic_adapter *adapter)
 	qlcnic_free_sw_resources(adapter);
 
 	adapter->is_up = 0;
+}
+
+void qlcnic_diag_free_res(struct net_device *netdev, int max_sds_rings)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+	struct qlcnic_host_sds_ring *sds_ring;
+	int ring;
+
+	if (adapter->diag_test == QLCNIC_INTERRUPT_TEST) {
+		for (ring = 0; ring < adapter->max_sds_rings; ring++) {
+			sds_ring = &adapter->recv_ctx.sds_rings[ring];
+			qlcnic_disable_int(sds_ring);
+		}
+	}
+
+	qlcnic_detach(adapter);
+
+	adapter->diag_test = 0;
+	adapter->max_sds_rings = max_sds_rings;
+
+	if (qlcnic_attach(adapter))
+		return;
+
+	if (netif_running(netdev))
+		__qlcnic_up(adapter, netdev);
+
+	netif_device_attach(netdev);
+}
+
+int qlcnic_diag_alloc_res(struct net_device *netdev, int test)
+{
+	struct qlcnic_adapter *adapter = netdev_priv(netdev);
+	struct qlcnic_host_sds_ring *sds_ring;
+	int ring;
+	int ret;
+
+	netif_device_detach(netdev);
+
+	if (netif_running(netdev))
+		__qlcnic_down(adapter, netdev);
+
+	qlcnic_detach(adapter);
+
+	adapter->max_sds_rings = 1;
+	adapter->diag_test = test;
+
+	ret = qlcnic_attach(adapter);
+	if (ret)
+		return ret;
+
+	if (adapter->diag_test == QLCNIC_INTERRUPT_TEST) {
+		for (ring = 0; ring < adapter->max_sds_rings; ring++) {
+			sds_ring = &adapter->recv_ctx.sds_rings[ring];
+			qlcnic_enable_int(sds_ring);
+		}
+	}
+
+	return 0;
 }
 
 int
@@ -1487,7 +1551,7 @@ qlcnic_clear_cmddesc(u64 *desc)
 	desc[2] = 0ULL;
 }
 
-static netdev_tx_t
+netdev_tx_t
 qlcnic_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
 {
 	struct qlcnic_adapter *adapter = netdev_priv(netdev);
@@ -1689,10 +1753,8 @@ static struct net_device_stats *qlcnic_get_stats(struct net_device *netdev)
 	return stats;
 }
 
-static irqreturn_t qlcnic_intr(int irq, void *data)
+static irqreturn_t qlcnic_clear_legacy_intr(struct qlcnic_adapter *adapter)
 {
-	struct qlcnic_host_sds_ring *sds_ring = data;
-	struct qlcnic_adapter *adapter = sds_ring->adapter;
 	u32 status;
 
 	status = readl(adapter->isr_int_vec);
@@ -1709,6 +1771,38 @@ static irqreturn_t qlcnic_intr(int irq, void *data)
 	/* read twice to ensure write is flushed */
 	readl(adapter->isr_int_vec);
 	readl(adapter->isr_int_vec);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t qlcnic_tmp_intr(int irq, void *data)
+{
+	struct qlcnic_host_sds_ring *sds_ring = data;
+	struct qlcnic_adapter *adapter = sds_ring->adapter;
+
+	if (adapter->flags & QLCNIC_MSIX_ENABLED)
+		goto done;
+	else if (adapter->flags & QLCNIC_MSI_ENABLED) {
+		writel(0xffffffff, adapter->tgt_status_reg);
+		goto done;
+	}
+
+	if (qlcnic_clear_legacy_intr(adapter) == IRQ_NONE)
+		return IRQ_NONE;
+
+done:
+	adapter->diag_cnt++;
+	qlcnic_enable_int(sds_ring);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t qlcnic_intr(int irq, void *data)
+{
+	struct qlcnic_host_sds_ring *sds_ring = data;
+	struct qlcnic_adapter *adapter = sds_ring->adapter;
+
+	if (qlcnic_clear_legacy_intr(adapter) == IRQ_NONE)
+		return IRQ_NONE;
 
 	napi_schedule(&sds_ring->napi);
 
@@ -1864,6 +1958,23 @@ qlcnic_set_drv_state(struct qlcnic_adapter *adapter, int state)
 	QLCWR32(adapter, QLCNIC_CRB_DRV_STATE, val);
 
 	qlcnic_api_unlock(adapter);
+}
+
+static int
+qlcnic_clr_drv_state(struct qlcnic_adapter *adapter)
+{
+	u32  val;
+
+	if (qlcnic_api_lock(adapter))
+		return -EBUSY;
+
+	val = QLCRD32(adapter, QLCNIC_CRB_DRV_STATE);
+	val &= ~((u32)0x3 << (adapter->portnum * 4));
+	QLCWR32(adapter, QLCNIC_CRB_DRV_STATE, val);
+
+	qlcnic_api_unlock(adapter);
+
+	return 0;
 }
 
 static void
@@ -2034,7 +2145,9 @@ qlcnic_detach_work(struct work_struct *work)
 
 	qlcnic_down(adapter, netdev);
 
+	rtnl_lock();
 	qlcnic_detach(adapter);
+	rtnl_unlock();
 
 	status = QLCRD32(adapter, QLCNIC_PEG_HALT_STATUS1);
 
@@ -2119,7 +2232,10 @@ qlcnic_attach_work(struct work_struct *work)
 done:
 	adapter->fw_fail_cnt = 0;
 	clear_bit(__QLCNIC_RESETTING, &adapter->state);
-	qlcnic_schedule_work(adapter, qlcnic_fw_poll_work, FW_POLL_DELAY);
+
+	if (!qlcnic_clr_drv_state(adapter))
+		qlcnic_schedule_work(adapter, qlcnic_fw_poll_work,
+							FW_POLL_DELAY);
 }
 
 static int

@@ -560,6 +560,8 @@ struct qlcnic_recv_context {
 /*
  * Context state
  */
+#define QLCHAL_VERSION	1
+
 #define QLCNIC_HOST_CTX_STATE_ACTIVE	2
 
 /*
@@ -894,6 +896,9 @@ struct qlcnic_mac_req {
 #define __QLCNIC_RESETTING		2
 #define __QLCNIC_START_FW 		4
 
+#define QLCNIC_INTERRUPT_TEST		1
+#define QLCNIC_LOOPBACK_TEST		2
+
 struct qlcnic_adapter {
 	struct qlcnic_hardware_context ahw;
 
@@ -946,9 +951,10 @@ struct qlcnic_adapter {
 	u32 heartbit;
 
 	u8 dev_state;
+	u8 diag_test;
+	u8 diag_cnt;
 	u8 rsrd1;
-	u32 rsrd2;
-
+	u16 rsrd2;
 
 	u8 mac_addr[ETH_ALEN];
 
@@ -1015,6 +1021,7 @@ void qlcnic_pcie_sem_unlock(struct qlcnic_adapter *, int);
 
 int qlcnic_get_board_info(struct qlcnic_adapter *adapter);
 int qlcnic_wol_supported(struct qlcnic_adapter *adapter);
+int qlcnic_config_led(struct qlcnic_adapter *adapter, u32 state, u32 rate);
 
 /* Functions from qlcnic_init.c */
 int qlcnic_phantom_init(struct qlcnic_adapter *adapter);
@@ -1060,15 +1067,24 @@ int qlcnic_send_lro_cleanup(struct qlcnic_adapter *adapter);
 void qlcnic_update_cmd_producer(struct qlcnic_adapter *adapter,
 		struct qlcnic_host_tx_ring *tx_ring);
 int qlcnic_get_mac_addr(struct qlcnic_adapter *adapter, u64 *mac);
+void qlcnic_clear_ilb_mode(struct qlcnic_adapter *adapter);
+int qlcnic_set_ilb_mode(struct qlcnic_adapter *adapter);
 
 /* Functions from qlcnic_main.c */
 int qlcnic_reset_context(struct qlcnic_adapter *);
+u32 qlcnic_issue_cmd(struct qlcnic_adapter *adapter,
+	u32 pci_fn, u32 version, u32 arg1, u32 arg2, u32 arg3, u32 cmd);
+void qlcnic_diag_free_res(struct net_device *netdev, int max_sds_rings);
+int qlcnic_diag_alloc_res(struct net_device *netdev, int test);
+int qlcnic_check_loopback_buff(unsigned char *data);
+netdev_tx_t qlcnic_xmit_frame(struct sk_buff *skb, struct net_device *netdev);
+void qlcnic_process_rcv_ring_diag(struct qlcnic_host_sds_ring *sds_ring);
 
 /*
  * QLOGIC Board information
  */
 
-#define QLCNIC_MAX_BOARD_NAME_LEN 64
+#define QLCNIC_MAX_BOARD_NAME_LEN 100
 struct qlcnic_brdinfo {
 	unsigned short  vendor;
 	unsigned short  device;
@@ -1078,8 +1094,12 @@ struct qlcnic_brdinfo {
 };
 
 static const struct qlcnic_brdinfo qlcnic_boards[] = {
-	{0x1077, 0x8020, 0x1077, 0x203, "8200 Series Single Port 10GbE CNA"},
-	{0x1077, 0x8020, 0x1077, 0x207, "8200 Series Dual Port 10GbE CNA"},
+	{0x1077, 0x8020, 0x1077, 0x203,
+		"8200 Series Single Port 10GbE Converged Network Adapter \
+		(TCP/IP Networking)"},
+	{0x1077, 0x8020, 0x1077, 0x207,
+		"8200 Series Dual Port 10GbE Converged Network Adapter \
+		(TCP/IP Networking)"},
 	{0x1077, 0x8020, 0x1077, 0x20b,
 		"3200 Series Dual Port 10Gb Intelligent Ethernet Adapter"},
 	{0x1077, 0x8020, 0x1077, 0x20c,
