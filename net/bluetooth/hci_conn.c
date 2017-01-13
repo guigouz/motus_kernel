@@ -420,8 +420,10 @@ struct hci_conn *hci_connect(struct hci_dev *hdev, int type,
 			return sco;
 		}
 
-		hci_sco_setup(acl, 0x00);
-
+		if (lmp_esco_capable(hdev))
+			hci_setup_sync(sco, acl->handle);
+		else
+			hci_add_sco(sco, acl->handle);
 	}
 
 
