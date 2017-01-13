@@ -151,7 +151,8 @@ static bool tomoyo_strendswith(const char *name, const char *tail)
 static struct tomoyo_path_info *tomoyo_get_path(struct path *path)
 {
 	int error;
-	struct tomoyo_path_info_with_data *buf = tomoyo_alloc(sizeof(*buf));
+	struct tomoyo_path_info_with_data *buf = kzalloc(sizeof(*buf),
+							 GFP_KERNEL);
 
 	if (!buf)
 		return NULL;
@@ -163,7 +164,7 @@ static struct tomoyo_path_info *tomoyo_get_path(struct path *path)
 		tomoyo_fill_path_info(&buf->head);
 		return &buf->head;
 	}
-	tomoyo_free(buf);
+	kfree(buf);
 	return NULL;
 }
 
@@ -1228,7 +1229,7 @@ int tomoyo_check_open_permission(struct tomoyo_domain_info *domain,
 						     TOMOYO_TYPE_TRUNCATE_ACL,
 							     buf, mode);
  out:
-	tomoyo_free(buf);
+	kfree(buf);
 	tomoyo_read_unlock(idx);
 	if (!is_enforce)
 		error = 0;
@@ -1274,7 +1275,7 @@ int tomoyo_check_1path_perm(struct tomoyo_domain_info *domain,
 	error = tomoyo_check_single_path_permission2(domain, operation, buf,
 						     mode);
  out:
-	tomoyo_free(buf);
+	kfree(buf);
 	tomoyo_read_unlock(idx);
 	if (!is_enforce)
 		error = 0;
@@ -1313,7 +1314,7 @@ int tomoyo_check_rewrite_permission(struct tomoyo_domain_info *domain,
 						     TOMOYO_TYPE_REWRITE_ACL,
 						     buf, mode);
  out:
-	tomoyo_free(buf);
+	kfree(buf);
 	tomoyo_read_unlock(idx);
 	if (!is_enforce)
 		error = 0;
@@ -1380,8 +1381,8 @@ int tomoyo_check_2path_perm(struct tomoyo_domain_info * const domain,
 					      false);
 	}
  out:
-	tomoyo_free(buf1);
-	tomoyo_free(buf2);
+	kfree(buf1);
+	kfree(buf2);
 	tomoyo_read_unlock(idx);
 	if (!is_enforce)
 		error = 0;

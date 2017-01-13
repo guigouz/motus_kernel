@@ -6,14 +6,19 @@
 obj-y := id.o io.o control.o mux.o devices.o serial.o gpmc.o timer-gp.o
 
 omap-2-3-common				= irq.o sdrc.o omap_hwmod.o
-omap-3-4-common				= dpll.o
+omap-3-4-common				= dpll3xxx.o
 prcm-common				= prcm.o powerdomain.o
-clock-common				= clock.o clock_common_data.o clockdomain.o
+clock-common				= clock.o clock_common_data.o \
+					  clockdomain.o clkt_dpll.o \
+					  clkt_clksel.o
+clock-omap2xxx				= clkt2xxx_dpllcore.o \
+					  clkt2xxx_virt_prcm_set.o
 
-obj-$(CONFIG_ARCH_OMAP2) += $(omap-2-3-common) $(prcm-common) $(clock-common)
+obj-$(CONFIG_ARCH_OMAP2) += $(omap-2-3-common) $(prcm-common) $(clock-common) \
+			    $(clock-omap2xxx)
 obj-$(CONFIG_ARCH_OMAP3) += $(omap-2-3-common) $(prcm-common) $(clock-common) \
 			    $(omap-3-4-common)
-obj-$(CONFIG_ARCH_OMAP4) += $(omap-3-4-common) prcm.o clock.o
+obj-$(CONFIG_ARCH_OMAP4) += $(omap-3-4-common) $(prcm-common) $(clock-common)
 
 obj-$(CONFIG_OMAP_MCBSP) += mcbsp.o
 

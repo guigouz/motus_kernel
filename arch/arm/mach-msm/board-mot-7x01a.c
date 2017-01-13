@@ -35,7 +35,6 @@
 #include <linux/mot_battery_info.h>
 #include <linux/proc_fs.h>
 #include <linux/power_supply.h>
-#include <linux/usb/android_composite.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -63,6 +62,9 @@
 
 #ifdef CONFIG_USB_FUNCTION
 #include <linux/usb/mass_storage_function.h>
+#endif
+#ifdef CONFIG_USB_GADGET
+#include <linux/usb/android_composite.h>
 #endif
 #include "devices.h"
 #include "clock.h"
@@ -793,16 +795,22 @@ static struct msm_hsusb_platform_data msm_hsusb_pdata = {
 
 #endif /* CONFIG_USB_FUNCTION */
 
+#if defined(CONFIG_USB_OTG_MSM_72K)
+static struct msm_otg_platform_data msm_otg_pdata = {
+	.phy_reset = msm_hsusb_phy_reset,
+};
+#endif
+
 #if defined(CONFIG_USB_GADGET_MSM_72K)
 #include <mach/rpc_hsusb.h>
 
-static void msm_hsusb_gadget_phy_reset(void)
+/*static void msm_hsusb_gadget_phy_reset(void)
 {
 	msm_hsusb_phy_reset();
-}
+}*/
 
 static struct msm_hsusb_gadget_platform_data msm_gadget_pdata = {
-	.phy_reset = msm_hsusb_gadget_phy_reset,
+	//.phy_reset = msm_hsusb_gadget_phy_reset,
 };
 
 /* TODO: fix android gadget USB Kconfig -> drivers/usb/gadget/Makefile */
@@ -1867,7 +1875,9 @@ static void __init mot_init(void)
 #ifdef CONFIG_USB_GADGET_MSM_72K
 	msm_device_gadget_peripheral.dev.platform_data = &msm_gadget_pdata;
 #endif
-
+#ifdef CONFIG_USB_OTG_MSM_72K
+	msm_device_otg.dev.platform_data = &msm_otg_pdata;
+#endif
 	/* Get vreg & reset for the display */
 	vreg_slide = vreg_get(0, "gp2");
 	if(IS_ERR(vreg_slide)) {
@@ -1922,6 +1932,7 @@ static void __init mot_init(void)
 #if defined(CONFIG_USB_FUNCTION) || defined(CONFIG_USB_GADGET_MSM_72K)
 	hsusb_gpio_init();
 #endif
+
 	bt_power_init();
 
 	platform_device_register(&msm_camera_sensor_mot_mt9p012);

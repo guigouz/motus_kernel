@@ -69,6 +69,7 @@
 #include <mach/msm_hsusb_hw.h>
 #include <mach/msm72k_otg.h>
 #include <mach/msm_hsusb.h>
+#include <mach/vreg.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
 
@@ -437,16 +438,47 @@ static irqreturn_t msm_otg_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+#ifdef CONFIG_MACH_MOT
+static int usb_wakeup_phy(struct msm_otg *dev)
+{
+	int i;
+
+	writel(readl(USB_USBCMD) & ~ULPI_STP_CTRL, USB_USBCMD);
+
+	/* some circuits automatically clear PHCD bit */
+	for (i = 0; i < 5 && (readl(USB_PORTSC) & PORTSC_PHCD); i++) {
+		writel(readl(USB_PORTSC) & ~PORTSC_PHCD, USB_PORTSC);
+		msleep(1);
+	}
+
+	if ((readl(USB_PORTSC) & PORTSC_PHCD)) {
+		pr_err("%s: cannot clear phcd bit\n", __func__);
+		return -1;
+	}
+
+	return 0;
+}
+#endif
+
 #define USB_LINK_RESET_TIMEOUT	(msecs_to_jiffies(10))
 static void otg_reset(struct msm_otg *dev)
 {
 	unsigned long timeout;
 
+#ifdef CONFIG_MACH_MOT
+	/* reset the phy before resetting link */
+	if (readl(USB_PORTSC) & PORTSC_PHCD)
+		usb_wakeup_phy(dev);
+#endif
+
 	if (dev->phy_reset)
 		dev->phy_reset();
+
+#ifndef CONFIG_MACH_MOT
 	/*disable all phy interrupts*/
 	ulpi_write(dev, 0x1F, 0x0F);
 	ulpi_write(dev, 0x1F, 0x12);
+#endif
 	msleep(100);
 
 	writel(USBCMD_RESET, USB_USBCMD);
@@ -460,7 +492,8 @@ static void otg_reset(struct msm_otg *dev)
 	}
 
 	/* select ULPI phy */
-	writel(0x80000000, USB_PORTSC);
+	/*writel(0x80000000, USB_PORTSC);*/
+	writel((readl(USB_PORTSC) & ~PORTSC_PTS) | PORTSC_PTS_ULPI, USB_PORTSC);
 
 	ulpi_write(dev, ULPI_AMPLITUDE, ULPI_CONFIG_REG);
 	writel(0x0, USB_AHB_BURST);
@@ -532,6 +565,10 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 		ret = -ENODEV;
 		goto free_regs;
 	}
+
+#ifdef CONFIG_MACH_MOT
+	vreg_disable( vreg_get(NULL, "usb") );   /* vreg usb unused */
+#endif
 
 	/* enable clocks */
 	clk_enable(dev->clk);

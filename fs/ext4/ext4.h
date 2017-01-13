@@ -314,6 +314,29 @@ static inline __u32 ext4_mask_flags(umode_t mode, __u32 flags)
 		return flags & EXT4_OTHER_FLMASK;
 }
 
+#define TEST_FLAG_VALUE(FLAG) (EXT4_##FLAG##_FL == (1 << EXT4_INODE_##FLAG))
+#define CHECK_FLAG_VALUE(FLAG) if (!TEST_FLAG_VALUE(FLAG)) { \
+	printk(KERN_EMERG "EXT4 flag fail: " #FLAG ": %d %d\n", \
+		EXT4_##FLAG##_FL, EXT4_INODE_##FLAG); BUG_ON(1); }
+
+/*
+ * Since it's pretty easy to mix up bit numbers and hex values, and we
+ * can't do a compile-time test for ENUM values, we use a run-time
+ * test to make sure that EXT4_XXX_FL is consistent with respect to
+ * EXT4_INODE_XXX.  If all is well the printk and BUG_ON will all drop
+ * out so it won't cost any extra space in the compiled kernel image.
+ * But it's important that these values are the same, since we are
+ * using EXT4_INODE_XXX to test for the flag values, but EXT4_XX_FL
+ * must be consistent with the values of FS_XXX_FL defined in
+ * include/linux/fs.h and the on-disk values found in ext2, ext3, and
+ * ext4 filesystems, and of course the values defined in e2fsprogs.
+ *
+ * It's not paranoia if the Murphy's Law really *is* out to get you.  :-)
+ */
+static inline void ext4_check_flag_values(void)
+{
+}
+
 /* Used to pass group descriptor data when online resize is done */
 struct ext4_new_group_input {
 	__u32 group;		/* Group number for this data */
@@ -1053,6 +1076,7 @@ enum {
 	EXT4_STATE_DA_ALLOC_CLOSE,	/* Alloc DA blks on close */
 	EXT4_STATE_EXT_MIGRATE,		/* Inode is migrating */
 	EXT4_STATE_DIO_UNWRITTEN,	/* need convert on dio done*/
+	EXT4_STATE_NEWENTRY,
 };
 
 static inline int ext4_test_inode_state(struct inode *inode, int bit)
@@ -1662,6 +1686,7 @@ struct ext4_group_info {
 	ext4_grpblk_t	bb_first_free;	/* first free block */
 	ext4_grpblk_t	bb_free;	/* total free blocks */
 	ext4_grpblk_t	bb_fragments;	/* nr of freespace fragments */
+	ext4_grpblk_t	bb_largest_free_order;/* order of largest frag in BG */
 	struct          list_head bb_prealloc_list;
 #ifdef DOUBLE_CHECK
 	void            *bb_bitmap;
@@ -1793,6 +1818,8 @@ static inline void set_bitmap_uptodate(struct buffer_head *bh)
 {
 	set_bit(BH_BITMAP_UPTODATE, &(bh)->b_state);
 }
+
+#define in_range(b, first, len) ((b) >= (first) && (b) <= (first) + (len) - 1)
 
 #endif	/* __KERNEL__ */
 
