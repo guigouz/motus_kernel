@@ -33,15 +33,22 @@ static int pci_initialized;
 static void __devinit pcibios_scanbus(struct pci_channel *hose)
 {
 	static int next_busno;
+	static int need_domain_info;
 	struct pci_bus *bus;
 
 	bus = pci_scan_bus(next_busno, hose->pci_ops, hose);
+	hose->bus = bus;
+
+	need_domain_info = need_domain_info || hose->index;
+	hose->need_domain_info = need_domain_info;
 	if (bus) {
 		next_busno = bus->subordinate + 1;
 		/* Don't allow 8-bit bus number overflow inside the hose -
 		   reserve some space for bridges. */
-		if (next_busno > 224)
+		if (next_busno > 224) {
 			next_busno = 0;
+			need_domain_info = 1;
+		}
 
 		pci_bus_size_bridges(bus);
 		pci_bus_assign_resources(bus);
@@ -53,8 +60,12 @@ static DEFINE_MUTEX(pci_scan_mutex);
 
 void __devinit register_pci_controller(struct pci_channel *hose)
 {
-	request_resource(&iomem_resource, hose->mem_resource);
-	request_resource(&ioport_resource, hose->io_resource);
+	if (request_resource(&iomem_resource, hose->mem_resource) < 0)
+		goto out;
+	if (request_resource(&ioport_resource, hose->io_resource) < 0) {
+		release_resource(hose->mem_resource);
+		goto out;
+	}
 
 	*hose_tail = hose;
 	hose_tail = &hose->next;
@@ -76,6 +87,9 @@ void __devinit register_pci_controller(struct pci_channel *hose)
 		pcibios_scanbus(hose);
 		mutex_unlock(&pci_scan_mutex);
 	}
+
+out:
+	printk(KERN_WARNING "Skipping PCI bus scan due to resource conflict\n");
 }
 
 static int __init pcibios_init(void)
@@ -300,8 +314,14 @@ static void __iomem *ioport_map_pci(struct pci_dev *dev,
 {
 	struct pci_channel *chan = dev->sysdata;
 
-	if (!chan->io_map_base)
+	if (unlikely(!chan->io_map_base)) {
 		chan->io_map_base = generic_io_base;
+
+		if (pci_domains_supported)
+			panic("To avoid data corruption io_map_base MUST be "
+			      "set with multiple PCI domains.");
+	}
+
 
 	return (void __iomem *)(chan->io_map_base + port);
 }
@@ -319,20 +339,9 @@ void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long maxlen)
 
 	if (flags & IORESOURCE_IO)
 		return ioport_map_pci(dev, start, len);
-
-	/*
-	 * Presently the IORESOURCE_MEM case is a bit special, most
-	 * SH7751 style PCI controllers have PCI memory at a fixed
-	 * location in the address space where no remapping is desired.
-	 * With the IORESOURCE_MEM case more care has to be taken
-	 * to inhibit page table mapping for legacy cores, but this is
-	 * punted off to __ioremap().
-	 *					-- PFM.
-	 */
 	if (flags & IORESOURCE_MEM) {
 		if (flags & IORESOURCE_CACHEABLE)
 			return ioremap(start, len);
-
 		return ioremap_nocache(start, len);
 	}
 
