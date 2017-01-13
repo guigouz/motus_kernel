@@ -140,8 +140,7 @@ static int sub_alloc(struct idr *idp, int *starting_id, struct idr_layer **pa)
 	id = *starting_id;
  restart:
 	p = idp->top;
-	l = idp->layers;
-	pa[l--] = NULL;
+	l = p->layer;
 	while (1) {
 		/*
 		 * We run around this while until we reach the leaf node...
