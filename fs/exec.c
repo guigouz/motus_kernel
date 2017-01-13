@@ -1017,20 +1017,6 @@ int flush_old_exec(struct linux_binprm * bprm)
 		goto out;
 
 	bprm->mm = NULL;		/* We're using it now */
-	return 0;
-
-out:
-	return retval;
-}
-EXPORT_SYMBOL(flush_old_exec);
-
-void setup_new_exec(struct linux_binprm * bprm)
-{
-	int i, ch;
-	char * name;
-	char tcomm[sizeof(current->comm)];
-
-	arch_pick_mmap_layout(current->mm);
 
 	set_fs(USER_DS);
 	current->flags &= ~PF_RANDOMIZE;
