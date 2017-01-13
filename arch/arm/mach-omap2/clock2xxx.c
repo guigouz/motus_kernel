@@ -44,23 +44,13 @@
 #include "cm.h"
 #include "cm-regbits-24xx.h"
 
-
-/* CM_CLKEN_PLL.EN_{54,96}M_PLL options (24XX) */
-#define EN_APLL_STOPPED			0
-#define EN_APLL_LOCKED			3
-
-/* CM_CLKSEL1_PLL.APLLS_CLKIN options (24XX) */
-#define APLLS_CLKIN_19_2MHZ		0
-#define APLLS_CLKIN_13MHZ		2
-#define APLLS_CLKIN_12MHZ		3
-
 struct clk *vclk, *sclk, *dclk;
-
-void __iomem *prcm_clksrc_ctrl;
 
 /*-------------------------------------------------------------------------
  * Omap24xx specific clock functions
  *-------------------------------------------------------------------------*/
+
+#ifdef CONFIG_ARCH_OMAP2430
 
 /**
  * omap2430_clk_i2chs_find_idlest - return CM_IDLEST info for 2430 I2CHS
@@ -81,6 +71,10 @@ static void omap2430_clk_i2chs_find_idlest(struct clk *clk,
 	*idlest_bit = clk->enable_bit;
 }
 
+#else
+#define omap2430_clk_i2chs_find_idlest	NULL
+#endif
+
 /* 2430 I2CHS has non-standard IDLEST register */
 const struct clkops clkops_omap2430_i2chs_wait = {
 	.enable		= omap2_dflt_clk_enable,
@@ -88,138 +82,6 @@ const struct clkops clkops_omap2430_i2chs_wait = {
 	.find_idlest	= omap2430_clk_i2chs_find_idlest,
 	.find_companion = omap2_clk_dflt_find_companion,
 };
-
-static int omap2_enable_osc_ck(struct clk *clk)
-{
-	u32 pcc;
-
-	pcc = __raw_readl(prcm_clksrc_ctrl);
-
-	__raw_writel(pcc & ~OMAP_AUTOEXTCLKMODE_MASK, prcm_clksrc_ctrl);
-
-	return 0;
-}
-
-static void omap2_disable_osc_ck(struct clk *clk)
-{
-	u32 pcc;
-
-	pcc = __raw_readl(prcm_clksrc_ctrl);
-
-	__raw_writel(pcc | OMAP_AUTOEXTCLKMODE_MASK, prcm_clksrc_ctrl);
-}
-
-const struct clkops clkops_oscck = {
-	.enable		= omap2_enable_osc_ck,
-	.disable	= omap2_disable_osc_ck,
-};
-
-#ifdef OLD_CK
-/* Recalculate SYST_CLK */
-static void omap2_sys_clk_recalc(struct clk *clk)
-{
-	u32 div = PRCM_CLKSRC_CTRL;
-	div &= (1 << 7) | (1 << 6);	/* Test if ext clk divided by 1 or 2 */
-	div >>= clk->rate_offset;
-	clk->rate = (clk->parent->rate / div);
-	propagate_rate(clk);
-}
-#endif	/* OLD_CK */
-
-/* Enable an APLL if off */
-static int omap2_clk_apll_enable(struct clk *clk, u32 status_mask)
-{
-	u32 cval, apll_mask;
-
-	apll_mask = EN_APLL_LOCKED << clk->enable_bit;
-
-	cval = cm_read_mod_reg(PLL_MOD, CM_CLKEN);
-
-	if ((cval & apll_mask) == apll_mask)
-		return 0;   /* apll already enabled */
-
-	cval &= ~apll_mask;
-	cval |= apll_mask;
-	cm_write_mod_reg(cval, PLL_MOD, CM_CLKEN);
-
-	omap2_cm_wait_idlest(OMAP_CM_REGADDR(PLL_MOD, CM_IDLEST), status_mask,
-			     clk->name);
-
-	/*
-	 * REVISIT: Should we return an error code if omap2_wait_clock_ready()
-	 * fails?
-	 */
-	return 0;
-}
-
-static int omap2_clk_apll96_enable(struct clk *clk)
-{
-	return omap2_clk_apll_enable(clk, OMAP24XX_ST_96M_APLL);
-}
-
-static int omap2_clk_apll54_enable(struct clk *clk)
-{
-	return omap2_clk_apll_enable(clk, OMAP24XX_ST_54M_APLL);
-}
-
-/* Stop APLL */
-static void omap2_clk_apll_disable(struct clk *clk)
-{
-	u32 cval;
-
-	cval = cm_read_mod_reg(PLL_MOD, CM_CLKEN);
-	cval &= ~(EN_APLL_LOCKED << clk->enable_bit);
-	cm_write_mod_reg(cval, PLL_MOD, CM_CLKEN);
-}
-
-const struct clkops clkops_apll96 = {
-	.enable		= omap2_clk_apll96_enable,
-	.disable	= omap2_clk_apll_disable,
-};
-
-const struct clkops clkops_apll54 = {
-	.enable		= omap2_clk_apll54_enable,
-	.disable	= omap2_clk_apll_disable,
-};
-
-static u32 omap2_get_apll_clkin(void)
-{
-	u32 aplls, srate = 0;
-
-	aplls = cm_read_mod_reg(PLL_MOD, CM_CLKSEL1);
-	aplls &= OMAP24XX_APLLS_CLKIN_MASK;
-	aplls >>= OMAP24XX_APLLS_CLKIN_SHIFT;
-
-	if (aplls == APLLS_CLKIN_19_2MHZ)
-		srate = 19200000;
-	else if (aplls == APLLS_CLKIN_13MHZ)
-		srate = 13000000;
-	else if (aplls == APLLS_CLKIN_12MHZ)
-		srate = 12000000;
-
-	return srate;
-}
-
-static u32 omap2_get_sysclkdiv(void)
-{
-	u32 div;
-
-	div = __raw_readl(prcm_clksrc_ctrl);
-	div &= OMAP_SYSCLKDIV_MASK;
-	div >>= OMAP_SYSCLKDIV_SHIFT;
-
-	return div;
-}
-
-unsigned long omap2_osc_clk_recalc(struct clk *clk)
-{
-	return omap2_get_apll_clkin() * omap2_get_sysclkdiv();
-}
-
-unsigned long omap2_sys_clk_recalc(struct clk *clk)
-{
-	return clk->parent->rate / omap2_get_sysclkdiv();
-}
 
 /*
  * Set clocks for bypass mode for reboot to work.
