@@ -175,6 +175,7 @@ struct ixgbe_ring {
 
 	struct ixgbe_queue_stats stats;
 	unsigned long reinit_state;
+	int numa_node;
 	u64 rsc_count;			/* stat for coalesced packets */
 	u64 rsc_flush;			/* stats for flushed packets */
 	u32 restart_queue;		/* track tx queue restarts */
@@ -293,7 +294,7 @@ struct ixgbe_adapter {
 	u16 eitr_high;
 
 	/* TX */
-	struct ixgbe_ring *tx_ring ____cacheline_aligned_in_smp; /* One per active queue */
+	struct ixgbe_ring *tx_ring[MAX_TX_QUEUES] ____cacheline_aligned_in_smp;
 	int num_tx_queues;
 	u32 tx_timeout_count;
 	bool detect_tx_hung;
@@ -302,7 +303,7 @@ struct ixgbe_adapter {
 	u64 lsc_int;
 
 	/* RX */
-	struct ixgbe_ring *rx_ring ____cacheline_aligned_in_smp; /* One per active queue */
+	struct ixgbe_ring *rx_ring[MAX_RX_QUEUES] ____cacheline_aligned_in_smp;
 	int num_rx_queues;
 	int num_rx_pools;		/* == num_rx_queues in 82598 */
 	int num_rx_queues_per_pool;	/* 1 if 82598, can be many if 82599 */
@@ -341,15 +342,14 @@ struct ixgbe_adapter {
 #define IXGBE_FLAG_VMDQ_ENABLED                 (u32)(1 << 19)
 #define IXGBE_FLAG_FAN_FAIL_CAPABLE             (u32)(1 << 20)
 #define IXGBE_FLAG_NEED_LINK_UPDATE             (u32)(1 << 22)
-#define IXGBE_FLAG_IN_WATCHDOG_TASK             (u32)(1 << 23)
-#define IXGBE_FLAG_IN_SFP_LINK_TASK             (u32)(1 << 24)
-#define IXGBE_FLAG_IN_SFP_MOD_TASK              (u32)(1 << 25)
-#define IXGBE_FLAG_FDIR_HASH_CAPABLE            (u32)(1 << 26)
-#define IXGBE_FLAG_FDIR_PERFECT_CAPABLE         (u32)(1 << 27)
-#define IXGBE_FLAG_FCOE_CAPABLE                 (u32)(1 << 28)
-#define IXGBE_FLAG_FCOE_ENABLED                 (u32)(1 << 29)
-#define IXGBE_FLAG_SRIOV_CAPABLE                (u32)(1 << 30)
-#define IXGBE_FLAG_SRIOV_ENABLED                (u32)(1 << 31)
+#define IXGBE_FLAG_IN_SFP_LINK_TASK             (u32)(1 << 23)
+#define IXGBE_FLAG_IN_SFP_MOD_TASK              (u32)(1 << 24)
+#define IXGBE_FLAG_FDIR_HASH_CAPABLE            (u32)(1 << 25)
+#define IXGBE_FLAG_FDIR_PERFECT_CAPABLE         (u32)(1 << 26)
+#define IXGBE_FLAG_FCOE_CAPABLE                 (u32)(1 << 27)
+#define IXGBE_FLAG_FCOE_ENABLED                 (u32)(1 << 28)
+#define IXGBE_FLAG_SRIOV_CAPABLE                (u32)(1 << 29)
+#define IXGBE_FLAG_SRIOV_ENABLED                (u32)(1 << 30)
 
 	u32 flags2;
 #define IXGBE_FLAG2_RSC_CAPABLE                 (u32)(1)
@@ -399,6 +399,8 @@ struct ixgbe_adapter {
 	u64 rsc_total_flush;
 	u32 wol;
 	u16 eeprom_version;
+
+	int node;
 
 	/* SR-IOV */
 	DECLARE_BITMAP(active_vfs, IXGBE_MAX_VF_FUNCTIONS);

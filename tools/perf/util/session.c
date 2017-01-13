@@ -1,4 +1,3 @@
-#define _LARGEFILE64_SOURCE
 #define _FILE_OFFSET_BITS 64
 
 #include <linux/kernel.h>
@@ -15,7 +14,7 @@ static int perf_session__open(struct perf_session *self, bool force)
 {
 	struct stat input_stat;
 
-	self->fd = open(self->filename, O_RDONLY|O_LARGEFILE);
+	self->fd = open(self->filename, O_RDONLY);
 	if (self->fd < 0) {
 		pr_err("failed to open file: %s", self->filename);
 		if (!strcmp(self->filename, "perf.data"))
@@ -51,6 +50,11 @@ out_close:
 	close(self->fd);
 	self->fd = -1;
 	return -1;
+}
+
+static inline int perf_session__create_kernel_maps(struct perf_session *self)
+{
+	return map_groups__create_kernel_maps(&self->kmaps, self->vmlinux_maps);
 }
 
 struct perf_session *perf_session__new(const char *filename, int mode, bool force)
@@ -380,8 +384,9 @@ static struct thread *perf_session__register_idle_thread(struct perf_session *se
 	return thread;
 }
 
-int perf_session__process_events(struct perf_session *self,
-				 struct perf_event_ops *ops)
+int __perf_session__process_events(struct perf_session *self,
+				   u64 data_offset, u64 data_size,
+				   u64 file_size, struct perf_event_ops *ops)
 {
 	int err, mmap_prot, mmap_flags;
 	u64 head, shift;
@@ -391,32 +396,11 @@ int perf_session__process_events(struct perf_session *self,
 	uint32_t size;
 	char *buf;
 
-	if (perf_session__register_idle_thread(self) == NULL)
-		return -ENOMEM;
-
 	perf_event_ops__fill_defaults(ops);
 
 	page_size = sysconf(_SC_PAGESIZE);
 
-	head = self->header.data_offset;
-
-	if (!symbol_conf.full_paths) {
-		char bf[PATH_MAX];
-
-		if (getcwd(bf, sizeof(bf)) == NULL) {
-			err = -errno;
-out_getcwd_err:
-			pr_err("failed to get the current directory\n");
-			goto out_err;
-		}
-		self->cwd = strdup(bf);
-		if (self->cwd == NULL) {
-			err = -ENOMEM;
-			goto out_getcwd_err;
-		}
-		self->cwdlen = strlen(self->cwd);
-	}
-
+	head = data_offset;
 	shift = page_size * (head / page_size);
 	offset += shift;
 	head -= shift;
@@ -481,13 +465,45 @@ more:
 
 	head += size;
 
-	if (offset + head >= self->header.data_offset + self->header.data_size)
+	if (offset + head >= data_offset + data_size)
 		goto done;
 
-	if (offset + head < self->size)
+	if (offset + head < file_size)
 		goto more;
 done:
 	err = 0;
+out_err:
+	return err;
+}
+
+int perf_session__process_events(struct perf_session *self,
+				 struct perf_event_ops *ops)
+{
+	int err;
+
+	if (perf_session__register_idle_thread(self) == NULL)
+		return -ENOMEM;
+
+	if (!symbol_conf.full_paths) {
+		char bf[PATH_MAX];
+
+		if (getcwd(bf, sizeof(bf)) == NULL) {
+			err = -errno;
+out_getcwd_err:
+			pr_err("failed to get the current directory\n");
+			goto out_err;
+		}
+		self->cwd = strdup(bf);
+		if (self->cwd == NULL) {
+			err = -ENOMEM;
+			goto out_getcwd_err;
+		}
+		self->cwdlen = strlen(self->cwd);
+	}
+
+	err = __perf_session__process_events(self, self->header.data_offset,
+					     self->header.data_size,
+					     self->size, ops);
 out_err:
 	return err;
 }
@@ -507,6 +523,7 @@ int perf_session__set_kallsyms_ref_reloc_sym(struct perf_session *self,
 					     u64 addr)
 {
 	char *bracket;
+	enum map_type i;
 
 	self->ref_reloc_sym.name = strdup(symbol_name);
 	if (self->ref_reloc_sym.name == NULL)
@@ -517,6 +534,12 @@ int perf_session__set_kallsyms_ref_reloc_sym(struct perf_session *self,
 		*bracket = '\0';
 
 	self->ref_reloc_sym.addr = addr;
+
+	for (i = 0; i < MAP__NR_TYPES; ++i) {
+		struct kmap *kmap = map__kmap(self->vmlinux_maps[i]);
+		kmap->ref_reloc_sym = &self->ref_reloc_sym;
+	}
+
 	return 0;
 }
 
@@ -530,20 +553,21 @@ static u64 map__reloc_unmap_ip(struct map *map, u64 ip)
 	return ip - (s64)map->pgoff;
 }
 
-void perf_session__reloc_vmlinux_maps(struct perf_session *self,
-				      u64 unrelocated_addr)
+void map__reloc_vmlinux(struct map *self)
 {
-	enum map_type type;
-	s64 reloc = unrelocated_addr - self->ref_reloc_sym.addr;
+	struct kmap *kmap = map__kmap(self);
+	s64 reloc;
+
+	if (!kmap->ref_reloc_sym || !kmap->ref_reloc_sym->unrelocated_addr)
+		return;
+
+	reloc = (kmap->ref_reloc_sym->unrelocated_addr -
+		 kmap->ref_reloc_sym->addr);
 
 	if (!reloc)
 		return;
 
-	for (type = 0; type < MAP__NR_TYPES; ++type) {
-		struct map *map = self->vmlinux_maps[type];
-
-		map->map_ip = map__reloc_map_ip;
-		map->unmap_ip = map__reloc_unmap_ip;
-		map->pgoff = reloc;
-	}
+	self->map_ip   = map__reloc_map_ip;
+	self->unmap_ip = map__reloc_unmap_ip;
+	self->pgoff    = reloc;
 }
