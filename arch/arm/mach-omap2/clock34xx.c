@@ -2,10 +2,10 @@
  * OMAP3-specific clock framework functions
  *
  * Copyright (C) 2007-2008 Texas Instruments, Inc.
- * Copyright (C) 2007-2009 Nokia Corporation
+ * Copyright (C) 2007-2010 Nokia Corporation
  *
- * Written by Paul Walmsley
- * Testing and integration fixes by Jouni Högander
+ * Paul Walmsley
+ * Jouni Högander
  *
  * Parts of this code are based on code written by
  * Richard Woodruff, Tony Lindgren, Tuukka Tikkanen, Karthik Dasu
@@ -16,27 +16,17 @@
  */
 #undef DEBUG
 
-#include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/device.h>
-#include <linux/list.h>
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/limits.h>
-#include <linux/bitops.h>
 
 #include <plat/cpu.h>
 #include <plat/clock.h>
-#include <plat/sram.h>
-#include <plat/sdrc.h>
-#include <asm/div64.h>
-#include <asm/clkdev.h>
 
 #include "clock.h"
 #include "clock34xx.h"
-#include "sdrc.h"
 #include "prm.h"
 #include "prm-regbits-34xx.h"
 #include "cm.h"
@@ -160,32 +150,7 @@ int omap3_dpll4_set_rate(struct clk *clk, unsigned long rate)
 	return omap3_noncore_dpll_set_rate(clk, rate);
 }
 
-/* Common clock code */
-
-/*
- * As it is structured now, this will prevent an OMAP2/3 multiboot
- * kernel from compiling.  This will need further attention.
- */
-#if defined(CONFIG_ARCH_OMAP3)
-
-/*
- * Set clocks for bypass mode for reboot to work.
- */
-void omap2_clk_prepare_for_reboot(void)
-{
-	/* REVISIT: Not ready for 343x */
-#if 0
-	u32 rate;
-
-	if (vclk == NULL || sclk == NULL)
-		return;
-
-	rate = clk_get_rate(sclk);
-	clk_set_rate(vclk, rate);
-#endif
-}
-
-void omap3_clk_lock_dpll5(void)
+void __init omap3_clk_lock_dpll5(void)
 {
 	struct clk *dpll5_clk;
 	struct clk *dpll5_m2_clk;
@@ -207,16 +172,21 @@ void omap3_clk_lock_dpll5(void)
 	return;
 }
 
+/* Common clock code */
+
 /* REVISIT: Move this init stuff out into clock.c */
 
 /*
  * Switch the MPU rate if specified on cmdline.
  * We cannot do this early until cmdline is parsed.
  */
-static int __init omap2_clk_arch_init(void)
+static int __init omap3xxx_clk_arch_init(void)
 {
 	struct clk *osc_sys_ck, *dpll1_ck, *arm_fck, *core_ck;
 	unsigned long osc_sys_rate;
+
+	if (!cpu_is_omap34xx())
+		return 0;
 
 	if (!mpurate)
 		return -EINVAL;
@@ -246,9 +216,6 @@ static int __init omap2_clk_arch_init(void)
 
 	return 0;
 }
-arch_initcall(omap2_clk_arch_init);
-
-
-#endif
+arch_initcall(omap3xxx_clk_arch_init);
 
 
