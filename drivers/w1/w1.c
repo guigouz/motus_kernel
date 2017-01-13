@@ -987,7 +987,7 @@ int w1_process(void *data)
 	return 0;
 }
 
-static int w1_init(void)
+static int __init w1_init(void)
 {
 	int retval;
 
@@ -1035,7 +1035,7 @@ err_out_exit_init:
 	return retval;
 }
 
-static void w1_fini(void)
+static void __exit w1_fini(void)
 {
 	struct w1_master *dev;
 
