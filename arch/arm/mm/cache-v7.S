@@ -222,7 +222,7 @@ ENDPROC(v7_flush_kern_dcache_area)
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-ENTRY(v7_dma_inv_range)
+v7_dma_inv_range:
 	dcache_line_size r2, r3
 	sub	r3, r2, #1
 	tst	r0, r3
@@ -246,7 +246,7 @@ ENDPROC(v7_dma_inv_range)
  *	- start   - virtual start address of region
  *	- end     - virtual end address of region
  */
-ENTRY(v7_dma_clean_range)
+v7_dma_clean_range:
 	dcache_line_size r2, r3
 	sub	r3, r2, #1
 	bic	r0, r0, r3
@@ -285,10 +285,9 @@ ENDPROC(v7_dma_flush_range)
  */
 ENTRY(v7_dma_map_area)
 	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	v7_dma_clean_range
-	bcs	v7_dma_inv_range
-	b	v7_dma_flush_range
+	teq	r2, #DMA_FROM_DEVICE
+	beq	v7_dma_inv_range
+	b	v7_dma_clean_range
 ENDPROC(v7_dma_map_area)
 
 /*
@@ -298,6 +297,9 @@ ENDPROC(v7_dma_map_area)
  *	- dir	- DMA direction
  */
 ENTRY(v7_dma_unmap_area)
+	add	r1, r1, r0
+	teq	r2, #DMA_TO_DEVICE
+	bne	v7_dma_inv_range
 	mov	pc, lr
 ENDPROC(v7_dma_unmap_area)
 
@@ -313,7 +315,5 @@ ENTRY(v7_cache_fns)
 	.long	v7_flush_kern_dcache_area
 	.long	v7_dma_map_area
 	.long	v7_dma_unmap_area
-	.long	v7_dma_inv_range
-	.long	v7_dma_clean_range
 	.long	v7_dma_flush_range
 	.size	v7_cache_fns, . - v7_cache_fns

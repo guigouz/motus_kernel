@@ -801,7 +801,6 @@ int usb_get_configuration(struct usb_device *dev)
 
 		dev->rawdescriptors[cfgno] = bigbuffer;
 
-		dma_cache_maint(bigbuffer, length, DMA_FROM_DEVICE);
 		result = usb_parse_configuration(&dev->dev, cfgno,
 		    &dev->config[cfgno], bigbuffer, length);
 		if (result < 0) {
