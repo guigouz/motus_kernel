@@ -281,6 +281,7 @@ static int nfs4_handle_exception(const struct nfs_server *server, int errorcode,
 			}
 		case -NFS4ERR_GRACE:
 		case -NFS4ERR_DELAY:
+		case -EKEYEXPIRED:
 			ret = nfs4_delay(server->client, &exception->timeout);
 			if (ret != 0)
 				break;
@@ -1163,7 +1164,7 @@ static int nfs4_do_open_reclaim(struct nfs_open_context *ctx, struct nfs4_state 
 	int err;
 	do {
 		err = _nfs4_do_open_reclaim(ctx, state);
-		if (err != -NFS4ERR_DELAY)
+		if (err != -NFS4ERR_DELAY && err != -EKEYEXPIRED)
 			break;
 		nfs4_handle_exception(server, err, &exception);
 	} while (exception.retry);
@@ -1582,6 +1583,7 @@ static int nfs4_do_open_expired(struct nfs_open_context *ctx, struct nfs4_state 
 			goto out;
 		case -NFS4ERR_GRACE:
 		case -NFS4ERR_DELAY:
+		case -EKEYEXPIRED:
 			nfs4_handle_exception(server, err, &exception);
 			err = 0;
 		}
@@ -3452,6 +3454,7 @@ _nfs4_async_handle_error(struct rpc_task *task, const struct nfs_server *server,
 			if (server)
 				nfs_inc_server_stats(server, NFSIOS_DELAY);
 		case -NFS4ERR_GRACE:
+		case -EKEYEXPIRED:
 			rpc_delay(task, NFS4_POLL_RETRY_MAX);
 			task->tk_status = 0;
 			return -EAGAIN;
@@ -3564,6 +3567,7 @@ int nfs4_proc_setclientid_confirm(struct nfs_client *clp, struct rpc_cred *cred)
 			case -NFS4ERR_RESOURCE:
 				/* The IBM lawyers misread another document! */
 			case -NFS4ERR_DELAY:
+			case -EKEYEXPIRED:
 				err = nfs4_delay(clp->cl_rpcclient, &timeout);
 		}
 	} while (err == 0);
@@ -4179,7 +4183,7 @@ static int nfs4_lock_reclaim(struct nfs4_state *state, struct file_lock *request
 		if (test_bit(NFS_DELEGATED_STATE, &state->flags) != 0)
 			return 0;
 		err = _nfs4_do_setlk(state, F_SETLK, request, NFS_LOCK_RECLAIM);
-		if (err != -NFS4ERR_DELAY)
+		if (err != -NFS4ERR_DELAY && err != -EKEYEXPIRED)
 			break;
 		nfs4_handle_exception(server, err, &exception);
 	} while (exception.retry);
@@ -4204,6 +4208,7 @@ static int nfs4_lock_expired(struct nfs4_state *state, struct file_lock *request
 			goto out;
 		case -NFS4ERR_GRACE:
 		case -NFS4ERR_DELAY:
+		case -EKEYEXPIRED:
 			nfs4_handle_exception(server, err, &exception);
 			err = 0;
 		}
@@ -4355,6 +4360,7 @@ int nfs4_lock_delegation_recall(struct nfs4_state *state, struct file_lock *fl)
 				err = 0;
 				goto out;
 			case -NFS4ERR_DELAY:
+			case -EKEYEXPIRED:
 				break;
 		}
 		err = nfs4_handle_exception(server, err, &exception);
@@ -4554,6 +4560,7 @@ static void nfs4_get_lease_time_done(struct rpc_task *task, void *calldata)
 	switch (task->tk_status) {
 	case -NFS4ERR_DELAY:
 	case -NFS4ERR_GRACE:
+	case -EKEYEXPIRED:
 		dprintk("%s Retry: tk_status %d\n", __func__, task->tk_status);
 		rpc_delay(task, NFS4_POLL_RETRY_MIN);
 		task->tk_status = 0;
@@ -4611,26 +4618,32 @@ int nfs4_proc_get_lease_time(struct nfs_client *clp, struct nfs_fsinfo *fsinfo)
 /*
  * Reset a slot table
  */
-static int nfs4_reset_slot_table(struct nfs4_slot_table *tbl, int max_slots,
-		int old_max_slots, int ivalue)
+static int nfs4_reset_slot_table(struct nfs4_slot_table *tbl, u32 max_reqs,
+				 int ivalue)
 {
+	struct nfs4_slot *new = NULL;
 	int i;
 	int ret = 0;
 
-	dprintk("--> %s: max_reqs=%u, tbl %p\n", __func__, max_slots, tbl);
+	dprintk("--> %s: max_reqs=%u, tbl->max_slots %d\n", __func__,
+		max_reqs, tbl->max_slots);
 
-	/*
-	 * Until we have dynamic slot table adjustment, insist
-	 * upon the same slot table size
-	 */
-	if (max_slots != old_max_slots) {
-		dprintk("%s reset slot table does't match old\n",
-			__func__);
-		ret = -EINVAL; /*XXX NFS4ERR_REQ_TOO_BIG ? */
-		goto out;
+	/* Does the newly negotiated max_reqs match the existing slot table? */
+	if (max_reqs != tbl->max_slots) {
+		ret = -ENOMEM;
+		new = kmalloc(max_reqs * sizeof(struct nfs4_slot),
+			      GFP_KERNEL);
+		if (!new)
+			goto out;
+		ret = 0;
+		kfree(tbl->slots);
 	}
 	spin_lock(&tbl->slot_tbl_lock);
-	for (i = 0; i < max_slots; ++i)
+	if (new) {
+		tbl->slots = new;
+		tbl->max_slots = max_reqs;
+	}
+	for (i = 0; i < tbl->max_slots; ++i)
 		tbl->slots[i].seq_nr = ivalue;
 	spin_unlock(&tbl->slot_tbl_lock);
 	dprintk("%s: tbl=%p slots=%p max_slots=%d\n", __func__,
@@ -4648,16 +4661,12 @@ static int nfs4_reset_slot_tables(struct nfs4_session *session)
 	int status;
 
 	status = nfs4_reset_slot_table(&session->fc_slot_table,
-			session->fc_attrs.max_reqs,
-			session->fc_slot_table.max_slots,
-			1);
+			session->fc_attrs.max_reqs, 1);
 	if (status)
 		return status;
 
 	status = nfs4_reset_slot_table(&session->bc_slot_table,
-			session->bc_attrs.max_reqs,
-			session->bc_slot_table.max_slots,
-			0);
+			session->bc_attrs.max_reqs, 0);
 	return status;
 }
 
@@ -4798,16 +4807,14 @@ static void nfs4_init_channel_attrs(struct nfs41_create_session_args *args)
 	args->fc_attrs.headerpadsz = 0;
 	args->fc_attrs.max_rqst_sz = mxrqst_sz;
 	args->fc_attrs.max_resp_sz = mxresp_sz;
-	args->fc_attrs.max_resp_sz_cached = mxresp_sz;
 	args->fc_attrs.max_ops = NFS4_MAX_OPS;
 	args->fc_attrs.max_reqs = session->clp->cl_rpcclient->cl_xprt->max_reqs;
 
 	dprintk("%s: Fore Channel : max_rqst_sz=%u max_resp_sz=%u "
-		"max_resp_sz_cached=%u max_ops=%u max_reqs=%u\n",
+		"max_ops=%u max_reqs=%u\n",
 		__func__,
 		args->fc_attrs.max_rqst_sz, args->fc_attrs.max_resp_sz,
-		args->fc_attrs.max_resp_sz_cached, args->fc_attrs.max_ops,
-		args->fc_attrs.max_reqs);
+		args->fc_attrs.max_ops, args->fc_attrs.max_reqs);
 
 	/* Back channel attributes */
 	args->bc_attrs.headerpadsz = 0;

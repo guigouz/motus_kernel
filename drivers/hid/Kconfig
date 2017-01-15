@@ -197,12 +197,28 @@ config LOGIG940_FF
 	  Say Y here if you want to enable force feedback support for Logitech
 	  Flight System G940 devices.
 
+config HID_MAGICMOUSE
+	tristate "Apple" if EMBEDDED
+	depends on BT_HIDP
+	default !EMBEDDED
+	---help---
+	Support for the Apple Magic Mouse.
+
+	Say Y here if you want support for the multi-touch features of the
+	Apple Wireless "Magic" Mouse.
+
 config HID_MICROSOFT
 	tristate "Microsoft" if EMBEDDED
 	depends on USB_HID
 	default !EMBEDDED
 	---help---
 	Support for Microsoft devices that are not fully compliant with HID standard.
+
+config HID_MOSART
+	tristate "MosArt"
+	depends on USB_HID
+	---help---
+	Support for MosArt dual-touch panels.
 
 config HID_MONTEREY
 	tristate "Monterey" if EMBEDDED
