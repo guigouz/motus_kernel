@@ -526,7 +526,7 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 			 * Set some valid stack frames to give to the child.
 			 */
 			childstack = (struct sparc_stackf __user *)
-				(sp & ~0xfUL);
+				(sp & ~0x15UL);
 			parentstack = (struct sparc_stackf __user *)
 				regs->u_regs[UREG_FP];
 
@@ -633,10 +633,8 @@ asmlinkage int sparc_execve(struct pt_regs *regs)
 	if(IS_ERR(filename))
 		goto out;
 	error = do_execve(filename,
-			  (const char __user *const  __user *)
-			  regs->u_regs[base + UREG_I1],
-			  (const char __user *const  __user *)
-			  regs->u_regs[base + UREG_I2],
+			  (char __user * __user *)regs->u_regs[base + UREG_I1],
+			  (char __user * __user *)regs->u_regs[base + UREG_I2],
 			  regs);
 	putname(filename);
 out:
