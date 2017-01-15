@@ -50,7 +50,7 @@
 
 #include "mux.h"
 #include "sdram-micron-mt46h32m32lf-6.h"
-#include "mmc-twl4030.h"
+#include "hsmmc.h"
 
 #define CM_T35_GPIO_PENDOWN	57
 
@@ -593,7 +593,7 @@ static struct twl4030_keypad_data cm_t35_kp_data = {
 	.rep		= 1,
 };
 
-static struct twl4030_hsmmc_info mmc[] = {
+static struct omap2_hsmmc_info mmc[] = {
 	{
 		.mmc		= 1,
 		.wires		= 4,
@@ -642,7 +642,7 @@ static int cm_t35_twl_gpio_setup(struct device *dev, unsigned gpio,
 
 	/* gpio + 0 is "mmc0_cd" (input/IRQ) */
 	mmc[0].gpio_cd = gpio + 0;
-	twl4030_mmc_init(mmc);
+	omap2_hsmmc_init(mmc);
 
 	/* link regulators to MMC adapters */
 	cm_t35_vmmc1_supply.dev = mmc[0].dev;

@@ -152,7 +152,7 @@ static int ext4_readdir(struct file *filp,
 		 */
 		if (!bh) {
 			if (!dir_has_error) {
-				ext4_error(sb, __func__, "directory #%lu "
+				ext4_error(sb, "directory #%lu "
 					   "contains a hole at offset %Lu",
 					   inode->i_ino,
 					   (unsigned long long) filp->f_pos);
