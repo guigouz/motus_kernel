@@ -56,6 +56,7 @@ int rv770_pcie_gart_enable(struct radeon_device *rdev)
 	r = radeon_gart_table_vram_pin(rdev);
 	if (r)
 		return r;
+	radeon_gart_restore(rdev);
 	/* Setup L2 cache */
 	WREG32(VM_L2_CNTL, ENABLE_L2_CACHE | ENABLE_L2_FRAGMENT_PROCESSING |
 				ENABLE_L2_PTE_CACHE_LRU_UPDATE_BY_WRITE |
@@ -516,15 +517,19 @@ static void rv770_gpu_init(struct radeon_device *rdev)
 	switch (rdev->config.rv770.max_tile_pipes) {
 	case 1:
 		gb_tiling_config |= PIPE_TILING(0);
+		rdev->config.rv770.tiling_npipes = 1;
 		break;
 	case 2:
 		gb_tiling_config |= PIPE_TILING(1);
+		rdev->config.rv770.tiling_npipes = 2;
 		break;
 	case 4:
 		gb_tiling_config |= PIPE_TILING(2);
+		rdev->config.rv770.tiling_npipes = 4;
 		break;
 	case 8:
 		gb_tiling_config |= PIPE_TILING(3);
+		rdev->config.rv770.tiling_npipes = 8;
 		break;
 	default:
 		break;
@@ -534,8 +539,10 @@ static void rv770_gpu_init(struct radeon_device *rdev)
 		gb_tiling_config |= BANK_TILING(1);
 	else
 		gb_tiling_config |= BANK_TILING((mc_arb_ramcfg & NOOFBANK_MASK) >> NOOFBANK_SHIFT);
+	rdev->config.rv770.tiling_nbanks = 4 << ((gb_tiling_config >> 4) & 0x3);
 
 	gb_tiling_config |= GROUP_SIZE(0);
+	rdev->config.rv770.tiling_group_size = 256;
 
 	if (((mc_arb_ramcfg & NOOFROWS_MASK) >> NOOFROWS_SHIFT) > 3) {
 		gb_tiling_config |= ROW_TILING(3);

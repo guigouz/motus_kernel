@@ -416,6 +416,7 @@ int r600_pcie_gart_enable(struct radeon_device *rdev)
 	r = radeon_gart_table_vram_pin(rdev);
 	if (r)
 		return r;
+	radeon_gart_restore(rdev);
 
 	/* Setup L2 cache */
 	WREG32(VM_L2_CNTL, ENABLE_L2_CACHE | ENABLE_L2_FRAGMENT_PROCESSING |
@@ -1077,21 +1078,27 @@ void r600_gpu_init(struct radeon_device *rdev)
 	switch (rdev->config.r600.max_tile_pipes) {
 	case 1:
 		tiling_config |= PIPE_TILING(0);
+		rdev->config.r600.tiling_npipes = 1;
 		break;
 	case 2:
 		tiling_config |= PIPE_TILING(1);
+		rdev->config.r600.tiling_npipes = 2;
 		break;
 	case 4:
 		tiling_config |= PIPE_TILING(2);
+		rdev->config.r600.tiling_npipes = 4;
 		break;
 	case 8:
 		tiling_config |= PIPE_TILING(3);
+		rdev->config.r600.tiling_npipes = 8;
 		break;
 	default:
 		break;
 	}
+	rdev->config.r600.tiling_nbanks = 4 << ((ramcfg & NOOFBANK_MASK) >> NOOFBANK_SHIFT);
 	tiling_config |= BANK_TILING((ramcfg & NOOFBANK_MASK) >> NOOFBANK_SHIFT);
 	tiling_config |= GROUP_SIZE(0);
+	rdev->config.r600.tiling_group_size = 256;
 	tmp = (ramcfg & NOOFROWS_MASK) >> NOOFROWS_SHIFT;
 	if (tmp > 3) {
 		tiling_config |= ROW_TILING(3);
