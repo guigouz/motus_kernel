@@ -443,6 +443,39 @@ static uint16_t combios_get_table_offset(struct drm_device *dev,
 
 }
 
+bool radeon_combios_check_hardcoded_edid(struct radeon_device *rdev)
+{
+	int edid_info;
+	struct edid *edid;
+	edid_info = combios_get_table_offset(rdev->ddev, COMBIOS_HARDCODED_EDID_TABLE);
+	if (!edid_info)
+		return false;
+
+	edid = kmalloc(EDID_LENGTH * (DRM_MAX_EDID_EXT_NUM + 1),
+		       GFP_KERNEL);
+	if (edid == NULL)
+		return false;
+
+	memcpy((unsigned char *)edid,
+	       (unsigned char *)(rdev->bios + edid_info), EDID_LENGTH);
+
+	if (!drm_edid_is_valid(edid)) {
+		kfree(edid);
+		return false;
+	}
+
+	rdev->mode_info.bios_hardcoded_edid = edid;
+	return true;
+}
+
+struct edid *
+radeon_combios_get_hardcoded_edid(struct radeon_device *rdev)
+{
+	if (rdev->mode_info.bios_hardcoded_edid)
+		return rdev->mode_info.bios_hardcoded_edid;
+	return NULL;
+}
+
 static struct radeon_i2c_bus_rec combios_setup_i2c_bus(struct radeon_device *rdev,
 						       int ddc_line)
 {
@@ -486,9 +519,65 @@ static struct radeon_i2c_bus_rec combios_setup_i2c_bus(struct radeon_device *rde
 		i2c.y_data_reg = ddc_line;
 	}
 
-	if (rdev->family < CHIP_R200)
-		i2c.hw_capable = false;
-	else {
+	switch (rdev->family) {
+	case CHIP_R100:
+	case CHIP_RV100:
+	case CHIP_RS100:
+	case CHIP_RV200:
+	case CHIP_RS200:
+	case CHIP_RS300:
+		switch (ddc_line) {
+		case RADEON_GPIO_DVI_DDC:
+			/* in theory this should be hw capable,
+			 * but it doesn't seem to work
+			 */
+			i2c.hw_capable = false;
+			break;
+		default:
+			i2c.hw_capable = false;
+			break;
+		}
+		break;
+	case CHIP_R200:
+		switch (ddc_line) {
+		case RADEON_GPIO_DVI_DDC:
+		case RADEON_GPIO_MONID:
+			i2c.hw_capable = true;
+			break;
+		default:
+			i2c.hw_capable = false;
+			break;
+		}
+		break;
+	case CHIP_RV250:
+	case CHIP_RV280:
+		switch (ddc_line) {
+		case RADEON_GPIO_VGA_DDC:
+		case RADEON_GPIO_DVI_DDC:
+		case RADEON_GPIO_CRT2_DDC:
+			i2c.hw_capable = true;
+			break;
+		default:
+			i2c.hw_capable = false;
+			break;
+		}
+		break;
+	case CHIP_R300:
+	case CHIP_R350:
+		switch (ddc_line) {
+		case RADEON_GPIO_VGA_DDC:
+		case RADEON_GPIO_DVI_DDC:
+			i2c.hw_capable = true;
+			break;
+		default:
+			i2c.hw_capable = false;
+			break;
+		}
+		break;
+	case CHIP_RV350:
+	case CHIP_RV380:
+	case CHIP_RS400:
+	case CHIP_RS480:
 		switch (ddc_line) {
 		case RADEON_GPIO_VGA_DDC:
 		case RADEON_GPIO_DVI_DDC:
@@ -504,6 +593,10 @@ static struct radeon_i2c_bus_rec combios_setup_i2c_bus(struct radeon_device *rde
 			i2c.hw_capable = false;
 			break;
 		}
+		break;
+	default:
+		i2c.hw_capable = false;
+		break;
 	}
 	i2c.mm_i2c = false;
 	i2c.i2c_id = 0;
@@ -1253,7 +1346,10 @@ bool radeon_legacy_get_ext_tmds_info_from_combios(struct radeon_encoder *encoder
 				tmds->i2c_bus = radeon_i2c_create(dev, &i2c_bus, "DVO");
 				break;
 			case DDC_LCD: /* MM i2c */
-				DRM_ERROR("MM i2c requires hw i2c engine\n");
+				i2c_bus.valid = true;
+				i2c_bus.hw_capable = true;
+				i2c_bus.mm_i2c = true;
+				tmds->i2c_bus = radeon_i2c_create(dev, &i2c_bus, "DVO");
 				break;
 			default:
 				DRM_ERROR("Unsupported gpio %d\n", gpio);
