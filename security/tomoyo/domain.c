@@ -10,8 +10,6 @@
  */
 
 #include "common.h"
-#include "tomoyo.h"
-#include "realpath.h"
 #include <linux/binfmts.h>
 
 /* Variables definitions.*/
@@ -58,76 +56,6 @@ struct tomoyo_domain_info tomoyo_kernel_domain;
  * exceptions.
  */
 LIST_HEAD(tomoyo_domain_list);
-
-/*
- * tomoyo_domain_initializer_entry is a structure which is used for holding
- * "initialize_domain" and "no_initialize_domain" entries.
- * It has following fields.
- *
- *  (1) "list" which is linked to tomoyo_domain_initializer_list .
- *  (2) "domainname" which is "a domainname" or "the last component of a
- *      domainname". This field is NULL if "from" clause is not specified.
- *  (3) "program" which is a program's pathname.
- *  (4) "is_deleted" is a bool which is true if marked as deleted, false
- *      otherwise.
- *  (5) "is_not" is a bool which is true if "no_initialize_domain", false
- *      otherwise.
- *  (6) "is_last_name" is a bool which is true if "domainname" is "the last
- *      component of a domainname", false otherwise.
- */
-struct tomoyo_domain_initializer_entry {
-	struct list_head list;
-	const struct tomoyo_path_info *domainname;    /* This may be NULL */
-	const struct tomoyo_path_info *program;
-	bool is_deleted;
-	bool is_not;       /* True if this entry is "no_initialize_domain".  */
-	/* True if the domainname is tomoyo_get_last_name(). */
-	bool is_last_name;
-};
-
-/*
- * tomoyo_domain_keeper_entry is a structure which is used for holding
- * "keep_domain" and "no_keep_domain" entries.
- * It has following fields.
- *
- *  (1) "list" which is linked to tomoyo_domain_keeper_list .
- *  (2) "domainname" which is "a domainname" or "the last component of a
- *      domainname".
- *  (3) "program" which is a program's pathname.
- *      This field is NULL if "from" clause is not specified.
- *  (4) "is_deleted" is a bool which is true if marked as deleted, false
- *      otherwise.
- *  (5) "is_not" is a bool which is true if "no_initialize_domain", false
- *      otherwise.
- *  (6) "is_last_name" is a bool which is true if "domainname" is "the last
- *      component of a domainname", false otherwise.
- */
-struct tomoyo_domain_keeper_entry {
-	struct list_head list;
-	const struct tomoyo_path_info *domainname;
-	const struct tomoyo_path_info *program;       /* This may be NULL */
-	bool is_deleted;
-	bool is_not;       /* True if this entry is "no_keep_domain".        */
-	/* True if the domainname is tomoyo_get_last_name(). */
-	bool is_last_name;
-};
-
-/*
- * tomoyo_alias_entry is a structure which is used for holding "alias" entries.
- * It has following fields.
- *
- *  (1) "list" which is linked to tomoyo_alias_list .
- *  (2) "original_name" which is a dereferenced pathname.
- *  (3) "aliased_name" which is a symlink's pathname.
- *  (4) "is_deleted" is a bool which is true if marked as deleted, false
- *      otherwise.
- */
-struct tomoyo_alias_entry {
-	struct list_head list;
-	const struct tomoyo_path_info *original_name;
-	const struct tomoyo_path_info *aliased_name;
-	bool is_deleted;
-};
 
 /**
  * tomoyo_get_last_name - Get last component of a domainname.
@@ -203,7 +131,7 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
 {
 	struct tomoyo_domain_initializer_entry *entry = NULL;
 	struct tomoyo_domain_initializer_entry *ptr;
-	const struct tomoyo_path_info *saved_program;
+	const struct tomoyo_path_info *saved_program = NULL;
 	const struct tomoyo_path_info *saved_domainname = NULL;
 	int error = is_delete ? -ENOENT : -ENOMEM;
 	bool is_last_name = false;
@@ -216,11 +144,11 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
 			is_last_name = true;
 		else if (!tomoyo_is_correct_domain(domainname, __func__))
 			return -EINVAL;
-		saved_domainname = tomoyo_save_name(domainname);
+		saved_domainname = tomoyo_get_name(domainname);
 		if (!saved_domainname)
 			goto out;
 	}
-	saved_program = tomoyo_save_name(program);
+	saved_program = tomoyo_get_name(program);
 	if (!saved_program)
 		goto out;
 	if (!is_delete)
@@ -237,7 +165,9 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
 	}
 	if (!is_delete && error && tomoyo_memory_ok(entry)) {
 		entry->domainname = saved_domainname;
+		saved_domainname = NULL;
 		entry->program = saved_program;
+		saved_program = NULL;
 		entry->is_not = is_not;
 		entry->is_last_name = is_last_name;
 		list_add_tail_rcu(&entry->list,
@@ -247,6 +177,8 @@ static int tomoyo_update_domain_initializer_entry(const char *domainname,
 	}
 	mutex_unlock(&tomoyo_policy_lock);
  out:
+	tomoyo_put_name(saved_domainname);
+	tomoyo_put_name(saved_program);
 	kfree(entry);
 	return error;
 }
@@ -419,7 +351,7 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
 {
 	struct tomoyo_domain_keeper_entry *entry = NULL;
 	struct tomoyo_domain_keeper_entry *ptr;
-	const struct tomoyo_path_info *saved_domainname;
+	const struct tomoyo_path_info *saved_domainname = NULL;
 	const struct tomoyo_path_info *saved_program = NULL;
 	int error = is_delete ? -ENOENT : -ENOMEM;
 	bool is_last_name = false;
@@ -432,11 +364,11 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
 	if (program) {
 		if (!tomoyo_is_correct_path(program, 1, -1, -1, __func__))
 			return -EINVAL;
-		saved_program = tomoyo_save_name(program);
+		saved_program = tomoyo_get_name(program);
 		if (!saved_program)
 			goto out;
 	}
-	saved_domainname = tomoyo_save_name(domainname);
+	saved_domainname = tomoyo_get_name(domainname);
 	if (!saved_domainname)
 		goto out;
 	if (!is_delete)
@@ -453,7 +385,9 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
 	}
 	if (!is_delete && error && tomoyo_memory_ok(entry)) {
 		entry->domainname = saved_domainname;
+		saved_domainname = NULL;
 		entry->program = saved_program;
+		saved_program = NULL;
 		entry->is_not = is_not;
 		entry->is_last_name = is_last_name;
 		list_add_tail_rcu(&entry->list, &tomoyo_domain_keeper_list);
@@ -462,6 +396,8 @@ static int tomoyo_update_domain_keeper_entry(const char *domainname,
 	}
 	mutex_unlock(&tomoyo_policy_lock);
  out:
+	tomoyo_put_name(saved_domainname);
+	tomoyo_put_name(saved_program);
 	kfree(entry);
 	return error;
 }
@@ -623,8 +559,8 @@ static int tomoyo_update_alias_entry(const char *original_name,
 	if (!tomoyo_is_correct_path(original_name, 1, -1, -1, __func__) ||
 	    !tomoyo_is_correct_path(aliased_name, 1, -1, -1, __func__))
 		return -EINVAL; /* No patterns allowed. */
-	saved_original_name = tomoyo_save_name(original_name);
-	saved_aliased_name = tomoyo_save_name(aliased_name);
+	saved_original_name = tomoyo_get_name(original_name);
+	saved_aliased_name = tomoyo_get_name(aliased_name);
 	if (!saved_original_name || !saved_aliased_name)
 		goto out;
 	if (!is_delete)
@@ -640,13 +576,17 @@ static int tomoyo_update_alias_entry(const char *original_name,
 	}
 	if (!is_delete && error && tomoyo_memory_ok(entry)) {
 		entry->original_name = saved_original_name;
+		saved_original_name = NULL;
 		entry->aliased_name = saved_aliased_name;
+		saved_aliased_name = NULL;
 		list_add_tail_rcu(&entry->list, &tomoyo_alias_list);
 		entry = NULL;
 		error = 0;
 	}
 	mutex_unlock(&tomoyo_policy_lock);
  out:
+	tomoyo_put_name(saved_original_name);
+	tomoyo_put_name(saved_aliased_name);
 	kfree(entry);
 	return error;
 }
@@ -721,7 +661,7 @@ struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
 
 	if (!tomoyo_is_correct_domain(domainname, __func__))
 		return NULL;
-	saved_domainname = tomoyo_save_name(domainname);
+	saved_domainname = tomoyo_get_name(domainname);
 	if (!saved_domainname)
 		return NULL;
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
@@ -736,6 +676,7 @@ struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
 	if (!found && tomoyo_memory_ok(entry)) {
 		INIT_LIST_HEAD(&entry->acl_info_list);
 		entry->domainname = saved_domainname;
+		saved_domainname = NULL;
 		entry->profile = profile;
 		list_add_tail_rcu(&entry->list, &tomoyo_domain_list);
 		domain = entry;
@@ -743,6 +684,7 @@ struct tomoyo_domain_info *tomoyo_find_or_assign_new_domain(const char *
 		found = true;
 	}
 	mutex_unlock(&tomoyo_policy_lock);
+	tomoyo_put_name(saved_domainname);
 	kfree(entry);
 	return found ? domain : NULL;
 }
