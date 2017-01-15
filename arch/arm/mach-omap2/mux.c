@@ -75,7 +75,7 @@ void omap_mux_write_array(struct omap_board_mux *board_mux)
 	}
 }
 
-#if defined(CONFIG_ARCH_OMAP24XX) && defined(CONFIG_OMAP_MUX)
+#if defined(CONFIG_ARCH_OMAP2) && defined(CONFIG_OMAP_MUX)
 
 static struct omap_mux_cfg arch_mux_cfg;
 
@@ -369,7 +369,7 @@ int __init omap2_mux_init(void)
 
 /*----------------------------------------------------------------------------*/
 
-#ifdef CONFIG_ARCH_OMAP34XX
+#ifdef CONFIG_ARCH_OMAP3
 static LIST_HEAD(muxmodes);
 static DEFINE_MUTEX(muxmode_mutex);
 
@@ -1018,5 +1018,5 @@ int __init omap_mux_init(u32 mux_pbase, u32 mux_size,
 	return 0;
 }
 
-#endif	/* CONFIG_ARCH_OMAP34XX */
+#endif	/* CONFIG_ARCH_OMAP3 */
 

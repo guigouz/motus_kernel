@@ -34,6 +34,10 @@ obj-$(CONFIG_ARCH_OMAP2420)		+= sram242x.o
 obj-$(CONFIG_ARCH_OMAP2430)		+= sram243x.o
 obj-$(CONFIG_ARCH_OMAP3)		+= sram34xx.o
 
+AFLAGS_sram242x.o			:=-Wa,-march=armv6
+AFLAGS_sram243x.o			:=-Wa,-march=armv6
+AFLAGS_sram34xx.o			:=-Wa,-march=armv7-a
+
 # Pin multiplexing
 obj-$(CONFIG_ARCH_OMAP3)		+= mux34xx.o
 
@@ -44,9 +48,13 @@ obj-$(CONFIG_ARCH_OMAP2)		+= sdrc2xxx.o
 # Power Management
 ifeq ($(CONFIG_PM),y)
 obj-$(CONFIG_ARCH_OMAP2)		+= pm24xx.o
-obj-$(CONFIG_ARCH_OMAP24XX)		+= sleep24xx.o
+obj-$(CONFIG_ARCH_OMAP2)		+= sleep24xx.o
 obj-$(CONFIG_ARCH_OMAP3)		+= pm34xx.o sleep34xx.o cpuidle34xx.o
 obj-$(CONFIG_PM_DEBUG)			+= pm-debug.o
+
+AFLAGS_sleep24xx.o			:=-Wa,-march=armv6
+AFLAGS_sleep34xx.o			:=-Wa,-march=armv7-a
+
 endif
 
 # PRCM

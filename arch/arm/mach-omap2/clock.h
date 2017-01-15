@@ -83,6 +83,32 @@ int omap2_clksel_set_parent(struct clk *clk, struct clk *new_parent);
 u32 omap2_get_dpll_rate(struct clk *clk);
 void omap2_init_dpll_parent(struct clk *clk);
 int omap2_wait_clock_ready(void __iomem *reg, u32 cval, const char *name);
+
+
+#ifdef CONFIG_ARCH_OMAP2
+void omap2xxx_clk_prepare_for_reboot(void);
+#else
+static inline void omap2xxx_clk_prepare_for_reboot(void)
+{
+}
+#endif
+
+#ifdef CONFIG_ARCH_OMAP3
+void omap3_clk_prepare_for_reboot(void);
+#else
+static inline void omap3_clk_prepare_for_reboot(void)
+{
+}
+#endif
+
+#ifdef CONFIG_ARCH_OMAP4
+void omap4_clk_prepare_for_reboot(void);
+#else
+static inline void omap4_clk_prepare_for_reboot(void)
+{
+}
+#endif
+
 int omap2_dflt_clk_enable(struct clk *clk);
 void omap2_dflt_clk_disable(struct clk *clk);
 void omap2_clk_dflt_find_companion(struct clk *clk, void __iomem **other_reg,
@@ -103,7 +129,7 @@ extern const struct clksel_rate gpt_32k_rates[];
 extern const struct clksel_rate gpt_sys_rates[];
 extern const struct clksel_rate gfx_l3_rates[];
 
-#if defined(CONFIG_ARCH_OMAP24XX) && defined(CONFIG_CPU_FREQ)
+#if defined(CONFIG_ARCH_OMAP2) && defined(CONFIG_CPU_FREQ)
 extern void omap2_clk_init_cpufreq_table(struct cpufreq_frequency_table **table);
 extern void omap2_clk_exit_cpufreq_table(struct cpufreq_frequency_table **table);
 #else
