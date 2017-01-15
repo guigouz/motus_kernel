@@ -7,16 +7,14 @@
 #include <linux/bootmem.h>
 #include <linux/mm.h>
 
-#include <asm/e820.h>
 #include <asm/early_res.h>
-#include <asm/proto.h>
 
 /*
  * Early reserved memory areas.
  */
 /*
  * need to make sure this one is bigger enough before
- * find_e820_area could be used
+ * find_fw_memmap_area could be used
  */
 #define MAX_EARLY_RES_X 32
 
@@ -180,9 +178,16 @@ void __init reserve_early_overlap_ok(u64 start, u64 end, char *name)
 	__reserve_early(start, end, name, 1);
 }
 
-static void __init __check_and_double_early_res(u64 start)
+u64 __init __weak find_fw_memmap_area(u64 start, u64 end, u64 size, u64 align)
 {
-	u64 end, size, mem;
+	panic("should have find_fw_memmap_area defined with arch");
+
+	return -1ULL;
+}
+
+static void __init __check_and_double_early_res(u64 ex_start, u64 ex_end)
+{
+	u64 start, end, size, mem;
 	struct early_res *new;
 
 	/* do we have enough slots left ? */
@@ -190,10 +195,23 @@ static void __init __check_and_double_early_res(u64 start)
 		return;
 
 	/* double it */
-	end = max_pfn_mapped << PAGE_SHIFT;
+	mem = -1ULL;
 	size = sizeof(struct early_res) * max_early_res * 2;
-	mem = find_e820_area(start, end, size, sizeof(struct early_res));
-
+	if (early_res == early_res_x)
+		start = 0;
+	else
+		start = early_res[0].end;
+	end = ex_start;
+	if (start + size < end)
+		mem = find_fw_memmap_area(start, end, size,
+					 sizeof(struct early_res));
+	if (mem == -1ULL) {
+		start = ex_end;
+		end = max_pfn_mapped << PAGE_SHIFT;
+		if (start + size < end)
+			mem = find_fw_memmap_area(start, end, size,
+						 sizeof(struct early_res));
+	}
 	if (mem == -1ULL)
 		panic("can not find more space for early_res array");
 
@@ -235,7 +253,7 @@ void __init reserve_early(u64 start, u64 end, char *name)
 	if (start >= end)
 		return;
 
-	__check_and_double_early_res(end);
+	__check_and_double_early_res(start, end);
 
 	drop_overlaps_that_are_ok(start, end);
 	__reserve_early(start, end, name, 0);
@@ -248,7 +266,7 @@ void __init reserve_early_without_check(u64 start, u64 end, char *name)
 	if (start >= end)
 		return;
 
-	__check_and_double_early_res(end);
+	__check_and_double_early_res(start, end);
 
 	r = &early_res[early_res_count];
 
@@ -330,7 +348,7 @@ int __init get_free_all_memory_range(struct range **rangep, int nodeid)
 		start = MAX_DMA32_PFN << PAGE_SHIFT;
 #endif
 	end = max_pfn_mapped << PAGE_SHIFT;
-	mem = find_e820_area(start, end, size, sizeof(struct range));
+	mem = find_fw_memmap_area(start, end, size, sizeof(struct range));
 	if (mem == -1ULL)
 		panic("can not find more space for range free");
 
@@ -341,6 +359,9 @@ int __init get_free_all_memory_range(struct range **rangep, int nodeid)
 
 	/* need to go over early_node_map to find out good range for node */
 	nr_range = add_from_early_node_map(range, count, nr_range, nodeid);
+#ifdef CONFIG_X86_32
+	subtract_range(range, count, max_low_pfn, -1ULL);
+#endif
 	subtract_early_res(range, count);
 	nr_range = clean_sort_range(range, count);
 
@@ -476,63 +497,25 @@ out:
 	return -1ULL;
 }
 
-/*
- * Find a free area with specified alignment in a specific range.
- */
-u64 __init find_e820_area(u64 start, u64 end, u64 size, u64 align)
+u64 __init find_early_area_size(u64 ei_start, u64 ei_last, u64 start,
+			 u64 *sizep, u64 align)
 {
-	int i;
+	u64 addr, last;
 
-	for (i = 0; i < e820.nr_map; i++) {
-		struct e820entry *ei = &e820.map[i];
-		u64 addr;
-		u64 ei_start, ei_last;
+	addr = round_up(ei_start, align);
+	if (addr < start)
+		addr = round_up(start, align);
+	if (addr >= ei_last)
+		goto out;
+	*sizep = ei_last - addr;
+	while (bad_addr_size(&addr, sizep, align) && addr + *sizep <= ei_last)
+		;
+	last = addr + *sizep;
+	if (last > ei_last)
+		goto out;
 
-		if (ei->type != E820_RAM)
-			continue;
+	return addr;
 
-		ei_last = ei->addr + ei->size;
-		ei_start = ei->addr;
-		addr = find_early_area(ei_start, ei_last, start, end,
-					 size, align);
-
-		if (addr == -1ULL)
-			continue;
-
-		return addr;
-	}
-	return -1ULL;
-}
-
-/*
- * Find next free range after *start
- */
-u64 __init find_e820_area_size(u64 start, u64 *sizep, u64 align)
-{
-	int i;
-
-	for (i = 0; i < e820.nr_map; i++) {
-		struct e820entry *ei = &e820.map[i];
-		u64 addr, last;
-		u64 ei_last;
-
-		if (ei->type != E820_RAM)
-			continue;
-		addr = round_up(ei->addr, align);
-		ei_last = ei->addr + ei->size;
-		if (addr < start)
-			addr = round_up(start, align);
-		if (addr >= ei_last)
-			continue;
-		*sizep = ei_last - addr;
-		while (bad_addr_size(&addr, sizep, align) &&
-			addr + *sizep <= ei_last)
-			;
-		last = addr + *sizep;
-		if (last > ei_last)
-			continue;
-		return addr;
-	}
-
+out:
 	return -1ULL;
 }
