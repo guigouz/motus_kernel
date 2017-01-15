@@ -52,7 +52,32 @@ static int __init print_ipi_mode(void)
 }
 late_initcall(print_ipi_mode);
 
-void default_setup_apic_routing(void)
+void __init default_setup_apic_routing(void)
+{
+	int version = apic_version[boot_cpu_physical_apicid];
+
+	if (num_possible_cpus() > 8) {
+		switch (boot_cpu_data.x86_vendor) {
+		case X86_VENDOR_INTEL:
+			if (!APIC_XAPIC(version)) {
+				def_to_bigsmp = 0;
+				break;
+			}
+			/* If P4 and above fall through */
+		case X86_VENDOR_AMD:
+			def_to_bigsmp = 1;
+		}
+	}
+
+#ifdef CONFIG_X86_BIGSMP
+	generic_bigsmp_probe();
+#endif
+
+	if (apic->setup_apic_routing)
+		apic->setup_apic_routing();
+}
+
+static void setup_apic_flat_routing(void)
 {
 	int version = apic_version[boot_cpu_physical_apicid];
 
