@@ -658,6 +658,10 @@ static void __init intc_register_irq(struct intc_desc *desc,
 
 	if (desc->ack_regs)
 		ack_handle[irq] = intc_ack_data(desc, d, enum_id);
+
+#ifdef CONFIG_ARM
+	set_irq_flags(irq, IRQF_VALID); /* Enable IRQ on ARM systems */
+#endif
 }
 
 static unsigned int __init save_reg(struct intc_desc_int *d,
@@ -906,8 +910,12 @@ unsigned int create_irq_nr(unsigned int irq_want, int node)
 out_unlock:
 	spin_unlock_irqrestore(&vector_lock, flags);
 
-	if (irq > 0)
+	if (irq > 0) {
 		dynamic_irq_init(irq);
+#ifdef CONFIG_ARM
+		set_irq_flags(irq, IRQF_VALID); /* Enable IRQ on ARM systems */
+#endif
+	}
 
 	return irq;
 }
