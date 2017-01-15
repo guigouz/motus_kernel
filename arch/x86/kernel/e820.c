@@ -732,14 +732,18 @@ core_initcall(e820_mark_nvs_memory);
 /*
  * Early reserved memory areas.
  */
-#define MAX_EARLY_RES 32
+/*
+ * need to make sure this one is bigger enough before
+ * find_e820_area could be used
+ */
+#define MAX_EARLY_RES_X 32
 
 struct early_res {
 	u64 start, end;
-	char name[16];
+	char name[15];
 	char overlap_ok;
 };
-static struct early_res early_res[MAX_EARLY_RES] __initdata = {
+static struct early_res early_res_x[MAX_EARLY_RES_X] __initdata = {
 	{ 0, PAGE_SIZE, "BIOS data page", 1 },	/* BIOS data page */
 #if defined(CONFIG_X86_32) && defined(CONFIG_X86_TRAMPOLINE)
 	/*
@@ -753,12 +757,22 @@ static struct early_res early_res[MAX_EARLY_RES] __initdata = {
 	{}
 };
 
+static int max_early_res __initdata = MAX_EARLY_RES_X;
+static struct early_res *early_res __initdata = &early_res_x[0];
+static int early_res_count __initdata =
+#ifdef CONFIG_X86_32
+	2
+#else
+	1
+#endif
+	;
+
 static int __init find_overlapped_early(u64 start, u64 end)
 {
 	int i;
 	struct early_res *r;
 
-	for (i = 0; i < MAX_EARLY_RES && early_res[i].end; i++) {
+	for (i = 0; i < max_early_res && early_res[i].end; i++) {
 		r = &early_res[i];
 		if (end > r->start && start < r->end)
 			break;
@@ -776,13 +790,14 @@ static void __init drop_range(int i)
 {
 	int j;
 
-	for (j = i + 1; j < MAX_EARLY_RES && early_res[j].end; j++)
+	for (j = i + 1; j < max_early_res && early_res[j].end; j++)
 		;
 
 	memmove(&early_res[i], &early_res[i + 1],
 	       (j - 1 - i) * sizeof(struct early_res));
 
 	early_res[j - 1].end = 0;
+	early_res_count--;
 }
 
 /*
@@ -801,9 +816,9 @@ static void __init drop_overlaps_that_are_ok(u64 start, u64 end)
 	struct early_res *r;
 	u64 lower_start, lower_end;
 	u64 upper_start, upper_end;
-	char name[16];
+	char name[15];
 
-	for (i = 0; i < MAX_EARLY_RES && early_res[i].end; i++) {
+	for (i = 0; i < max_early_res && early_res[i].end; i++) {
 		r = &early_res[i];
 
 		/* Continue past non-overlapping ranges */
@@ -859,7 +874,7 @@ static void __init __reserve_early(u64 start, u64 end, char *name,
 	struct early_res *r;
 
 	i = find_overlapped_early(start, end);
-	if (i >= MAX_EARLY_RES)
+	if (i >= max_early_res)
 		panic("Too many early reservations");
 	r = &early_res[i];
 	if (r->end)
@@ -872,6 +887,7 @@ static void __init __reserve_early(u64 start, u64 end, char *name,
 	r->overlap_ok = overlap_ok;
 	if (name)
 		strncpy(r->name, name, sizeof(r->name) - 1);
+	early_res_count++;
 }
 
 /*
@@ -900,6 +916,48 @@ void __init reserve_early_overlap_ok(u64 start, u64 end, char *name)
 	__reserve_early(start, end, name, 1);
 }
 
+static void __init __check_and_double_early_res(u64 start)
+{
+	u64 end, size, mem;
+	struct early_res *new;
+
+	/* do we have enough slots left ? */
+	if ((max_early_res - early_res_count) > max(max_early_res/8, 2))
+		return;
+
+	/* double it */
+	end = max_pfn_mapped << PAGE_SHIFT;
+	size = sizeof(struct early_res) * max_early_res * 2;
+	mem = find_e820_area(start, end, size, sizeof(struct early_res));
+
+	if (mem == -1ULL)
+		panic("can not find more space for early_res array");
+
+	new = __va(mem);
+	/* save the first one for own */
+	new[0].start = mem;
+	new[0].end = mem + size;
+	new[0].overlap_ok = 0;
+	/* copy old to new */
+	if (early_res == early_res_x) {
+		memcpy(&new[1], &early_res[0],
+			 sizeof(struct early_res) * max_early_res);
+		memset(&new[max_early_res+1], 0,
+			 sizeof(struct early_res) * (max_early_res - 1));
+		early_res_count++;
+	} else {
+		memcpy(&new[1], &early_res[1],
+			 sizeof(struct early_res) * (max_early_res - 1));
+		memset(&new[max_early_res], 0,
+			 sizeof(struct early_res) * max_early_res);
+	}
+	memset(&early_res[0], 0, sizeof(struct early_res) * max_early_res);
+	early_res = new;
+	max_early_res *= 2;
+	printk(KERN_DEBUG "early_res array is doubled to %d at [%llx - %llx]\n",
+		max_early_res, mem, mem + size - 1);
+}
+
 /*
  * Most early reservations come here.
  *
@@ -913,6 +971,8 @@ void __init reserve_early(u64 start, u64 end, char *name)
 	if (start >= end)
 		return;
 
+	__check_and_double_early_res(end);
+
 	drop_overlaps_that_are_ok(start, end);
 	__reserve_early(start, end, name, 0);
 }
@@ -924,7 +984,7 @@ void __init free_early(u64 start, u64 end)
 
 	i = find_overlapped_early(start, end);
 	r = &early_res[i];
-	if (i >= MAX_EARLY_RES || r->end != end || r->start != start)
+	if (i >= max_early_res || r->end != end || r->start != start)
 		panic("free_early on not reserved area: %llx-%llx!",
 			 start, end - 1);
 
@@ -935,14 +995,19 @@ void __init early_res_to_bootmem(u64 start, u64 end)
 {
 	int i, count;
 	u64 final_start, final_end;
+	int idx = 0;
 
 	count  = 0;
-	for (i = 0; i < MAX_EARLY_RES && early_res[i].end; i++)
+	for (i = 0; i < max_early_res && early_res[i].end; i++)
 		count++;
 
-	printk(KERN_INFO "(%d early reservations) ==> bootmem [%010llx - %010llx]\n",
-			 count, start, end);
-	for (i = 0; i < count; i++) {
+	/* need to skip first one ?*/
+	if (early_res != early_res_x)
+		idx = 1;
+
+	printk(KERN_INFO "(%d/%d early reservations) ==> bootmem [%010llx - %010llx]\n",
+			 count - idx, max_early_res, start, end);
+	for (i = idx; i < count; i++) {
 		struct early_res *r = &early_res[i];
 		printk(KERN_INFO "  #%d [%010llx - %010llx] %16s", i,
 			r->start, r->end, r->name);
@@ -957,6 +1022,11 @@ void __init early_res_to_bootmem(u64 start, u64 end)
 		reserve_bootmem_generic(final_start, final_end - final_start,
 				BOOTMEM_DEFAULT);
 	}
+	/* clear them */
+	memset(&early_res[0], 0, sizeof(struct early_res) * max_early_res);
+	early_res = NULL;
+	max_early_res = 0;
+	early_res_count = 0;
 }
 
 /* Check for already reserved areas */
@@ -969,7 +1039,7 @@ static inline int __init bad_addr(u64 *addrp, u64 size, u64 align)
 again:
 	i = find_overlapped_early(addr, addr + size);
 	r = &early_res[i];
-	if (i < MAX_EARLY_RES && r->end) {
+	if (i < max_early_res && r->end) {
 		*addrp = addr = round_up(r->end, align);
 		changed = 1;
 		goto again;
@@ -986,7 +1056,7 @@ static inline int __init bad_addr_size(u64 *addrp, u64 *sizep, u64 align)
 	int changed = 0;
 again:
 	last = addr + size;
-	for (i = 0; i < MAX_EARLY_RES && early_res[i].end; i++) {
+	for (i = 0; i < max_early_res && early_res[i].end; i++) {
 		struct early_res *r = &early_res[i];
 		if (last > r->start && addr < r->start) {
 			size = r->start - addr;
@@ -1435,6 +1505,8 @@ void __init e820_reserve_resources_late(void)
 			end = MAX_RESOURCE_SIZE;
 		if (start >= end)
 			continue;
+		printk(KERN_DEBUG "reserve RAM buffer: %016llx - %016llx ",
+			       start, end);
 		reserve_region_with_split(&iomem_resource, start, end,
 					  "RAM buffer");
 	}
