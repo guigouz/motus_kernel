@@ -404,29 +404,23 @@ EXPORT_SYMBOL(dma_free_coherent);
  * platforms with CONFIG_DMABOUNCE.
  * Use the driver DMA support - see dma-mapping.h (dma_sync_*)
  */
-void dma_cache_maint(const void *start, size_t size, int direction)
+static void dma_cache_maint(const void *start, size_t size, int direction)
 {
-	void (*inner_op)(const void *, const void *);
 	void (*outer_op)(unsigned long, unsigned long);
 
 	switch (direction) {
 	case DMA_FROM_DEVICE:		/* invalidate only */
-		inner_op = dmac_inv_range;
 		outer_op = outer_inv_range;
 		break;
 	case DMA_TO_DEVICE:		/* writeback only */
-		inner_op = dmac_clean_range;
 		outer_op = outer_clean_range;
 		break;
 	case DMA_BIDIRECTIONAL:		/* writeback and invalidate */
-		inner_op = dmac_flush_range;
 		outer_op = outer_flush_range;
 		break;
 	default:
 		BUG();
 	}
-
-	inner_op(start, start + size);
 
 #ifdef CONFIG_OUTER_CACHE
 	/*
@@ -438,51 +432,29 @@ void dma_cache_maint(const void *start, size_t size, int direction)
 #endif
 
 }
-EXPORT_SYMBOL(dma_cache_maint);
 
-static void dma_cache_maint_contiguous(struct page *page, unsigned long offset,
-				       size_t size, int direction)
+void ___dma_single_cpu_to_dev(const void *kaddr, size_t size,
+	enum dma_data_direction dir)
 {
-	void *vaddr;
-	unsigned long paddr;
-	void (*inner_op)(const void *, const void *);
-	void (*outer_op)(unsigned long, unsigned long);
+	BUG_ON(!virt_addr_valid(kaddr) || !virt_addr_valid(kaddr + size - 1));
 
-	switch (direction) {
-	case DMA_FROM_DEVICE:		/* invalidate only */
-		inner_op = dmac_inv_range;
-		outer_op = outer_inv_range;
-		break;
-	case DMA_TO_DEVICE:		/* writeback only */
-		inner_op = dmac_clean_range;
-		outer_op = outer_clean_range;
-		break;
-	case DMA_BIDIRECTIONAL:		/* writeback and invalidate */
-		inner_op = dmac_flush_range;
-		outer_op = outer_flush_range;
-		break;
-	default:
-		BUG();
-	}
-
-	if (!PageHighMem(page)) {
-		vaddr = page_address(page) + offset;
-		inner_op(vaddr, vaddr + size);
-	} else {
-		vaddr = kmap_high_get(page);
-		if (vaddr) {
-			vaddr += offset;
-			inner_op(vaddr, vaddr + size);
-			kunmap_high(page);
-		}
-	}
-
-	paddr = page_to_phys(page) + offset;
-	outer_op(paddr, paddr + size);
+	dmac_map_area(kaddr, size, dir);
+	dma_cache_maint(kaddr, size, dir);
 }
+EXPORT_SYMBOL(___dma_single_cpu_to_dev);
 
-void dma_cache_maint_page(struct page *page, unsigned long offset,
-			  size_t size, int dir)
+void ___dma_single_dev_to_cpu(const void *kaddr, size_t size,
+	enum dma_data_direction dir)
+{
+	BUG_ON(!virt_addr_valid(kaddr) || !virt_addr_valid(kaddr + size - 1));
+
+	dmac_unmap_area(kaddr, size, dir);
+}
+EXPORT_SYMBOL(___dma_single_dev_to_cpu);
+
+static void dma_cache_maint_page(struct page *page, unsigned long offset,
+	size_t size, enum dma_data_direction dir,
+	void (*op)(const void *, size_t, int))
 {
 	/*
 	 * A single sg entry may refer to multiple physically contiguous
@@ -493,20 +465,65 @@ void dma_cache_maint_page(struct page *page, unsigned long offset,
 	size_t left = size;
 	do {
 		size_t len = left;
-		if (PageHighMem(page) && len + offset > PAGE_SIZE) {
-			if (offset >= PAGE_SIZE) {
-				page += offset / PAGE_SIZE;
-				offset %= PAGE_SIZE;
+		void *vaddr;
+
+		if (PageHighMem(page)) {
+			if (len + offset > PAGE_SIZE) {
+				if (offset >= PAGE_SIZE) {
+					page += offset / PAGE_SIZE;
+					offset %= PAGE_SIZE;
+				}
+				len = PAGE_SIZE - offset;
 			}
-			len = PAGE_SIZE - offset;
+			vaddr = kmap_high_get(page);
+			if (vaddr) {
+				vaddr += offset;
+				op(vaddr, len, dir);
+				kunmap_high(page);
+			}
+		} else {
+			vaddr = page_address(page) + offset;
+			op(vaddr, len, dir);
 		}
-		dma_cache_maint_contiguous(page, offset, len, dir);
 		offset = 0;
 		page++;
 		left -= len;
 	} while (left);
 }
-EXPORT_SYMBOL(dma_cache_maint_page);
+
+void ___dma_page_cpu_to_dev(struct page *page, unsigned long off,
+	size_t size, enum dma_data_direction dir)
+{
+	unsigned long paddr;
+	void (*outer_op)(unsigned long, unsigned long);
+
+	switch (direction) {
+	case DMA_FROM_DEVICE:		/* invalidate only */
+		outer_op = outer_inv_range;
+		break;
+	case DMA_TO_DEVICE:		/* writeback only */
+		outer_op = outer_clean_range;
+		break;
+	case DMA_BIDIRECTIONAL:		/* writeback and invalidate */
+		outer_op = outer_flush_range;
+		break;
+	default:
+		BUG();
+	}
+
+	dma_cache_maint_page(page, off, size, dir, dmac_map_area);
+
+	paddr = page_to_phys(page) + off;
+	outer_op(paddr, paddr + size);
+}
+EXPORT_SYMBOL(___dma_page_cpu_to_dev);
+
+void ___dma_page_dev_to_cpu(struct page *page, unsigned long off,
+	size_t size, enum dma_data_direction dir)
+{
+	dma_cache_maint_page(page, off, size, dir, dmac_unmap_area);
+}
+EXPORT_SYMBOL(___dma_page_dev_to_cpu);
 
 /**
  * dma_map_sg - map a set of SG buffers for streaming mode DMA
