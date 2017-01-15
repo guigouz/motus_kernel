@@ -524,7 +524,7 @@ static noinline int early_drop(struct net *net, unsigned int hash)
 		if (cnt >= NF_CT_EVICTION_RANGE)
 			break;
 
-		hash = (hash + 1) % nf_conntrack_htable_size;
+		hash = (hash + 1) % net->ct.htable_size;
 	}
 	rcu_read_unlock();
 
