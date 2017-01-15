@@ -2,8 +2,9 @@
 #include <linux/pci.h>
 #include <linux/topology.h>
 #include <linux/cpu.h>
+#include <linux/range.h>
+
 #include <asm/pci_x86.h>
-#include <asm/k8.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/pci-direct.h>
@@ -18,58 +19,6 @@
 
 #ifdef CONFIG_X86_64
 
-#define RANGE_NUM 16
-
-struct res_range {
-	size_t start;
-	size_t end;
-};
-
-static void __init update_range(struct res_range *range, size_t start,
-				size_t end)
-{
-	int i;
-	int j;
-
-	for (j = 0; j < RANGE_NUM; j++) {
-		if (!range[j].end)
-			continue;
-
-		if (start <= range[j].start && end >= range[j].end) {
-			range[j].start = 0;
-			range[j].end = 0;
-			continue;
-		}
-
-		if (start <= range[j].start && end < range[j].end && range[j].start < end + 1) {
-			range[j].start = end + 1;
-			continue;
-		}
-
-
-		if (start > range[j].start && end >= range[j].end && range[j].end > start - 1) {
-			range[j].end = start - 1;
-			continue;
-		}
-
-		if (start > range[j].start && end < range[j].end) {
-			/* find the new spare */
-			for (i = 0; i < RANGE_NUM; i++) {
-				if (range[i].end == 0)
-					break;
-			}
-			if (i < RANGE_NUM) {
-				range[i].end = range[j].end;
-				range[i].start = end + 1;
-			} else {
-				printk(KERN_ERR "run of slot in ranges\n");
-			}
-			range[j].end = start - 1;
-			continue;
-		}
-	}
-}
-
 struct pci_hostbridge_probe {
 	u32 bus;
 	u32 slot;
@@ -83,6 +32,36 @@ static struct pci_hostbridge_probe pci_probes[] __initdata = {
 	{ 0xff, 0, PCI_VENDOR_ID_AMD, 0x1200 },
 	{ 0, 0x18, PCI_VENDOR_ID_AMD, 0x1300 },
 };
+
+static u64 __initdata fam10h_mmconf_start;
+static u64 __initdata fam10h_mmconf_end;
+static void __init get_pci_mmcfg_amd_fam10h_range(void)
+{
+	u32 address;
+	u64 base, msr;
+	unsigned segn_busn_bits;
+
+	/* assume all cpus from fam10h have mmconf */
+        if (boot_cpu_data.x86 < 0x10)
+		return;
+
+	address = MSR_FAM10H_MMIO_CONF_BASE;
+	rdmsrl(address, msr);
+
+	/* mmconfig is not enable */
+	if (!(msr & FAM10H_MMIO_CONF_ENABLE))
+		return;
+
+	base = msr & (FAM10H_MMIO_CONF_BASE_MASK<<FAM10H_MMIO_CONF_BASE_SHIFT);
+
+	segn_busn_bits = (msr >> FAM10H_MMIO_CONF_BUSRANGE_SHIFT) &
+			 FAM10H_MMIO_CONF_BUSRANGE_MASK;
+
+	fam10h_mmconf_start = base;
+	fam10h_mmconf_end = base + (1ULL<<(segn_busn_bits + 20)) - 1;
+}
+
+#define RANGE_NUM 16
 
 /**
  * early_fill_mp_bus_to_node()
@@ -105,12 +84,9 @@ static int __init early_fill_mp_bus_info(void)
 	struct resource *res;
 	size_t start;
 	size_t end;
-	struct res_range range[RANGE_NUM];
+	struct range range[RANGE_NUM];
 	u64 val;
 	u32 address;
-	struct resource fam10h_mmconf_res, *fam10h_mmconf;
-	u64 fam10h_mmconf_start;
-	u64 fam10h_mmconf_end;
 
 	if (!early_pci_allowed())
 		return -1;
@@ -202,7 +178,7 @@ static int __init early_fill_mp_bus_info(void)
 		if (end > 0xffff)
 			end = 0xffff;
 		update_res(info, start, end, IORESOURCE_IO, 1);
-		update_range(range, start, end);
+		subtract_range(range, RANGE_NUM, start, end);
 	}
 	/* add left over io port range to def node/link, [0, 0xffff] */
 	/* find the position */
@@ -232,19 +208,14 @@ static int __init early_fill_mp_bus_info(void)
 	end = (val & 0xffffff800000ULL);
 	printk(KERN_INFO "TOM: %016lx aka %ldM\n", end, end>>20);
 	if (end < (1ULL<<32))
-		update_range(range, 0, end - 1);
+		subtract_range(range, RANGE_NUM, 0, end - 1);
 
 	/* get mmconfig */
-	fam10h_mmconf = amd_get_mmconfig_range(&fam10h_mmconf_res);
+	get_pci_mmcfg_amd_fam10h_range();
 	/* need to take out mmconf range */
-	if (fam10h_mmconf) {
-		printk(KERN_DEBUG "Fam 10h mmconf %pR\n", fam10h_mmconf);
-		fam10h_mmconf_start = fam10h_mmconf->start;
-		fam10h_mmconf_end = fam10h_mmconf->end;
-		update_range(range, fam10h_mmconf_start, fam10h_mmconf_end);
-	} else {
-		fam10h_mmconf_start = 0;
-		fam10h_mmconf_end = 0;
+	if (fam10h_mmconf_end) {
+		printk(KERN_DEBUG "Fam 10h mmconf [%llx, %llx]\n", fam10h_mmconf_start, fam10h_mmconf_end);
+		subtract_range(range, RANGE_NUM, fam10h_mmconf_start, fam10h_mmconf_end);
 	}
 
 	/* mmio resource */
@@ -299,7 +270,7 @@ static int __init early_fill_mp_bus_info(void)
 				/* we got a hole */
 				endx = fam10h_mmconf_start - 1;
 				update_res(info, start, endx, IORESOURCE_MEM, 0);
-				update_range(range, start, endx);
+				subtract_range(range, RANGE_NUM, start, endx);
 				printk(KERN_CONT " ==> [%llx, %llx]", (u64)start, endx);
 				start = fam10h_mmconf_end + 1;
 				changed = 1;
@@ -315,7 +286,7 @@ static int __init early_fill_mp_bus_info(void)
 		}
 
 		update_res(info, start, end, IORESOURCE_MEM, 1);
-		update_range(range, start, end);
+		subtract_range(range, RANGE_NUM, start, end);
 		printk(KERN_CONT "\n");
 	}
 
@@ -330,7 +301,7 @@ static int __init early_fill_mp_bus_info(void)
 		rdmsrl(address, val);
 		end = (val & 0xffffff800000ULL);
 		printk(KERN_INFO "TOM2: %016lx aka %ldM\n", end, end>>20);
-		update_range(range, 1ULL<<32, end - 1);
+		subtract_range(range, RANGE_NUM, 1ULL<<32, end - 1);
 	}
 
 	/*
