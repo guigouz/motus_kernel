@@ -224,7 +224,6 @@ static struct
 		enum dsi_vc_mode mode;
 		struct omap_dss_device *dssdev;
 		enum fifo_size fifo_size;
-		int dest_per;	/* destination peripheral 0-3 */
 	} vc[4];
 
 	struct mutex lock;
@@ -308,6 +307,11 @@ void dsi_bus_unlock(void)
 	mutex_unlock(&dsi.bus_lock);
 }
 EXPORT_SYMBOL(dsi_bus_unlock);
+
+static bool dsi_bus_is_locked(void)
+{
+	return mutex_is_locked(&dsi.bus_lock);
+}
 
 static inline int wait_for_bit_change(const struct dsi_reg idx, int bitnum,
 		int value)
@@ -1756,24 +1760,6 @@ static int dsi_force_tx_stop_mode_io(void)
 	return 0;
 }
 
-static void dsi_vc_print_status(int channel)
-{
-	u32 r;
-
-	r = dsi_read_reg(DSI_VC_CTRL(channel));
-	DSSDBG("vc %d: TX_FIFO_NOT_EMPTY %d, BTA_EN %d, VC_BUSY %d, "
-			"TX_FIFO_FULL %d, RX_FIFO_NOT_EMPTY %d, ",
-			channel,
-			FLD_GET(r, 5, 5),
-			FLD_GET(r, 6, 6),
-			FLD_GET(r, 15, 15),
-			FLD_GET(r, 16, 16),
-			FLD_GET(r, 20, 20));
-
-	r = dsi_read_reg(DSI_TX_FIFO_VC_EMPTINESS);
-	DSSDBG("EMPTINESS %d\n", (r >> (8 * channel)) & 0xff);
-}
-
 static int dsi_vc_enable(int channel, bool enable)
 {
 	if (dsi.update_mode != OMAP_DSS_UPDATE_AUTO)
@@ -1859,9 +1845,11 @@ static void dsi_vc_config_vp(int channel)
 }
 
 
-static void dsi_vc_enable_hs(int channel, bool enable)
+void omapdss_dsi_vc_enable_hs(int channel, bool enable)
 {
 	DSSDBG("dsi_vc_enable_hs(%d, %d)\n", channel, enable);
+
+	WARN_ON(!dsi_bus_is_locked());
 
 	dsi_vc_enable(channel, 0);
 	dsi_if_enable(0);
@@ -1873,6 +1861,7 @@ static void dsi_vc_enable_hs(int channel, bool enable)
 
 	dsi_force_tx_stop_mode_io();
 }
+EXPORT_SYMBOL(omapdss_dsi_vc_enable_hs);
 
 static void dsi_vc_flush_long_data(int channel)
 {
@@ -1959,7 +1948,7 @@ static int dsi_vc_send_bta(int channel)
 			(dsi.debug_write || dsi.debug_read))
 		DSSDBG("dsi_vc_send_bta %d\n", channel);
 
-	WARN_ON(!mutex_is_locked(&dsi.bus_lock));
+	WARN_ON(!dsi_bus_is_locked());
 
 	if (REG_GET(DSI_VC_CTRL(channel), 20, 20)) {	/* RX_FIFO_NOT_EMPTY */
 		DSSERR("rx fifo not empty when sending BTA, dumping data:\n");
@@ -2010,10 +1999,9 @@ static inline void dsi_vc_write_long_header(int channel, u8 data_type,
 	u32 val;
 	u8 data_id;
 
-	WARN_ON(!mutex_is_locked(&dsi.bus_lock));
+	WARN_ON(!dsi_bus_is_locked());
 
-	/*data_id = data_type | channel << 6; */
-	data_id = data_type | dsi.vc[channel].dest_per << 6;
+	data_id = data_type | channel << 6;
 
 	val = FLD_VAL(data_id, 7, 0) | FLD_VAL(len, 23, 8) |
 		FLD_VAL(ecc, 31, 24);
@@ -2056,13 +2044,10 @@ static int dsi_vc_send_long(int channel, u8 data_type, u8 *data, u16 len,
 
 	dsi_vc_write_long_header(channel, data_type, len, ecc);
 
-	/*dsi_vc_print_status(0); */
-
 	p = data;
 	for (i = 0; i < len >> 2; i++) {
 		if (dsi.debug_write)
 			DSSDBG("\tsending full packet %d\n", i);
-		/*dsi_vc_print_status(0); */
 
 		b1 = *p++;
 		b2 = *p++;
@@ -2105,7 +2090,7 @@ static int dsi_vc_send_short(int channel, u8 data_type, u16 data, u8 ecc)
 	u32 r;
 	u8 data_id;
 
-	WARN_ON(!mutex_is_locked(&dsi.bus_lock));
+	WARN_ON(!dsi_bus_is_locked());
 
 	if (dsi.debug_write)
 		DSSDBG("dsi_vc_send_short(ch%d, dt %#x, b1 %#x, b2 %#x)\n",
@@ -2119,7 +2104,7 @@ static int dsi_vc_send_short(int channel, u8 data_type, u16 data, u8 ecc)
 		return -EINVAL;
 	}
 
-	data_id = data_type | dsi.vc[channel].dest_per << 6;
+	data_id = data_type | channel << 6;
 
 	r = (data_id << 0) | (data << 8) | (ecc << 24);
 
@@ -2170,6 +2155,21 @@ int dsi_vc_dcs_write(int channel, u8 *data, int len)
 	return r;
 }
 EXPORT_SYMBOL(dsi_vc_dcs_write);
+
+int dsi_vc_dcs_write_0(int channel, u8 dcs_cmd)
+{
+	return dsi_vc_dcs_write(channel, &dcs_cmd, 1);
+}
+EXPORT_SYMBOL(dsi_vc_dcs_write_0);
+
+int dsi_vc_dcs_write_1(int channel, u8 dcs_cmd, u8 param)
+{
+	u8 buf[2];
+	buf[0] = dcs_cmd;
+	buf[1] = param;
+	return dsi_vc_dcs_write(channel, buf, 2);
+}
+EXPORT_SYMBOL(dsi_vc_dcs_write_1);
 
 int dsi_vc_dcs_read(int channel, u8 dcs_cmd, u8 *buf, int buflen)
 {
@@ -2263,6 +2263,21 @@ int dsi_vc_dcs_read(int channel, u8 dcs_cmd, u8 *buf, int buflen)
 }
 EXPORT_SYMBOL(dsi_vc_dcs_read);
 
+int dsi_vc_dcs_read_1(int channel, u8 dcs_cmd, u8 *data)
+{
+	int r;
+
+	r = dsi_vc_dcs_read(channel, dcs_cmd, data, 1);
+
+	if (r < 0)
+		return r;
+
+	if (r != 1)
+		return -EIO;
+
+	return 0;
+}
+EXPORT_SYMBOL(dsi_vc_dcs_read_1);
 
 int dsi_vc_set_max_rx_packet_size(int channel, u16 len)
 {
@@ -2491,15 +2506,15 @@ static int dsi_proto_config(struct omap_dss_device *dssdev)
 	u32 r;
 	int buswidth = 0;
 
-	dsi_config_tx_fifo(DSI_FIFO_SIZE_128,
-			DSI_FIFO_SIZE_0,
-			DSI_FIFO_SIZE_0,
-			DSI_FIFO_SIZE_0);
+	dsi_config_tx_fifo(DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32);
 
-	dsi_config_rx_fifo(DSI_FIFO_SIZE_128,
-			DSI_FIFO_SIZE_0,
-			DSI_FIFO_SIZE_0,
-			DSI_FIFO_SIZE_0);
+	dsi_config_rx_fifo(DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32,
+			DSI_FIFO_SIZE_32);
 
 	/* XXX what values for the timeouts? */
 	dsi_set_stop_state_counter(1000);
@@ -2537,12 +2552,9 @@ static int dsi_proto_config(struct omap_dss_device *dssdev)
 	dsi_write_reg(DSI_CTRL, r);
 
 	dsi_vc_initial_config(0);
-
-	/* set all vc targets to peripheral 0 */
-	dsi.vc[0].dest_per = 0;
-	dsi.vc[1].dest_per = 0;
-	dsi.vc[2].dest_per = 0;
-	dsi.vc[3].dest_per = 0;
+	dsi_vc_initial_config(1);
+	dsi_vc_initial_config(2);
+	dsi_vc_initial_config(3);
 
 	return 0;
 }
@@ -2808,9 +2820,6 @@ static void dsi_update_screen_dispc(struct omap_dss_device *dssdev,
 	if (bytespf % packet_payload)
 		total_len += (bytespf % packet_payload) + 1;
 
-	if (0)
-		dsi_vc_print_status(1);
-
 	l = FLD_VAL(total_len, 23, 0); /* TE_SIZE */
 	dsi_write_reg(DSI_VC_TE(channel), l);
 
@@ -2895,7 +2904,7 @@ static int dsi_set_update_mode(struct omap_dss_device *dssdev,
 	int r = 0;
 	int i;
 
-	WARN_ON(!mutex_is_locked(&dsi.bus_lock));
+	WARN_ON(!dsi_bus_is_locked());
 
 	if (dsi.update_mode != mode) {
 		dsi.update_mode = mode;
@@ -2976,7 +2985,7 @@ static void dsi_handle_framedone(void)
 	/* RX_FIFO_NOT_EMPTY */
 	if (REG_GET(DSI_VC_CTRL(channel), 20, 20)) {
 		DSSERR("Received error during frame transfer:\n");
-		dsi_vc_flush_receive_data(0);
+		dsi_vc_flush_receive_data(channel);
 	}
 
 #ifdef CONFIG_OMAP2_DSS_FAKE_VSYNC
@@ -3203,7 +3212,8 @@ static int dsi_display_init_dsi(struct omap_dss_device *dssdev)
 	if (r)
 		goto err1;
 
-	dss_select_clk_source(true, true);
+	dss_select_dispc_clk_source(DSS_SRC_DSI1_PLL_FCLK);
+	dss_select_dsi_clk_source(DSS_SRC_DSI2_PLL_FCLK);
 
 	DSSDBG("PLL OK\n");
 
@@ -3229,6 +3239,9 @@ static int dsi_display_init_dsi(struct omap_dss_device *dssdev)
 
 	/* enable interface */
 	dsi_vc_enable(0, 1);
+	dsi_vc_enable(1, 1);
+	dsi_vc_enable(2, 1);
+	dsi_vc_enable(3, 1);
 	dsi_if_enable(1);
 	dsi_force_tx_stop_mode_io();
 
@@ -3239,7 +3252,7 @@ static int dsi_display_init_dsi(struct omap_dss_device *dssdev)
 	}
 
 	/* enable high-speed after initial config */
-	dsi_vc_enable_hs(0, 1);
+	omapdss_dsi_vc_enable_hs(0, 1);
 
 	return 0;
 err4:
@@ -3247,7 +3260,8 @@ err4:
 err3:
 	dsi_complexio_uninit();
 err2:
-	dss_select_clk_source(false, false);
+	dss_select_dispc_clk_source(DSS_SRC_DSS1_ALWON_FCLK);
+	dss_select_dsi_clk_source(DSS_SRC_DSS1_ALWON_FCLK);
 err1:
 	dsi_pll_uninit();
 err0:
@@ -3259,7 +3273,8 @@ static void dsi_display_uninit_dsi(struct omap_dss_device *dssdev)
 	if (dssdev->driver->disable)
 		dssdev->driver->disable(dssdev);
 
-	dss_select_clk_source(false, false);
+	dss_select_dispc_clk_source(DSS_SRC_DSS1_ALWON_FCLK);
+	dss_select_dsi_clk_source(DSS_SRC_DSS1_ALWON_FCLK);
 	dsi_complexio_uninit();
 	dsi_pll_uninit();
 }
@@ -3650,7 +3665,7 @@ static int dsi_display_run_test(struct omap_dss_device *dssdev, int test_num)
 	dsi_bus_lock();
 
 	/* run test first in low speed mode */
-	dsi_vc_enable_hs(0, 0);
+	omapdss_dsi_vc_enable_hs(0, 0);
 
 	if (dssdev->driver->run_test) {
 		r = dssdev->driver->run_test(dssdev, test_num);
@@ -3659,7 +3674,7 @@ static int dsi_display_run_test(struct omap_dss_device *dssdev, int test_num)
 	}
 
 	/* then in high speed */
-	dsi_vc_enable_hs(0, 1);
+	omapdss_dsi_vc_enable_hs(0, 1);
 
 	if (dssdev->driver->run_test) {
 		r = dssdev->driver->run_test(dssdev, test_num);
@@ -3668,7 +3683,7 @@ static int dsi_display_run_test(struct omap_dss_device *dssdev, int test_num)
 	}
 
 end:
-	dsi_vc_enable_hs(0, 1);
+	omapdss_dsi_vc_enable_hs(0, 1);
 
 	dsi_bus_unlock();
 

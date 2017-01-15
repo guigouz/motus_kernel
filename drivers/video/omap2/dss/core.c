@@ -289,9 +289,11 @@ static void dss_clk_enable_no_ctx(enum dss_clock clks)
 
 void dss_clk_enable(enum dss_clock clks)
 {
+	bool check_ctx = core.num_clks_enabled == 0;
+
 	dss_clk_enable_no_ctx(clks);
 
-	if (cpu_is_omap34xx() && dss_need_ctx_restore())
+	if (check_ctx && cpu_is_omap34xx() && dss_need_ctx_restore())
 		restore_all_ctx();
 }
 
@@ -446,10 +448,12 @@ static int dss_initialize_debugfs(void)
 	debugfs_create_file("clk", S_IRUGO, dss_debugfs_dir,
 			&dss_debug_dump_clocks, &dss_debug_fops);
 
+#ifdef CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS
 	debugfs_create_file("dispc_irq", S_IRUGO, dss_debugfs_dir,
 			&dispc_dump_irqs, &dss_debug_fops);
+#endif
 
-#ifdef CONFIG_OMAP2_DSS_DSI
+#if defined(CONFIG_OMAP2_DSS_DSI) && defined(CONFIG_OMAP2_DSS_COLLECT_IRQ_STATS)
 	debugfs_create_file("dsi_irq", S_IRUGO, dss_debugfs_dir,
 			&dsi_dump_irqs, &dss_debug_fops);
 #endif
