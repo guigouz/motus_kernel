@@ -14,7 +14,7 @@
  *
  * File: ima_main.c
  *	implements the IMA hooks: ima_bprm_check, ima_file_mmap,
- *	and ima_path_check.
+ *	and ima_file_check.
  */
 #include <linux/module.h>
 #include <linux/file.h>
@@ -153,7 +153,7 @@ void ima_counts_get(struct file *file)
 	if (!iint)
 		return;
 	mutex_lock(&iint->mutex);
-	rc = ima_must_measure(iint, inode, MAY_READ, PATH_CHECK);
+	rc = ima_must_measure(iint, inode, MAY_READ, FILE_CHECK);
 	if (rc < 0)
 		goto out;
 
@@ -306,16 +306,16 @@ int ima_bprm_check(struct linux_binprm *bprm)
  * Always return 0 and audit dentry_open failures.
  * (Return code will be based upon measurement appraisal.)
  */
-int ima_path_check(struct file *file, int mask)
+int ima_file_check(struct file *file, int mask)
 {
 	int rc;
 
 	rc = process_measurement(file, file->f_dentry->d_name.name,
 				 mask & (MAY_READ | MAY_WRITE | MAY_EXEC),
-				 PATH_CHECK);
+				 FILE_CHECK);
 	return 0;
 }
-EXPORT_SYMBOL_GPL(ima_path_check);
+EXPORT_SYMBOL_GPL(ima_file_check);
 
 static int __init init_ima(void)
 {
