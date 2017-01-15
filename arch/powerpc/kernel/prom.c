@@ -98,7 +98,7 @@ static void __init move_device_tree(void)
 	DBG("-> move_device_tree\n");
 
 	start = __pa(initial_boot_params);
-	size = initial_boot_params->totalsize;
+	size = be32_to_cpu(initial_boot_params->totalsize);
 
 	if ((memory_limit && (start + size) > memory_limit) ||
 			overlaps_crashkernel(start, size)) {
@@ -483,65 +483,42 @@ static int __init early_init_dt_scan_drconf_memory(unsigned long node)
 #define early_init_dt_scan_drconf_memory(node)	0
 #endif /* CONFIG_PPC_PSERIES */
 
-static int __init early_init_dt_scan_memory(unsigned long node,
-					    const char *uname, int depth, void *data)
+static int __init early_init_dt_scan_memory_ppc(unsigned long node,
+						const char *uname,
+						int depth, void *data)
 {
-	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
-	__be32 *reg, *endp;
-	unsigned long l;
-
-	/* Look for the ibm,dynamic-reconfiguration-memory node */
 	if (depth == 1 &&
 	    strcmp(uname, "ibm,dynamic-reconfiguration-memory") == 0)
 		return early_init_dt_scan_drconf_memory(node);
-
-	/* We are scanning "memory" nodes only */
-	if (type == NULL) {
-		/*
-		 * The longtrail doesn't have a device_type on the
-		 * /memory node, so look for the node called /memory@0.
-		 */
-		if (depth != 1 || strcmp(uname, "memory@0") != 0)
-			return 0;
-	} else if (strcmp(type, "memory") != 0)
-		return 0;
-
-	reg = of_get_flat_dt_prop(node, "linux,usable-memory", &l);
-	if (reg == NULL)
-		reg = of_get_flat_dt_prop(node, "reg", &l);
-	if (reg == NULL)
-		return 0;
-
-	endp = reg + (l / sizeof(__be32));
-
-	DBG("memory scan node %s, reg size %ld, data: %x %x %x %x,\n",
-	    uname, l, reg[0], reg[1], reg[2], reg[3]);
-
-	while ((endp - reg) >= (dt_root_addr_cells + dt_root_size_cells)) {
-		u64 base, size;
-
-		base = dt_mem_next_cell(dt_root_addr_cells, &reg);
-		size = dt_mem_next_cell(dt_root_size_cells, &reg);
-
-		if (size == 0)
-			continue;
-		DBG(" - %llx ,  %llx\n", (unsigned long long)base,
-		    (unsigned long long)size);
-#ifdef CONFIG_PPC64
-		if (iommu_is_off) {
-			if (base >= 0x80000000ul)
-				continue;
-			if ((base + size) > 0x80000000ul)
-				size = 0x80000000ul - base;
-		}
-#endif
-		lmb_add(base, size);
-
-		memstart_addr = min((u64)memstart_addr, base);
-	}
-
-	return 0;
+	
+	return early_init_dt_scan_memory(node, uname, depth, data);
 }
+
+void __init early_init_dt_add_memory_arch(u64 base, u64 size)
+{
+#if defined(CONFIG_PPC64)
+	if (iommu_is_off) {
+		if (base >= 0x80000000ul)
+			return;
+		if ((base + size) > 0x80000000ul)
+			size = 0x80000000ul - base;
+	}
+#endif
+
+	lmb_add(base, size);
+
+	memstart_addr = min((u64)memstart_addr, base);
+}
+
+#ifdef CONFIG_BLK_DEV_INITRD
+void __init early_init_dt_setup_initrd_arch(unsigned long start,
+		unsigned long end)
+{
+	initrd_start = (unsigned long)__va(start);
+	initrd_end = (unsigned long)__va(end);
+	initrd_below_start_ok = 1;
+}
+#endif
 
 static void __init early_reserve_mem(void)
 {
@@ -706,7 +683,7 @@ void __init early_init_devtree(void *params)
 	/* Scan memory nodes and rebuild LMBs */
 	lmb_init();
 	of_scan_flat_dt(early_init_dt_scan_root, NULL);
-	of_scan_flat_dt(early_init_dt_scan_memory, NULL);
+	of_scan_flat_dt(early_init_dt_scan_memory_ppc, NULL);
 
 	/* Save command line for /proc/cmdline and then parse parameters */
 	strlcpy(boot_command_line, cmd_line, COMMAND_LINE_SIZE);
@@ -766,27 +743,6 @@ void __init early_init_devtree(void *params)
  *******/
 
 /**
- *	of_find_node_by_phandle - Find a node given a phandle
- *	@handle:	phandle of the node to find
- *
- *	Returns a node pointer with refcount incremented, use
- *	of_node_put() on it when done.
- */
-struct device_node *of_find_node_by_phandle(phandle handle)
-{
-	struct device_node *np;
-
-	read_lock(&devtree_lock);
-	for (np = allnodes; np != 0; np = np->allnext)
-		if (np->phandle == handle)
-			break;
-	of_node_get(np);
-	read_unlock(&devtree_lock);
-	return np;
-}
-EXPORT_SYMBOL(of_find_node_by_phandle);
-
-/**
  *	of_find_next_cache_node - Find a node's subsidiary cache
  *	@np:	node of type "cpu" or "cache"
  *
@@ -815,65 +771,6 @@ struct device_node *of_find_next_cache_node(struct device_node *np)
 				return child;
 
 	return NULL;
-}
-
-/*
- * Plug a device node into the tree and global list.
- */
-void of_attach_node(struct device_node *np)
-{
-	unsigned long flags;
-
-	write_lock_irqsave(&devtree_lock, flags);
-	np->sibling = np->parent->child;
-	np->allnext = allnodes;
-	np->parent->child = np;
-	allnodes = np;
-	write_unlock_irqrestore(&devtree_lock, flags);
-}
-
-/*
- * "Unplug" a node from the device tree.  The caller must hold
- * a reference to the node.  The memory associated with the node
- * is not freed until its refcount goes to zero.
- */
-void of_detach_node(struct device_node *np)
-{
-	struct device_node *parent;
-	unsigned long flags;
-
-	write_lock_irqsave(&devtree_lock, flags);
-
-	parent = np->parent;
-	if (!parent)
-		goto out_unlock;
-
-	if (allnodes == np)
-		allnodes = np->allnext;
-	else {
-		struct device_node *prev;
-		for (prev = allnodes;
-		     prev->allnext != np;
-		     prev = prev->allnext)
-			;
-		prev->allnext = np->allnext;
-	}
-
-	if (parent->child == np)
-		parent->child = np->sibling;
-	else {
-		struct device_node *prevsib;
-		for (prevsib = np->parent->child;
-		     prevsib->sibling != np;
-		     prevsib = prevsib->sibling)
-			;
-		prevsib->sibling = np->sibling;
-	}
-
-	of_node_set_flag(np, OF_DETACHED);
-
-out_unlock:
-	write_unlock_irqrestore(&devtree_lock, flags);
 }
 
 #ifdef CONFIG_PPC_PSERIES

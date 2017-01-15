@@ -63,7 +63,7 @@
 #ifdef CONFIG_USB_FUNCTION
 #include <linux/usb/mass_storage_function.h>
 #endif
-#ifdef CONFIG_USB_GADGET
+#if defined(CONFIG_USB_GADGET_MSM_72K)
 #include <linux/usb/android_composite.h>
 #endif
 #include "devices.h"
@@ -803,7 +803,6 @@ static struct msm_otg_platform_data msm_otg_pdata = {
 
 #if defined(CONFIG_USB_GADGET_MSM_72K)
 #include <mach/rpc_hsusb.h>
-
 /*static void msm_hsusb_gadget_phy_reset(void)
 {
 	msm_hsusb_phy_reset();

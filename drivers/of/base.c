@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/spinlock.h>
+#include <linux/proc_fs.h>
 
 struct device_node *allnodes;
 
@@ -37,7 +38,7 @@ int of_n_addr_cells(struct device_node *np)
 			np = np->parent;
 		ip = of_get_property(np, "#address-cells", NULL);
 		if (ip)
-			return *ip;
+			return be32_to_cpup(ip);
 	} while (np->parent);
 	/* No #address-cells property for the root node */
 	return OF_ROOT_NODE_ADDR_CELLS_DEFAULT;
@@ -53,7 +54,7 @@ int of_n_size_cells(struct device_node *np)
 			np = np->parent;
 		ip = of_get_property(np, "#size-cells", NULL);
 		if (ip)
-			return *ip;
+			return be32_to_cpup(ip);
 	} while (np->parent);
 	/* No #size-cells property for the root node */
 	return OF_ROOT_NODE_SIZE_CELLS_DEFAULT;
@@ -219,13 +220,13 @@ int of_device_is_compatible(const struct device_node *device,
 EXPORT_SYMBOL(of_device_is_compatible);
 
 /**
- * machine_is_compatible - Test root of device tree for a given compatible value
+ * of_machine_is_compatible - Test root of device tree for a given compatible value
  * @compat: compatible string to look for in root node's compatible property.
  *
  * Returns true if the root node has the given value in its
  * compatible property.
  */
-int machine_is_compatible(const char *compat)
+int of_machine_is_compatible(const char *compat)
 {
 	struct device_node *root;
 	int rc = 0;
@@ -237,7 +238,7 @@ int machine_is_compatible(const char *compat)
 	}
 	return rc;
 }
-EXPORT_SYMBOL(machine_is_compatible);
+EXPORT_SYMBOL(of_machine_is_compatible);
 
 /**
  *  of_device_is_available - check if a device is available for use
@@ -615,6 +616,27 @@ int of_modalias_node(struct device_node *node, char *modalias, int len)
 EXPORT_SYMBOL_GPL(of_modalias_node);
 
 /**
+ * of_find_node_by_phandle - Find a node given a phandle
+ * @handle:	phandle of the node to find
+ *
+ * Returns a node pointer with refcount incremented, use
+ * of_node_put() on it when done.
+ */
+struct device_node *of_find_node_by_phandle(phandle handle)
+{
+	struct device_node *np;
+
+	read_lock(&devtree_lock);
+	for (np = allnodes; np; np = np->allnext)
+		if (np->phandle == handle)
+			break;
+	of_node_get(np);
+	read_unlock(&devtree_lock);
+	return np;
+}
+EXPORT_SYMBOL(of_find_node_by_phandle);
+
+/**
  * of_parse_phandle - Resolve a phandle property to a device_node pointer
  * @np: Pointer to device node holding phandle property
  * @phandle_name: Name of property holding a phandle value
@@ -674,8 +696,8 @@ int of_parse_phandles_with_args(struct device_node *np, const char *list_name,
 				const void **out_args)
 {
 	int ret = -EINVAL;
-	const u32 *list;
-	const u32 *list_end;
+	const __be32 *list;
+	const __be32 *list_end;
 	int size;
 	int cur_index = 0;
 	struct device_node *node = NULL;
@@ -689,7 +711,7 @@ int of_parse_phandles_with_args(struct device_node *np, const char *list_name,
 	list_end = list + size / sizeof(*list);
 
 	while (list < list_end) {
-		const u32 *cells;
+		const __be32 *cells;
 		const phandle *phandle;
 
 		phandle = list++;
@@ -713,7 +735,7 @@ int of_parse_phandles_with_args(struct device_node *np, const char *list_name,
 			goto err1;
 		}
 
-		list += *cells;
+		list += be32_to_cpup(cells);
 		if (list > list_end) {
 			pr_debug("%s: insufficient arguments length\n",
 				 np->full_name);
@@ -870,3 +892,74 @@ int prom_update_property(struct device_node *np,
 
 	return 0;
 }
+
+#if defined(CONFIG_OF_DYNAMIC)
+/*
+ * Support for dynamic device trees.
+ *
+ * On some platforms, the device tree can be manipulated at runtime.
+ * The routines in this section support adding, removing and changing
+ * device tree nodes.
+ */
+
+/**
+ * of_attach_node - Plug a device node into the tree and global list.
+ */
+void of_attach_node(struct device_node *np)
+{
+	unsigned long flags;
+
+	write_lock_irqsave(&devtree_lock, flags);
+	np->sibling = np->parent->child;
+	np->allnext = allnodes;
+	np->parent->child = np;
+	allnodes = np;
+	write_unlock_irqrestore(&devtree_lock, flags);
+}
+
+/**
+ * of_detach_node - "Unplug" a node from the device tree.
+ *
+ * The caller must hold a reference to the node.  The memory associated with
+ * the node is not freed until its refcount goes to zero.
+ */
+void of_detach_node(struct device_node *np)
+{
+	struct device_node *parent;
+	unsigned long flags;
+
+	write_lock_irqsave(&devtree_lock, flags);
+
+	parent = np->parent;
+	if (!parent)
+		goto out_unlock;
+
+	if (allnodes == np)
+		allnodes = np->allnext;
+	else {
+		struct device_node *prev;
+		for (prev = allnodes;
+		     prev->allnext != np;
+		     prev = prev->allnext)
+			;
+		prev->allnext = np->allnext;
+	}
+
+	if (parent->child == np)
+		parent->child = np->sibling;
+	else {
+		struct device_node *prevsib;
+		for (prevsib = np->parent->child;
+		     prevsib->sibling != np;
+		     prevsib = prevsib->sibling)
+			;
+		prevsib->sibling = np->sibling;
+	}
+
+	of_node_set_flag(np, OF_DETACHED);
+
+out_unlock:
+	write_unlock_irqrestore(&devtree_lock, flags);
+}
+#endif /* defined(CONFIG_OF_DYNAMIC) */
+

@@ -15,6 +15,7 @@
 #include <linux/of.h>
 #include <linux/of_fdt.h>
 
+
 #ifdef CONFIG_PPC
 #include <asm/machdep.h>
 #endif /* CONFIG_PPC */
@@ -27,7 +28,7 @@ struct boot_param_header *initial_boot_params;
 char *find_flat_dt_string(u32 offset)
 {
 	return ((char *)initial_boot_params) +
-		initial_boot_params->off_dt_strings + offset;
+		be32_to_cpu(initial_boot_params->off_dt_strings) + offset;
 }
 
 /**
@@ -45,12 +46,12 @@ int __init of_scan_flat_dt(int (*it)(unsigned long node,
 			   void *data)
 {
 	unsigned long p = ((unsigned long)initial_boot_params) +
-		initial_boot_params->off_dt_struct;
+		be32_to_cpu(initial_boot_params->off_dt_struct);
 	int rc = 0;
 	int depth = -1;
 
 	do {
-		u32 tag = *((u32 *)p);
+		u32 tag = be32_to_cpup((__be32 *)p);
 		char *pathp;
 
 		p += 4;
@@ -63,9 +64,9 @@ int __init of_scan_flat_dt(int (*it)(unsigned long node,
 		if (tag == OF_DT_END)
 			break;
 		if (tag == OF_DT_PROP) {
-			u32 sz = *((u32 *)p);
+			u32 sz = be32_to_cpup((__be32 *)p);
 			p += 8;
-			if (initial_boot_params->version < 0x10)
+			if (be32_to_cpu(initial_boot_params->version) < 0x10)
 				p = _ALIGN(p, sz >= 8 ? 8 : 4);
 			p += sz;
 			p = _ALIGN(p, 4);
@@ -100,11 +101,11 @@ int __init of_scan_flat_dt(int (*it)(unsigned long node,
 unsigned long __init of_get_flat_dt_root(void)
 {
 	unsigned long p = ((unsigned long)initial_boot_params) +
-		initial_boot_params->off_dt_struct;
+		be32_to_cpu(initial_boot_params->off_dt_struct);
 
-	while (*((u32 *)p) == OF_DT_NOP)
+	while (be32_to_cpup((__be32 *)p) == OF_DT_NOP)
 		p += 4;
-	BUG_ON(*((u32 *)p) != OF_DT_BEGIN_NODE);
+	BUG_ON(be32_to_cpup((__be32 *)p) != OF_DT_BEGIN_NODE);
 	p += 4;
 	return _ALIGN(p + strlen((char *)p) + 1, 4);
 }
@@ -121,7 +122,7 @@ void *__init of_get_flat_dt_prop(unsigned long node, const char *name,
 	unsigned long p = node;
 
 	do {
-		u32 tag = *((u32 *)p);
+		u32 tag = be32_to_cpup((__be32 *)p);
 		u32 sz, noff;
 		const char *nstr;
 
@@ -131,10 +132,10 @@ void *__init of_get_flat_dt_prop(unsigned long node, const char *name,
 		if (tag != OF_DT_PROP)
 			return NULL;
 
-		sz = *((u32 *)p);
-		noff = *((u32 *)(p + 4));
+		sz = be32_to_cpup((__be32 *)p);
+		noff = be32_to_cpup((__be32 *)(p + 4));
 		p += 8;
-		if (initial_boot_params->version < 0x10)
+		if (be32_to_cpu(initial_boot_params->version) < 0x10)
 			p = _ALIGN(p, sz >= 8 ? 8 : 4);
 
 		nstr = find_flat_dt_string(noff);
@@ -209,7 +210,7 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 	int has_name = 0;
 	int new_format = 0;
 
-	tag = *((u32 *)(*p));
+	tag = be32_to_cpup((__be32 *)(*p));
 	if (tag != OF_DT_BEGIN_NODE) {
 		pr_err("Weird tag at start of node: %x\n", tag);
 		return mem;
@@ -284,7 +285,7 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 		u32 sz, noff;
 		char *pname;
 
-		tag = *((u32 *)(*p));
+		tag = be32_to_cpup((__be32 *)(*p));
 		if (tag == OF_DT_NOP) {
 			*p += 4;
 			continue;
@@ -292,10 +293,10 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 		if (tag != OF_DT_PROP)
 			break;
 		*p += 4;
-		sz = *((u32 *)(*p));
-		noff = *((u32 *)((*p) + 4));
+		sz = be32_to_cpup((__be32 *)(*p));
+		noff = be32_to_cpup((__be32 *)((*p) + 4));
 		*p += 8;
-		if (initial_boot_params->version < 0x10)
+		if (be32_to_cpu(initial_boot_params->version) < 0x10)
 			*p = _ALIGN(*p, sz >= 8 ? 8 : 4);
 
 		pname = find_flat_dt_string(noff);
@@ -309,10 +310,19 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 		pp = unflatten_dt_alloc(&mem, sizeof(struct property),
 					__alignof__(struct property));
 		if (allnextpp) {
-			if (strcmp(pname, "linux,phandle") == 0) {
+			/* We accept flattened tree phandles either in
+			 * ePAPR-style "phandle" properties, or the
+			 * legacy "linux,phandle" properties.  If both
+			 * appear and have different values, things
+			 * will get weird.  Don't do that. */
+			if ((strcmp(pname, "phandle") == 0) ||
+			    (strcmp(pname, "linux,phandle") == 0)) {
 				if (np->phandle == 0)
 					np->phandle = *((u32 *)*p);
 			}
+			/* And we process the "ibm,phandle" property
+			 * used in pSeries dynamic device tree
+			 * stuff */
 			if (strcmp(pname, "ibm,phandle") == 0)
 				np->phandle = *((u32 *)*p);
 			pp->name = pname;
@@ -366,7 +376,7 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
 	}
 	while (tag == OF_DT_BEGIN_NODE) {
 		mem = unflatten_dt_node(mem, p, np, allnextpp, fpsize);
-		tag = *((u32 *)(*p));
+		tag = be32_to_cpup((__be32 *)(*p));
 	}
 	if (tag != OF_DT_END_NODE) {
 		pr_err("Weird tag at end of node: %x\n", tag);
@@ -383,28 +393,23 @@ unsigned long __init unflatten_dt_node(unsigned long mem,
  */
 void __init early_init_dt_check_for_initrd(unsigned long node)
 {
-	unsigned long len;
-	u32 *prop;
+	unsigned long start, end, len;
+	__be32 *prop;
 
 	pr_debug("Looking for initrd properties... ");
 
 	prop = of_get_flat_dt_prop(node, "linux,initrd-start", &len);
-	if (prop) {
-		initrd_start = (unsigned long)
-				__va(of_read_ulong(prop, len/4));
+	if (!prop)
+		return;
+	start = of_read_ulong(prop, len/4);
 
-		prop = of_get_flat_dt_prop(node, "linux,initrd-end", &len);
-		if (prop) {
-			initrd_end = (unsigned long)
-				__va(of_read_ulong(prop, len/4));
-			initrd_below_start_ok = 1;
-		} else {
-			initrd_start = 0;
-		}
-	}
+	prop = of_get_flat_dt_prop(node, "linux,initrd-end", &len);
+	if (!prop)
+		return;
+	end = of_read_ulong(prop, len/4);
 
-	pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n",
-		 initrd_start, initrd_end);
+	early_init_dt_setup_initrd_arch(start, end);
+	pr_debug("initrd_start=0x%lx  initrd_end=0x%lx\n", start, end);
 }
 #else
 inline void early_init_dt_check_for_initrd(unsigned long node)
@@ -418,29 +423,83 @@ inline void early_init_dt_check_for_initrd(unsigned long node)
 int __init early_init_dt_scan_root(unsigned long node, const char *uname,
 				   int depth, void *data)
 {
-	u32 *prop;
+	__be32 *prop;
 
 	if (depth != 0)
 		return 0;
 
+	dt_root_size_cells = OF_ROOT_NODE_SIZE_CELLS_DEFAULT;
+	dt_root_addr_cells = OF_ROOT_NODE_ADDR_CELLS_DEFAULT;
+
 	prop = of_get_flat_dt_prop(node, "#size-cells", NULL);
-	dt_root_size_cells = (prop == NULL) ? 1 : *prop;
+	if (prop)
+		dt_root_size_cells = be32_to_cpup(prop);
 	pr_debug("dt_root_size_cells = %x\n", dt_root_size_cells);
 
 	prop = of_get_flat_dt_prop(node, "#address-cells", NULL);
-	dt_root_addr_cells = (prop == NULL) ? 2 : *prop;
+	if (prop)
+		dt_root_addr_cells = be32_to_cpup(prop);
 	pr_debug("dt_root_addr_cells = %x\n", dt_root_addr_cells);
 
 	/* break now */
 	return 1;
 }
 
-u64 __init dt_mem_next_cell(int s, u32 **cellp)
+u64 __init dt_mem_next_cell(int s, __be32 **cellp)
 {
-	u32 *p = *cellp;
+	__be32 *p = *cellp;
 
 	*cellp = p + s;
 	return of_read_number(p, s);
+}
+
+/**
+ * early_init_dt_scan_memory - Look for an parse memory nodes
+ */
+int __init early_init_dt_scan_memory(unsigned long node, const char *uname,
+				     int depth, void *data)
+{
+	char *type = of_get_flat_dt_prop(node, "device_type", NULL);
+	__be32 *reg, *endp;
+	unsigned long l;
+
+	/* We are scanning "memory" nodes only */
+	if (type == NULL) {
+		/*
+		 * The longtrail doesn't have a device_type on the
+		 * /memory node, so look for the node called /memory@0.
+		 */
+		if (depth != 1 || strcmp(uname, "memory@0") != 0)
+			return 0;
+	} else if (strcmp(type, "memory") != 0)
+		return 0;
+
+	reg = of_get_flat_dt_prop(node, "linux,usable-memory", &l);
+	if (reg == NULL)
+		reg = of_get_flat_dt_prop(node, "reg", &l);
+	if (reg == NULL)
+		return 0;
+
+	endp = reg + (l / sizeof(__be32));
+
+	pr_debug("memory scan node %s, reg size %ld, data: %x %x %x %x,\n",
+	    uname, l, reg[0], reg[1], reg[2], reg[3]);
+
+	while ((endp - reg) >= (dt_root_addr_cells + dt_root_size_cells)) {
+		u64 base, size;
+
+		base = dt_mem_next_cell(dt_root_addr_cells, &reg);
+		size = dt_mem_next_cell(dt_root_size_cells, &reg);
+
+		if (size == 0)
+			continue;
+		pr_debug(" - %llx ,  %llx\n", (unsigned long long)base,
+		    (unsigned long long)size);
+
+		early_init_dt_add_memory_arch(base, size);
+	}
+
+	return 0;
 }
 
 int __init early_init_dt_scan_chosen(unsigned long node, const char *uname,
@@ -494,7 +553,7 @@ void __init unflatten_device_tree(void)
 
 	/* First pass, scan for size */
 	start = ((unsigned long)initial_boot_params) +
-		initial_boot_params->off_dt_struct;
+		be32_to_cpu(initial_boot_params->off_dt_struct);
 	size = unflatten_dt_node(0, &start, NULL, NULL, 0);
 	size = (size | 3) + 1;
 
@@ -504,19 +563,19 @@ void __init unflatten_device_tree(void)
 	mem = lmb_alloc(size + 4, __alignof__(struct device_node));
 	mem = (unsigned long) __va(mem);
 
-	((u32 *)mem)[size / 4] = 0xdeadbeef;
+	((__be32 *)mem)[size / 4] = cpu_to_be32(0xdeadbeef);
 
 	pr_debug("  unflattening %lx...\n", mem);
 
 	/* Second pass, do actual unflattening */
 	start = ((unsigned long)initial_boot_params) +
-		initial_boot_params->off_dt_struct;
+		be32_to_cpu(initial_boot_params->off_dt_struct);
 	unflatten_dt_node(mem, &start, NULL, &allnextp, 0);
-	if (*((u32 *)start) != OF_DT_END)
+	if (be32_to_cpup((__be32 *)start) != OF_DT_END)
 		pr_warning("Weird tag at end of tree: %08x\n", *((u32 *)start));
-	if (((u32 *)mem)[size / 4] != 0xdeadbeef)
+	if (be32_to_cpu(((__be32 *)mem)[size / 4]) != 0xdeadbeef)
 		pr_warning("End of tree marker overwritten: %08x\n",
-			   ((u32 *)mem)[size / 4]);
+			   be32_to_cpu(((__be32 *)mem)[size / 4]));
 	*allnextp = NULL;
 
 	/* Get pointer to OF "/chosen" node for use everywhere */

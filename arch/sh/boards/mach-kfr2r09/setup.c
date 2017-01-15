@@ -350,7 +350,7 @@ static struct resource kfr2r09_sh_sdhi0_resources[] = {
 		.flags  = IORESOURCE_MEM,
 	},
 	[1] = {
-		.start  = 101,
+		.start  = 100,
 		.flags  = IORESOURCE_IRQ,
 	},
 };

@@ -3244,7 +3244,7 @@ static int __exit fsg_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int __init fsg_probe(struct platform_device *pdev)
+static int fsg_probe(struct platform_device *pdev)
 {
 	struct usb_mass_storage_platform_data *pdata = pdev->dev.platform_data;
 	int		rc;

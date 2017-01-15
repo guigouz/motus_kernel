@@ -51,7 +51,7 @@ MODULE_PARM_DESC(enable, "Enable SiS7019 Audio Accelerator.");
 module_param(codecs, int, 0444);
 MODULE_PARM_DESC(codecs, "Set bit to indicate that codec number is expected to be present (default 1)");
 
-static struct pci_device_id snd_sis7019_ids[] = {
+static DEFINE_PCI_DEVICE_TABLE(snd_sis7019_ids) = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_SI, 0x7019) },
 	{ 0, }
 };

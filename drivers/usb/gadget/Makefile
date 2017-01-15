@@ -51,8 +51,11 @@ g_file_storage-objs		:= file_storage.o
 g_mass_storage-objs		:= mass_storage.o
 g_printer-objs			:= printer.o
 g_cdc-objs			:= cdc2.o
-g_android-objs			:= android.o f_adb.o f_mass_storage.o \
+g_android-objs			:= android.o
+ifndef CONFIG_USB_FUNCTION
+g_android-objs			+= f_adb.o f_mass_storage.o \
 					u_serial.o f_acm.o $(F_SERIAL) $(F_DIAG)
+endif
 g_multi-objs			:= multi.o
 
 obj-$(CONFIG_USB_ZERO)		+= g_zero.o

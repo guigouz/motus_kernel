@@ -3741,7 +3741,7 @@ static struct attribute_group msm_hsusb_attr_grp = {
 	.attrs = msm_hsusb_attrs,
 };
 
-static int __init usb_probe(struct platform_device *pdev)
+static int usb_probe(struct platform_device *pdev)
 {
 	struct resource *res;
 	struct usb_info *ui;

@@ -20,6 +20,8 @@
 #include <linux/kref.h>
 #include <linux/mod_devicetable.h>
 
+#include <asm/byteorder.h>
+
 typedef u32 phandle;
 typedef u32 ihandle;
 
@@ -73,12 +75,6 @@ static inline void of_node_set_flag(struct device_node *n, unsigned long flag)
 	set_bit(flag, &n->_flags);
 }
 
-static inline void
-set_node_proc_entry(struct device_node *dn, struct proc_dir_entry *de)
-{
-	dn->pde = de;
-}
-
 extern struct device_node *of_find_all_nodes(struct device_node *prev);
 
 #if defined(CONFIG_SPARC)
@@ -101,16 +97,16 @@ extern void of_node_put(struct device_node *node);
  */
 
 /* Helper to read a big number; size is in cells (not bytes) */
-static inline u64 of_read_number(const u32 *cell, int size)
+static inline u64 of_read_number(const __be32 *cell, int size)
 {
 	u64 r = 0;
 	while (size--)
-		r = (r << 32) | *(cell++);
+		r = (r << 32) | be32_to_cpu(*(cell++));
 	return r;
 }
 
 /* Like of_read_number, but we want an unsigned long result */
-static inline unsigned long of_read_ulong(const u32 *cell, int size)
+static inline unsigned long of_read_ulong(const __be32 *cell, int size)
 {
 	/* toss away upper bits if unsigned long is smaller than u64 */
 	return of_read_number(cell, size);
@@ -183,5 +179,11 @@ extern struct device_node *of_parse_phandle(struct device_node *np,
 extern int of_parse_phandles_with_args(struct device_node *np,
 	const char *list_name, const char *cells_name, int index,
 	struct device_node **out_node, const void **out_args);
+
+#if defined(CONFIG_OF_DYNAMIC)
+/* For updating the device tree at runtime */
+extern void of_attach_node(struct device_node *);
+extern void of_detach_node(struct device_node *);
+#endif
 
 #endif /* _LINUX_OF_H */
