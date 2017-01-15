@@ -1042,10 +1042,7 @@ static int __send_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap,
 	struct ceph_inode_info *ci = cap->ci;
 	struct inode *inode = &ci->vfs_inode;
 	u64 cap_id = cap->cap_id;
-	int held = cap->issued | cap->implemented;
-	int revoking = cap->implemented & ~cap->issued;
-	int dropping = cap->issued & ~retain;
-	int keep;
+	int held, revoking, dropping, keep;
 	u64 seq, issue_seq, mseq, time_warp_seq, follows;
 	u64 size, max_size;
 	struct timespec mtime, atime;
@@ -1059,6 +1056,11 @@ static int __send_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap,
 	u64 flush_tid = 0;
 	int i;
 	int ret;
+
+	held = cap->issued | cap->implemented;
+	revoking = cap->implemented & ~cap->issued;
+	retain &= ~revoking;
+	dropping = cap->issued & ~retain;
 
 	dout("__send_cap %p cap %p session %p %s -> %s (revoking %s)\n",
 	     inode, cap, cap->session,
@@ -1134,12 +1136,6 @@ static int __send_cap(struct ceph_mds_client *mdsc, struct ceph_cap *cap,
 	}
 
 	spin_unlock(&inode->i_lock);
-
-	if (dropping & CEPH_CAP_FILE_CACHE) {
-		/* invalidate what we can */
-		dout("invalidating pages on %p\n", inode);
-		invalidate_mapping_pages(&inode->i_data, 0, -1);
-	}
 
 	ret = send_cap_msg(session, ceph_vino(inode).ino, cap_id,
 		op, keep, want, flushing, seq, flush_tid, issue_seq, mseq,
@@ -1374,12 +1370,13 @@ void ceph_check_caps(struct ceph_inode_info *ci, int flags,
 	int file_wanted, used;
 	int took_snap_rwsem = 0;             /* true if mdsc->snap_rwsem held */
 	int drop_session_lock = session ? 0 : 1;
-	int want, retain, revoking, flushing = 0;
+	int issued, implemented, want, retain, revoking, flushing = 0;
 	int mds = -1;   /* keep track of how far we've gone through i_caps list
 			   to avoid an infinite loop on retry */
 	struct rb_node *p;
 	int tried_invalidate = 0;
 	int delayed = 0, sent = 0, force_requeue = 0, num;
+	int queue_invalidate = 0;
 	int is_delayed = flags & CHECK_CAPS_NODELAY;
 
 	/* if we are unmounting, flush any unused caps immediately. */
@@ -1401,6 +1398,8 @@ retry_locked:
 	file_wanted = __ceph_caps_file_wanted(ci);
 	used = __ceph_caps_used(ci);
 	want = file_wanted | used;
+	issued = __ceph_caps_issued(ci, &implemented);
+	revoking = implemented & ~issued;
 
 	retain = want | CEPH_CAP_PIN;
 	if (!mdsc->stopping && inode->i_nlink > 0) {
@@ -1419,11 +1418,11 @@ retry_locked:
 	}
 
 	dout("check_caps %p file_want %s used %s dirty %s flushing %s"
-	     " issued %s retain %s %s%s%s\n", inode,
+	     " issued %s revoking %s retain %s %s%s%s\n", inode,
 	     ceph_cap_string(file_wanted),
 	     ceph_cap_string(used), ceph_cap_string(ci->i_dirty_caps),
 	     ceph_cap_string(ci->i_flushing_caps),
-	     ceph_cap_string(__ceph_caps_issued(ci, NULL)),
+	     ceph_cap_string(issued), ceph_cap_string(revoking),
 	     ceph_cap_string(retain),
 	     (flags & CHECK_CAPS_AUTHONLY) ? " AUTHONLY" : "",
 	     (flags & CHECK_CAPS_NODELAY) ? " NODELAY" : "",
@@ -1437,8 +1436,8 @@ retry_locked:
 	if ((!is_delayed || mdsc->stopping) &&
 	    ci->i_wrbuffer_ref == 0 &&               /* no dirty pages... */
 	    ci->i_rdcache_gen &&                     /* may have cached pages */
-	    file_wanted == 0 &&                      /* no open files */
-	    !ci->i_truncate_pending &&
+	    (file_wanted == 0 ||                     /* no open files */
+	     (revoking & CEPH_CAP_FILE_CACHE)) &&     /*  or revoking cache */
 	    !tried_invalidate) {
 		u32 invalidating_gen = ci->i_rdcache_gen;
 		int ret;
@@ -1451,6 +1450,10 @@ retry_locked:
 			/* success. */
 			ci->i_rdcache_gen = 0;
 			ci->i_rdcache_revoking = 0;
+		} else if (revoking & CEPH_CAP_FILE_CACHE) {
+			dout("check_caps queuing invalidate\n");
+			queue_invalidate = 1;
+			ci->i_rdcache_revoking = ci->i_rdcache_gen;
 		} else {
 			dout("check_caps failed to invalidate pages\n");
 			/* we failed to invalidate pages.  check these
@@ -1476,7 +1479,7 @@ retry_locked:
 
 		revoking = cap->implemented & ~cap->issued;
 		if (revoking)
-			dout("mds%d revoking %s\n", cap->mds,
+			dout(" mds%d revoking %s\n", cap->mds,
 			     ceph_cap_string(revoking));
 
 		if (cap == ci->i_auth_cap &&
@@ -1590,6 +1593,9 @@ ack:
 		__cap_delay_requeue(mdsc, ci);
 
 	spin_unlock(&inode->i_lock);
+
+	if (queue_invalidate)
+		ceph_queue_invalidate(inode);
 
 	if (session && drop_session_lock)
 		mutex_unlock(&session->s_mutex);
@@ -2164,7 +2170,7 @@ static int handle_cap_grant(struct inode *inode, struct ceph_mds_caps *grant,
 	int wake = 0;
 	int writeback = 0;
 	int revoked_rdcache = 0;
-	int invalidate_async = 0;
+	int queue_invalidate = 0;
 	int tried_invalidate = 0;
 	int ret;
 
@@ -2191,7 +2197,7 @@ restart:
 			/* there were locked pages.. invalidate later
 			   in a separate thread. */
 			if (ci->i_rdcache_revoking != ci->i_rdcache_gen) {
-				invalidate_async = 1;
+				queue_invalidate = 1;
 				ci->i_rdcache_revoking = ci->i_rdcache_gen;
 			}
 		} else {
@@ -2305,21 +2311,15 @@ restart:
 	}
 
 	spin_unlock(&inode->i_lock);
-	if (writeback) {
+	if (writeback)
 		/*
 		 * queue inode for writeback: we can't actually call
 		 * filemap_write_and_wait, etc. from message handler
 		 * context.
 		 */
-		dout("queueing %p for writeback\n", inode);
-		if (ceph_queue_writeback(inode))
-			igrab(inode);
-	}
-	if (invalidate_async) {
-		dout("queueing %p for page invalidation\n", inode);
-		if (ceph_queue_page_invalidation(inode))
-			igrab(inode);
-	}
+		ceph_queue_writeback(inode);
+	if (queue_invalidate)
+		ceph_queue_invalidate(inode);
 	if (wake)
 		wake_up(&ci->i_cap_wq);
 	return reply;
@@ -2465,9 +2465,7 @@ static void handle_cap_trunc(struct inode *inode,
 	spin_unlock(&inode->i_lock);
 
 	if (queue_trunc)
-		if (queue_work(ceph_client(inode->i_sb)->trunc_wq,
-			       &ci->i_vmtruncate_work))
-			igrab(inode);
+		ceph_queue_vmtruncate(inode);
 }
 
 /*

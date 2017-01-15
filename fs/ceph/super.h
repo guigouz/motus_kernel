@@ -53,6 +53,7 @@ struct ceph_mount_args {
 	struct ceph_entity_addr *mon_addr;
 	int flags;
 	int mount_timeout;
+	int osd_idle_ttl;
 	int caps_wanted_delay_min, caps_wanted_delay_max;
 	struct ceph_fsid fsid;
 	struct ceph_entity_addr my_addr;
@@ -71,6 +72,7 @@ struct ceph_mount_args {
  * defaults
  */
 #define CEPH_MOUNT_TIMEOUT_DEFAULT  60
+#define CEPH_OSD_IDLE_TTL_DEFAULT    60
 #define CEPH_MOUNT_RSIZE_DEFAULT    (512*1024) /* readahead */
 
 #define CEPH_MSG_MAX_FRONT_LEN	(16*1024*1024)
@@ -571,18 +573,6 @@ static inline struct ceph_client *ceph_sb_to_client(struct super_block *sb)
 	return (struct ceph_client *)sb->s_fs_info;
 }
 
-static inline int ceph_queue_writeback(struct inode *inode)
-{
-	return queue_work(ceph_inode_to_client(inode)->wb_wq,
-		   &ceph_inode(inode)->i_wb_work);
-}
-
-static inline int ceph_queue_page_invalidation(struct inode *inode)
-{
-	return queue_work(ceph_inode_to_client(inode)->pg_inv_wq,
-		   &ceph_inode(inode)->i_pg_inv_work);
-}
-
 
 /*
  * we keep buffered readdir results attached to file->private_data
@@ -770,10 +760,11 @@ extern int ceph_readdir_prepopulate(struct ceph_mds_request *req,
 extern int ceph_inode_holds_cap(struct inode *inode, int mask);
 
 extern int ceph_inode_set_size(struct inode *inode, loff_t size);
-extern void ceph_inode_writeback(struct work_struct *work);
-extern void ceph_vmtruncate_work(struct work_struct *work);
 extern void __ceph_do_pending_vmtruncate(struct inode *inode);
-extern void __ceph_queue_vmtruncate(struct inode *inode);
+extern void ceph_queue_vmtruncate(struct inode *inode);
+
+extern void ceph_queue_invalidate(struct inode *inode);
+extern void ceph_queue_writeback(struct inode *inode);
 
 extern int ceph_do_getattr(struct inode *inode, int mask);
 extern int ceph_permission(struct inode *inode, int mask);

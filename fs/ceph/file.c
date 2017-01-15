@@ -395,23 +395,22 @@ static void zero_page_vector_range(int off, int len, struct page **pages)
 {
 	int i = off >> PAGE_CACHE_SHIFT;
 
+	off &= ~PAGE_CACHE_MASK;
+
 	dout("zero_page_vector_page %u~%u\n", off, len);
-	BUG_ON(len < PAGE_CACHE_SIZE);
 
 	/* leading partial page? */
-	if (off & ~PAGE_CACHE_MASK) {
+	if (off) {
+		int end = min((int)PAGE_CACHE_SIZE, off + len);
 		dout("zeroing %d %p head from %d\n", i, pages[i],
-		     (int)(off & ~PAGE_CACHE_MASK));
-		zero_user_segment(pages[i], off & ~PAGE_CACHE_MASK,
-				  PAGE_CACHE_SIZE);
-		off += PAGE_CACHE_SIZE;
-		off &= PAGE_CACHE_MASK;
+		     (int)off);
+		zero_user_segment(pages[i], off, end);
+		len -= (end - off);
 		i++;
 	}
 	while (len >= PAGE_CACHE_SIZE) {
-		dout("zeroing %d %p\n", i, pages[i]);
+		dout("zeroing %d %p len=%d\n", i, pages[i], len);
 		zero_user_segment(pages[i], 0, PAGE_CACHE_SIZE);
-		off += PAGE_CACHE_SIZE;
 		len -= PAGE_CACHE_SIZE;
 		i++;
 	}
@@ -432,12 +431,13 @@ static void zero_page_vector_range(int off, int len, struct page **pages)
  */
 static int striped_read(struct inode *inode,
 			u64 off, u64 len,
-			struct page **pages, int num_pages)
+			struct page **pages, int num_pages,
+			int *checkeof)
 {
 	struct ceph_client *client = ceph_inode_to_client(inode);
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	u64 pos, this_len;
-	int page_off = off & ~PAGE_CACHE_SIZE; /* first byte's offset in page */
+	int page_off = off & ~PAGE_CACHE_MASK; /* first byte's offset in page */
 	int left, pages_left;
 	int read;
 	struct page **page_pos;
@@ -493,19 +493,12 @@ more:
 			dout("zero tail\n");
 			zero_page_vector_range(page_off + read, len - read,
 					       pages);
+			read = len;
 			goto out;
 		}
 
 		/* check i_size */
-		ret = ceph_do_getattr(inode, CEPH_STAT_CAP_SIZE);
-		if (ret < 0)
-			goto out;
-
-		/* hit EOF? */
-		if (pos >= inode->i_size)
-			goto out;
-
-		goto more;
+		*checkeof = 1;
 	}
 
 out:
@@ -522,7 +515,7 @@ out:
  * If the read spans object boundary, just do multiple reads.
  */
 static ssize_t ceph_sync_read(struct file *file, char __user *data,
-			      unsigned len, loff_t *poff)
+			      unsigned len, loff_t *poff, int *checkeof)
 {
 	struct inode *inode = file->f_dentry->d_inode;
 	struct page **pages;
@@ -542,20 +535,24 @@ static ssize_t ceph_sync_read(struct file *file, char __user *data,
 		 * but it will at least behave sensibly when they are
 		 * in sequence.
 		 */
-		filemap_write_and_wait(inode->i_mapping);
 	} else {
 		pages = alloc_page_vector(num_pages);
 	}
 	if (IS_ERR(pages))
 		return PTR_ERR(pages);
 
-	ret = striped_read(inode, off, len, pages, num_pages);
+	ret = filemap_write_and_wait(inode->i_mapping);
+	if (ret < 0)
+		goto done;
+
+	ret = striped_read(inode, off, len, pages, num_pages, checkeof);
 
 	if (ret >= 0 && (file->f_flags & O_DIRECT) == 0)
 		ret = copy_page_vector_to_user(pages, data, off, ret);
 	if (ret >= 0)
 		*poff = off + ret;
 
+done:
 	if (file->f_flags & O_DIRECT)
 		put_page_vector(pages, num_pages);
 	else
@@ -616,6 +613,16 @@ static ssize_t ceph_sync_write(struct file *file, const char __user *data,
 		pos = i_size_read(inode);
 	else
 		pos = *offset;
+
+	ret = filemap_write_and_wait_range(inode->i_mapping, pos, pos + left);
+	if (ret < 0)
+		return ret;
+
+	ret = invalidate_inode_pages2_range(inode->i_mapping,
+					    pos >> PAGE_CACHE_SHIFT,
+					    (pos + left) >> PAGE_CACHE_SHIFT);
+	if (ret < 0)
+		dout("invalidate_inode_pages2_range returned %d\n", ret);
 
 	flags = CEPH_OSD_FLAG_ORDERSNAP |
 		CEPH_OSD_FLAG_ONDISK |
@@ -732,11 +739,14 @@ static ssize_t ceph_aio_read(struct kiocb *iocb, const struct iovec *iov,
 	size_t len = iov->iov_len;
 	struct inode *inode = filp->f_dentry->d_inode;
 	struct ceph_inode_info *ci = ceph_inode(inode);
+	void *base = iov->iov_base;
 	ssize_t ret;
 	int got = 0;
+	int checkeof = 0, read = 0;
 
 	dout("aio_read %p %llx.%llx %llu~%u trying to get caps on %p\n",
 	     inode, ceph_vinop(inode), pos, (unsigned)len, inode);
+again:
 	__ceph_do_pending_vmtruncate(inode);
 	ret = ceph_get_caps(ci, CEPH_CAP_FILE_RD, CEPH_CAP_FILE_CACHE,
 			    &got, -1);
@@ -750,7 +760,7 @@ static ssize_t ceph_aio_read(struct kiocb *iocb, const struct iovec *iov,
 	    (iocb->ki_filp->f_flags & O_DIRECT) ||
 	    (inode->i_sb->s_flags & MS_SYNCHRONOUS))
 		/* hmm, this isn't really async... */
-		ret = ceph_sync_read(filp, iov->iov_base, len, ppos);
+		ret = ceph_sync_read(filp, base, len, ppos, &checkeof);
 	else
 		ret = generic_file_aio_read(iocb, iov, nr_segs, pos);
 
@@ -758,6 +768,23 @@ out:
 	dout("aio_read %p %llx.%llx dropping cap refs on %s = %d\n",
 	     inode, ceph_vinop(inode), ceph_cap_string(got), (int)ret);
 	ceph_put_cap_refs(ci, got);
+
+	if (checkeof && ret >= 0) {
+		int statret = ceph_do_getattr(inode, CEPH_STAT_CAP_SIZE);
+
+		/* hit EOF or hole? */
+		if (statret == 0 && *ppos < inode->i_size) {
+			dout("aio_read sync_read hit hole, reading more\n");
+			read += ret;
+			base += ret;
+			len -= ret;
+			checkeof = 0;
+			goto again;
+		}
+	}
+	if (ret >= 0)
+		ret += read;
+
 	return ret;
 }
 
