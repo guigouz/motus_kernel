@@ -1783,6 +1783,13 @@ void r600_fence_ring_emit(struct radeon_device *rdev,
 			  struct radeon_fence *fence)
 {
 	/* Also consider EVENT_WRITE_EOP.  it handles the interrupts + timestamps + events */
+
+	radeon_ring_write(rdev, PACKET3(PACKET3_EVENT_WRITE, 0));
+	radeon_ring_write(rdev, CACHE_FLUSH_AND_INV_EVENT);
+	/* wait for 3D idle clean */
+	radeon_ring_write(rdev, PACKET3(PACKET3_SET_CONFIG_REG, 1));
+	radeon_ring_write(rdev, (WAIT_UNTIL - PACKET3_SET_CONFIG_REG_OFFSET) >> 2);
+	radeon_ring_write(rdev, WAIT_3D_IDLE_bit | WAIT_3D_IDLECLEAN_bit);
 	/* Emit fence sequence & fire IRQ */
 	radeon_ring_write(rdev, PACKET3(PACKET3_SET_CONFIG_REG, 1));
 	radeon_ring_write(rdev, ((rdev->fence_drv.scratch_reg - PACKET3_SET_CONFIG_REG_OFFSET) >> 2));
@@ -2745,6 +2752,8 @@ restart_ih:
 			case 0: /* D1 vblank */
 				if (disp_int & LB_D1_VBLANK_INTERRUPT) {
 					drm_handle_vblank(rdev->ddev, 0);
+					if (rdev->pm.vblank_callback)
+						queue_work(rdev->wq, &rdev->pm.reclock_work);
 					disp_int &= ~LB_D1_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D1 vblank\n");
 				}
@@ -2765,6 +2774,8 @@ restart_ih:
 			case 0: /* D2 vblank */
 				if (disp_int & LB_D2_VBLANK_INTERRUPT) {
 					drm_handle_vblank(rdev->ddev, 1);
+					if (rdev->pm.vblank_callback)
+						queue_work(rdev->wq, &rdev->pm.reclock_work);
 					disp_int &= ~LB_D2_VBLANK_INTERRUPT;
 					DRM_DEBUG("IH: D2 vblank\n");
 				}

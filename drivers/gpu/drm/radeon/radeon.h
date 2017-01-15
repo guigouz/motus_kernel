@@ -89,6 +89,7 @@ extern int radeon_testing;
 extern int radeon_connector_table;
 extern int radeon_tv;
 extern int radeon_new_pll;
+extern int radeon_dynpm;
 extern int radeon_audio;
 
 /*
@@ -148,6 +149,9 @@ struct radeon_clock {
  * Power management
  */
 int radeon_pm_init(struct radeon_device *rdev);
+void radeon_pm_compute_clocks(struct radeon_device *rdev);
+void radeon_combios_get_power_modes(struct radeon_device *rdev);
+void radeon_atombios_get_power_modes(struct radeon_device *rdev);
 
 /*
  * Fences.
@@ -569,7 +573,99 @@ struct radeon_wb {
  * Equation between gpu/memory clock and available bandwidth is hw dependent
  * (type of memory, bus size, efficiency, ...)
  */
+enum radeon_pm_state {
+	PM_STATE_DISABLED,
+	PM_STATE_MINIMUM,
+	PM_STATE_PAUSED,
+	PM_STATE_ACTIVE
+};
+enum radeon_pm_action {
+	PM_ACTION_NONE,
+	PM_ACTION_MINIMUM,
+	PM_ACTION_DOWNCLOCK,
+	PM_ACTION_UPCLOCK
+};
+
+enum radeon_voltage_type {
+	VOLTAGE_NONE = 0,
+	VOLTAGE_GPIO,
+	VOLTAGE_VDDC,
+	VOLTAGE_SW
+};
+
+enum radeon_pm_state_type {
+	POWER_STATE_TYPE_DEFAULT,
+	POWER_STATE_TYPE_POWERSAVE,
+	POWER_STATE_TYPE_BATTERY,
+	POWER_STATE_TYPE_BALANCED,
+	POWER_STATE_TYPE_PERFORMANCE,
+};
+
+enum radeon_pm_clock_mode_type {
+	POWER_MODE_TYPE_DEFAULT,
+	POWER_MODE_TYPE_LOW,
+	POWER_MODE_TYPE_MID,
+	POWER_MODE_TYPE_HIGH,
+};
+
+struct radeon_voltage {
+	enum radeon_voltage_type type;
+	/* gpio voltage */
+	struct radeon_gpio_rec gpio;
+	u32 delay; /* delay in usec from voltage drop to sclk change */
+	bool active_high; /* voltage drop is active when bit is high */
+	/* VDDC voltage */
+	u8 vddc_id; /* index into vddc voltage table */
+	u8 vddci_id; /* index into vddci voltage table */
+	bool vddci_enabled;
+	/* r6xx+ sw */
+	u32 voltage;
+};
+
+struct radeon_pm_non_clock_info {
+	/* pcie lanes */
+	int pcie_lanes;
+	/* standardized non-clock flags */
+	u32 flags;
+};
+
+struct radeon_pm_clock_info {
+	/* memory clock */
+	u32 mclk;
+	/* engine clock */
+	u32 sclk;
+	/* voltage info */
+	struct radeon_voltage voltage;
+	/* standardized clock flags - not sure we'll need these */
+	u32 flags;
+};
+
+struct radeon_power_state {
+	enum radeon_pm_state_type type;
+	/* XXX: use a define for num clock modes */
+	struct radeon_pm_clock_info clock_info[8];
+	/* number of valid clock modes in this power state */
+	int num_clock_modes;
+	/* currently selected clock mode */
+	struct radeon_pm_clock_info *current_clock_mode;
+	struct radeon_pm_clock_info *requested_clock_mode;
+	struct radeon_pm_clock_info *default_clock_mode;
+	/* non clock info about this state */
+	struct radeon_pm_non_clock_info non_clock_info;
+	bool voltage_drop_active;
+};
+
 struct radeon_pm {
+	struct mutex		mutex;
+	struct work_struct	reclock_work;
+	struct delayed_work	idle_work;
+	enum radeon_pm_state	state;
+	enum radeon_pm_action	planned_action;
+	unsigned long		action_timeout;
+	bool 			downclocked;
+	bool			vblank_callback;
+	int			active_crtcs;
+	int			req_vblank;
 	fixed20_12		max_bandwidth;
 	fixed20_12		igp_sideport_mclk;
 	fixed20_12		igp_system_mclk;
@@ -581,6 +677,13 @@ struct radeon_pm {
 	fixed20_12		core_bandwidth;
 	fixed20_12		sclk;
 	fixed20_12		needed_bandwidth;
+	/* XXX: use a define for num power modes */
+	struct radeon_power_state power_state[8];
+	/* number of valid power states */
+	int                     num_power_states;
+	struct radeon_power_state *current_power_state;
+	struct radeon_power_state *requested_power_state;
+	struct radeon_power_state *default_power_state;
 };
 
 
@@ -650,6 +753,7 @@ struct radeon_asic {
 	void (*set_engine_clock)(struct radeon_device *rdev, uint32_t eng_clock);
 	uint32_t (*get_memory_clock)(struct radeon_device *rdev);
 	void (*set_memory_clock)(struct radeon_device *rdev, uint32_t mem_clock);
+	int (*get_pcie_lanes)(struct radeon_device *rdev);
 	void (*set_pcie_lanes)(struct radeon_device *rdev, int lanes);
 	void (*set_clock_gating)(struct radeon_device *rdev, int enable);
 	int (*set_surface_reg)(struct radeon_device *rdev, int reg,
@@ -829,6 +933,7 @@ struct radeon_device {
 	struct r600_ih ih; /* r6/700 interrupt ring */
 	struct workqueue_struct *wq;
 	struct work_struct hotplug_work;
+	int num_crtc; /* number of crtcs */
 	struct mutex dc_hw_i2c_mutex; /* display controller hw i2c mutex */
 
 	/* audio stuff */
@@ -1015,6 +1120,7 @@ static inline void radeon_ring_write(struct radeon_device *rdev, uint32_t v)
 #define radeon_set_engine_clock(rdev, e) (rdev)->asic->set_engine_clock((rdev), (e))
 #define radeon_get_memory_clock(rdev) (rdev)->asic->get_memory_clock((rdev))
 #define radeon_set_memory_clock(rdev, e) (rdev)->asic->set_memory_clock((rdev), (e))
+#define radeon_get_pcie_lanes(rdev) (rdev)->asic->get_pcie_lanes((rdev))
 #define radeon_set_pcie_lanes(rdev, l) (rdev)->asic->set_pcie_lanes((rdev), (l))
 #define radeon_set_clock_gating(rdev, e) (rdev)->asic->set_clock_gating((rdev), (e))
 #define radeon_set_surface_reg(rdev, r, f, p, o, s) ((rdev)->asic->set_surface_reg((rdev), (r), (f), (p), (o), (s)))
