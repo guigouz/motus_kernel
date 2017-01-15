@@ -25,4 +25,16 @@ config PANEL_TAAL
         help
           Taal DSI command mode panel from TPO.
 
+config PANEL_TOPPOLY_TDO35S
+        tristate "Toppoly TDO35S LCD Panel support"
+        depends on OMAP2_DSS
+        help
+          LCD Panel used in CM-T35
+
+config PANEL_TPO_TD043MTEA1
+        tristate "TPO TD043MTEA1 LCD Panel"
+        depends on OMAP2_DSS && I2C
+        help
+          LCD Panel used in OMAP3 Pandora
+
 endmenu
