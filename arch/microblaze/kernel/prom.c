@@ -42,9 +42,6 @@
 #include <asm/sections.h>
 #include <asm/pci-bridge.h>
 
-/* export that to outside world */
-struct device_node *of_chosen;
-
 void __init early_init_dt_scan_chosen_arch(unsigned long node)
 {
 	/* No Microblaze specific code here */
@@ -53,6 +50,11 @@ void __init early_init_dt_scan_chosen_arch(unsigned long node)
 void __init early_init_dt_add_memory_arch(u64 base, u64 size)
 {
 	lmb_add(base, size);
+}
+
+u64 __init early_init_dt_alloc_memory_arch(u64 size, u64 align)
+{
+	return lmb_alloc(size, align);
 }
 
 #ifdef CONFIG_EARLY_PRINTK

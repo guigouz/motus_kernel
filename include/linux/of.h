@@ -22,6 +22,8 @@
 
 #include <asm/byteorder.h>
 
+#ifdef CONFIG_OF
+
 typedef u32 phandle;
 typedef u32 ihandle;
 
@@ -64,6 +66,7 @@ struct device_node {
 
 /* Pointer for first entry in chain of all nodes. */
 extern struct device_node *allnodes;
+extern struct device_node *of_chosen;
 
 static inline int of_node_check_flag(struct device_node *n, unsigned long flag)
 {
@@ -113,6 +116,19 @@ static inline unsigned long of_read_ulong(const __be32 *cell, int size)
 }
 
 #include <asm/prom.h>
+
+/* Default #address and #size cells.  Allow arch asm/prom.h to override */
+#if !defined(OF_ROOT_NODE_ADDR_CELLS_DEFAULT)
+#define OF_ROOT_NODE_ADDR_CELLS_DEFAULT 1
+#define OF_ROOT_NODE_SIZE_CELLS_DEFAULT 1
+#endif
+
+/* Default string compare functions, Allow arch asm/prom.h to override */
+#if !defined(of_compat_cmp)
+#define of_compat_cmp(s1, s2, l)	strncasecmp((s1), (s2), (l))
+#define of_prop_cmp(s1, s2)		strcmp((s1), (s2))
+#define of_node_cmp(s1, s2)		strcasecmp((s1), (s2))
+#endif
 
 /* flag descriptions */
 #define OF_DYNAMIC	1 /* node and properties were allocated via kmalloc */
@@ -180,10 +196,19 @@ extern int of_parse_phandles_with_args(struct device_node *np,
 	const char *list_name, const char *cells_name, int index,
 	struct device_node **out_node, const void **out_args);
 
+extern int of_machine_is_compatible(const char *compat);
+
+extern int prom_add_property(struct device_node* np, struct property* prop);
+extern int prom_remove_property(struct device_node *np, struct property *prop);
+extern int prom_update_property(struct device_node *np,
+				struct property *newprop,
+				struct property *oldprop);
+
 #if defined(CONFIG_OF_DYNAMIC)
 /* For updating the device tree at runtime */
 extern void of_attach_node(struct device_node *);
 extern void of_detach_node(struct device_node *);
 #endif
 
+#endif /* CONFIG_OF */
 #endif /* _LINUX_OF_H */

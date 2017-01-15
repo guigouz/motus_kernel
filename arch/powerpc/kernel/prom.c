@@ -67,11 +67,6 @@ int __initdata iommu_force_on;
 unsigned long tce_alloc_start, tce_alloc_end;
 #endif
 
-extern rwlock_t devtree_lock;	/* temporary while merging */
-
-/* export that to outside world */
-struct device_node *of_chosen;
-
 static int __init early_parse_mem(char *p)
 {
 	if (!p)
@@ -508,6 +503,11 @@ void __init early_init_dt_add_memory_arch(u64 base, u64 size)
 	lmb_add(base, size);
 
 	memstart_addr = min((u64)memstart_addr, base);
+}
+
+u64 __init early_init_dt_alloc_memory_arch(u64 size, u64 align)
+{
+	return lmb_alloc(size, align);
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
