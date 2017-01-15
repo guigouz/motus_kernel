@@ -689,7 +689,7 @@ static int tomoyo_check_single_path_acl2(const struct tomoyo_domain_info *
 
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
 		struct tomoyo_single_path_acl_record *acl;
-		if (tomoyo_acl_type2(ptr) != TOMOYO_TYPE_SINGLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_SINGLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_single_path_acl_record,
 				   head);
@@ -771,8 +771,7 @@ static int tomoyo_check_file_perm2(struct tomoyo_domain_info * const domain,
 	if (!filename)
 		return 0;
 	error = tomoyo_check_file_acl(domain, filename, perm);
-	if (error && perm == 4 &&
-	    (domain->flags & TOMOYO_DOMAIN_FLAGS_IGNORE_GLOBAL_ALLOW_READ) == 0
+	if (error && perm == 4 && !domain->ignore_global_allow_read
 	    && tomoyo_is_globally_readable_file(filename))
 		error = 0;
 	if (perm == 6)
@@ -886,15 +885,12 @@ static int tomoyo_update_single_path_acl(const u8 type, const char *filename,
 	if (is_delete)
 		goto delete;
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
-		if (tomoyo_acl_type1(ptr) != TOMOYO_TYPE_SINGLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_SINGLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_single_path_acl_record,
 				   head);
 		if (acl->filename != saved_filename)
 			continue;
-		/* Special case. Clear all bits if marked as deleted. */
-		if (ptr->type & TOMOYO_ACL_DELETED)
-			acl->perm = 0;
 		if (perm <= 0xFFFF)
 			acl->perm |= perm;
 		else
@@ -903,7 +899,6 @@ static int tomoyo_update_single_path_acl(const u8 type, const char *filename,
 			acl->perm |= 1 << TOMOYO_TYPE_READ_WRITE_ACL;
 		else if (acl->perm & (1 << TOMOYO_TYPE_READ_WRITE_ACL))
 			acl->perm |= rw_mask;
-		ptr->type &= ~TOMOYO_ACL_DELETED;
 		error = 0;
 		goto out;
 	}
@@ -928,7 +923,7 @@ static int tomoyo_update_single_path_acl(const u8 type, const char *filename,
  delete:
 	error = -ENOENT;
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
-		if (tomoyo_acl_type2(ptr) != TOMOYO_TYPE_SINGLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_SINGLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_single_path_acl_record,
 				   head);
@@ -942,8 +937,6 @@ static int tomoyo_update_single_path_acl(const u8 type, const char *filename,
 			acl->perm &= ~(1 << TOMOYO_TYPE_READ_WRITE_ACL);
 		else if (!(acl->perm & (1 << TOMOYO_TYPE_READ_WRITE_ACL)))
 			acl->perm &= ~rw_mask;
-		if (!acl->perm && !acl->perm_high)
-			ptr->type |= TOMOYO_ACL_DELETED;
 		error = 0;
 		break;
 	}
@@ -990,18 +983,14 @@ static int tomoyo_update_double_path_acl(const u8 type, const char *filename1,
 	if (is_delete)
 		goto delete;
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
-		if (tomoyo_acl_type1(ptr) != TOMOYO_TYPE_DOUBLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_DOUBLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_double_path_acl_record,
 				   head);
 		if (acl->filename1 != saved_filename1 ||
 		    acl->filename2 != saved_filename2)
 			continue;
-		/* Special case. Clear all bits if marked as deleted. */
-		if (ptr->type & TOMOYO_ACL_DELETED)
-			acl->perm = 0;
 		acl->perm |= perm;
-		ptr->type &= ~TOMOYO_ACL_DELETED;
 		error = 0;
 		goto out;
 	}
@@ -1022,7 +1011,7 @@ static int tomoyo_update_double_path_acl(const u8 type, const char *filename1,
  delete:
 	error = -ENOENT;
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
-		if (tomoyo_acl_type2(ptr) != TOMOYO_TYPE_DOUBLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_DOUBLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_double_path_acl_record,
 				   head);
@@ -1030,8 +1019,6 @@ static int tomoyo_update_double_path_acl(const u8 type, const char *filename1,
 		    acl->filename2 != saved_filename2)
 			continue;
 		acl->perm &= ~perm;
-		if (!acl->perm)
-			ptr->type |= TOMOYO_ACL_DELETED;
 		error = 0;
 		break;
 	}
@@ -1087,7 +1074,7 @@ static int tomoyo_check_double_path_acl(const struct tomoyo_domain_info *domain,
 		return 0;
 	list_for_each_entry_rcu(ptr, &domain->acl_info_list, list) {
 		struct tomoyo_double_path_acl_record *acl;
-		if (tomoyo_acl_type2(ptr) != TOMOYO_TYPE_DOUBLE_PATH_ACL)
+		if (ptr->type != TOMOYO_TYPE_DOUBLE_PATH_ACL)
 			continue;
 		acl = container_of(ptr, struct tomoyo_double_path_acl_record,
 				   head);
