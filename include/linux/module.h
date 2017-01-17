@@ -357,7 +357,7 @@ struct module
 
 	struct module_ref {
 		int count;
-	} *refptr;
+	} __percpu *refptr;
 #endif
 
 #ifdef CONFIG_CONSTRUCTORS
