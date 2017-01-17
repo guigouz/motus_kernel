@@ -1,6 +1,6 @@
 /* bnx2.c: Broadcom NX2 network driver.
  *
- * Copyright (c) 2004-2009 Broadcom Corporation
+ * Copyright (c) 2004-2010 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -58,13 +58,13 @@
 
 #define DRV_MODULE_NAME		"bnx2"
 #define PFX DRV_MODULE_NAME	": "
-#define DRV_MODULE_VERSION	"2.0.3"
-#define DRV_MODULE_RELDATE	"Dec 03, 2009"
-#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-5.0.0.j3.fw"
+#define DRV_MODULE_VERSION	"2.0.8"
+#define DRV_MODULE_RELDATE	"Feb 15, 2010"
+#define FW_MIPS_FILE_06		"bnx2/bnx2-mips-06-5.0.0.j6.fw"
 #define FW_RV2P_FILE_06		"bnx2/bnx2-rv2p-06-5.0.0.j3.fw"
-#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-5.0.0.j3.fw"
-#define FW_RV2P_FILE_09_Ax	"bnx2/bnx2-rv2p-09ax-5.0.0.j3.fw"
-#define FW_RV2P_FILE_09		"bnx2/bnx2-rv2p-09-5.0.0.j3.fw"
+#define FW_MIPS_FILE_09		"bnx2/bnx2-mips-09-5.0.0.j9.fw"
+#define FW_RV2P_FILE_09_Ax	"bnx2/bnx2-rv2p-09ax-5.0.0.j10.fw"
+#define FW_RV2P_FILE_09		"bnx2/bnx2-rv2p-09-5.0.0.j10.fw"
 
 #define RUN_AT(x) (jiffies + (x))
 
@@ -1280,7 +1280,7 @@ bnx2_init_rx_context(struct bnx2 *bp, u32 cid)
 		if (lo_water >= bp->rx_ring_size)
 			lo_water = 0;
 
-		hi_water = bp->rx_ring_size / 4;
+		hi_water = min_t(int, bp->rx_ring_size / 4, lo_water + 16);
 
 		if (hi_water <= lo_water)
 			lo_water = 0;
@@ -4947,7 +4947,7 @@ bnx2_init_chip(struct bnx2 *bp)
 		      BNX2_HC_CONFIG_COLLECT_STATS;
 	}
 
-	if (bp->irq_nvecs > 1) {
+	if (bp->flags & BNX2_FLAG_USING_MSIX) {
 		REG_WR(bp, BNX2_HC_MSIX_BIT_VECTOR,
 		       BNX2_HC_MSIX_BIT_VECTOR_VAL);
 
@@ -6565,16 +6565,16 @@ bnx2_save_stats(struct bnx2 *bp)
 		u32 hi;
 		u64 lo;
 
-		hi = *(temp_stats + i) + *(hw_stats + i);
-		lo = *(temp_stats + i + 1) + *(hw_stats + i + 1);
+		hi = temp_stats[i] + hw_stats[i];
+		lo = (u64) temp_stats[i + 1] + (u64) hw_stats[i + 1];
 		if (lo > 0xffffffff)
 			hi++;
-		*(temp_stats + i) = hi;
-		*(temp_stats + i + 1) = lo & 0xffffffff;
+		temp_stats[i] = hi;
+		temp_stats[i + 1] = lo & 0xffffffff;
 	}
 
 	for ( ; i < sizeof(struct statistics_block) / 4; i++)
-		*(temp_stats + i) = *(temp_stats + i) + *(hw_stats + i);
+		temp_stats[i] += hw_stats[i];
 }
 
 #define GET_64BIT_NET_STATS64(ctr)				\
@@ -6761,32 +6761,15 @@ bnx2_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	if (cmd->autoneg == AUTONEG_ENABLE) {
 		autoneg |= AUTONEG_SPEED;
 
-		cmd->advertising &= ETHTOOL_ALL_COPPER_SPEED;
-
-		/* allow advertising 1 speed */
-		if ((cmd->advertising == ADVERTISED_10baseT_Half) ||
-			(cmd->advertising == ADVERTISED_10baseT_Full) ||
-			(cmd->advertising == ADVERTISED_100baseT_Half) ||
-			(cmd->advertising == ADVERTISED_100baseT_Full)) {
-
-			if (cmd->port == PORT_FIBRE)
-				goto err_out_unlock;
-
-			advertising = cmd->advertising;
-
-		} else if (cmd->advertising == ADVERTISED_2500baseX_Full) {
-			if (!(bp->phy_flags & BNX2_PHY_FLAG_2_5G_CAPABLE) ||
-			    (cmd->port == PORT_TP))
-				goto err_out_unlock;
-		} else if (cmd->advertising == ADVERTISED_1000baseT_Full)
-			advertising = cmd->advertising;
-		else if (cmd->advertising == ADVERTISED_1000baseT_Half)
-			goto err_out_unlock;
-		else {
-			if (cmd->port == PORT_FIBRE)
-				advertising = ETHTOOL_ALL_FIBRE_SPEED;
-			else
+		advertising = cmd->advertising;
+		if (cmd->port == PORT_TP) {
+			advertising &= ETHTOOL_ALL_COPPER_SPEED;
+			if (!advertising)
 				advertising = ETHTOOL_ALL_COPPER_SPEED;
+		} else {
+			advertising &= ETHTOOL_ALL_FIBRE_SPEED;
+			if (!advertising)
+				advertising = ETHTOOL_ALL_FIBRE_SPEED;
 		}
 		advertising |= ADVERTISED_Autoneg;
 	}
@@ -7151,6 +7134,13 @@ bnx2_change_ring_size(struct bnx2 *bp, u32 rx, u32 tx)
 			dev_close(bp->dev);
 			return rc;
 		}
+#ifdef BCM_CNIC
+		mutex_lock(&bp->cnic_lock);
+		/* Let cnic know about the new status block. */
+		if (bp->cnic_eth_dev.drv_state & CNIC_DRV_STATE_REGD)
+			bnx2_setup_cnic_irq_info(bp);
+		mutex_unlock(&bp->cnic_lock);
+#endif
 		bnx2_netif_start(bp);
 	}
 	return 0;

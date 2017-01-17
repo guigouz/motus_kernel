@@ -85,20 +85,20 @@ int sysfs_sd_setattr(struct sysfs_dirent *sd, struct iattr * iattr)
 	/* attributes were changed at least once in past */
 	iattrs = &sd_attrs->ia_iattr;
 
-		if (ia_valid & ATTR_UID)
-			iattrs->ia_uid = iattr->ia_uid;
-		if (ia_valid & ATTR_GID)
-			iattrs->ia_gid = iattr->ia_gid;
-		if (ia_valid & ATTR_ATIME)
-			iattrs->ia_atime = iattr->ia_atime;
-		if (ia_valid & ATTR_MTIME)
-			iattrs->ia_mtime = iattr->ia_mtime;
-		if (ia_valid & ATTR_CTIME)
-			iattrs->ia_ctime = iattr->ia_ctime;
-		if (ia_valid & ATTR_MODE) {
-			umode_t mode = iattr->ia_mode;
-			iattrs->ia_mode = sd->s_mode = mode;
-		}
+	if (ia_valid & ATTR_UID)
+		iattrs->ia_uid = iattr->ia_uid;
+	if (ia_valid & ATTR_GID)
+		iattrs->ia_gid = iattr->ia_gid;
+	if (ia_valid & ATTR_ATIME)
+		iattrs->ia_atime = iattr->ia_atime;
+	if (ia_valid & ATTR_MTIME)
+		iattrs->ia_mtime = iattr->ia_mtime;
+	if (ia_valid & ATTR_CTIME)
+		iattrs->ia_ctime = iattr->ia_ctime;
+	if (ia_valid & ATTR_MODE) {
+		umode_t mode = iattr->ia_mode;
+		iattrs->ia_mode = sd->s_mode = mode;
+	}
 	return 0;
 }
 
