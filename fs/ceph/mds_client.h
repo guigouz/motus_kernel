@@ -5,7 +5,7 @@
 #include <linux/kref.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/radix-tree.h>
+#include <linux/rbtree.h>
 #include <linux/spinlock.h>
 
 #include "types.h"
@@ -150,6 +150,7 @@ typedef void (*ceph_mds_request_callback_t) (struct ceph_mds_client *mdsc,
  */
 struct ceph_mds_request {
 	u64 r_tid;                   /* transaction id */
+	struct rb_node r_node;
 
 	int r_op;                    /* mds op code */
 	int r_mds;
@@ -244,12 +245,12 @@ struct ceph_mds_client {
 	 * should be destroyed.
 	 */
 	struct rw_semaphore     snap_rwsem;
-	struct radix_tree_root  snap_realms;
+	struct rb_root          snap_realms;
 	struct list_head        snap_empty;
 	spinlock_t              snap_empty_lock;  /* protect snap_empty */
 
 	u64                    last_tid;      /* most recent mds request */
-	struct radix_tree_root request_tree;  /* pending mds requests */
+	struct rb_root         request_tree;  /* pending mds requests */
 	struct delayed_work    delayed_work;  /* delayed work */
 	unsigned long    last_renew_caps;  /* last time we renewed our caps */
 	struct list_head cap_delay_list;   /* caps with delayed release */

@@ -112,9 +112,8 @@ static int monc_show(struct seq_file *s, void *p)
 {
 	struct ceph_client *client = s->private;
 	struct ceph_mon_statfs_request *req;
-	u64 nexttid = 0;
-	int got;
 	struct ceph_mon_client *monc = &client->monc;
+	struct rb_node *rp;
 
 	mutex_lock(&monc->mutex);
 
@@ -125,38 +124,28 @@ static int monc_show(struct seq_file *s, void *p)
 	if (monc->want_next_osdmap)
 		seq_printf(s, "want next osdmap\n");
 
-	while (nexttid < monc->last_tid) {
-		got = radix_tree_gang_lookup(&monc->statfs_request_tree,
-					     (void **)&req, nexttid, 1);
-		if (got == 0)
-			break;
-		nexttid = req->tid + 1;
-
+	for (rp = rb_first(&monc->statfs_request_tree); rp; rp = rb_next(rp)) {
+		req = rb_entry(rp, struct ceph_mon_statfs_request, node);
 		seq_printf(s, "%lld statfs\n", req->tid);
 	}
-	mutex_unlock(&monc->mutex);
 
+	mutex_unlock(&monc->mutex);
 	return 0;
 }
 
 static int mdsc_show(struct seq_file *s, void *p)
 {
 	struct ceph_client *client = s->private;
-	struct ceph_mds_request *req;
-	u64 nexttid = 0;
-	int got;
 	struct ceph_mds_client *mdsc = &client->mdsc;
+	struct ceph_mds_request *req;
+	struct rb_node *rp;
 	int pathlen;
 	u64 pathbase;
 	char *path;
 
 	mutex_lock(&mdsc->mutex);
-	while (nexttid < mdsc->last_tid) {
-		got = radix_tree_gang_lookup(&mdsc->request_tree,
-					     (void **)&req, nexttid, 1);
-		if (got == 0)
-			break;
-		nexttid = req->r_tid + 1;
+	for (rp = rb_first(&mdsc->request_tree); rp; rp = rb_next(rp)) {
+		req = rb_entry(rp, struct ceph_mds_request, r_node);
 
 		if (req->r_request)
 			seq_printf(s, "%lld\tmds%d\t", req->r_tid, req->r_mds);
