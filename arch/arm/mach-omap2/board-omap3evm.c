@@ -448,20 +448,23 @@ static struct twl4030_usb_data omap3evm_usb_data = {
 
 static int board_keymap[] = {
 	KEY(0, 0, KEY_LEFT),
-	KEY(0, 1, KEY_RIGHT),
-	KEY(0, 2, KEY_A),
-	KEY(0, 3, KEY_B),
-	KEY(1, 0, KEY_DOWN),
+	KEY(0, 1, KEY_DOWN),
+	KEY(0, 2, KEY_ENTER),
+	KEY(0, 3, KEY_M),
+
+	KEY(1, 0, KEY_RIGHT),
 	KEY(1, 1, KEY_UP),
-	KEY(1, 2, KEY_E),
-	KEY(1, 3, KEY_F),
-	KEY(2, 0, KEY_ENTER),
-	KEY(2, 1, KEY_I),
+	KEY(1, 2, KEY_I),
+	KEY(1, 3, KEY_N),
+
+	KEY(2, 0, KEY_A),
+	KEY(2, 1, KEY_E),
 	KEY(2, 2, KEY_J),
-	KEY(2, 3, KEY_K),
-	KEY(3, 0, KEY_M),
-	KEY(3, 1, KEY_N),
-	KEY(3, 2, KEY_O),
+	KEY(2, 3, KEY_O),
+
+	KEY(3, 0, KEY_B),
+	KEY(3, 1, KEY_F),
+	KEY(3, 2, KEY_K),
 	KEY(3, 3, KEY_P)
 };
 
@@ -647,6 +650,12 @@ static struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 
 #ifdef CONFIG_OMAP_MUX
 static struct omap_board_mux board_mux[] __initdata = {
+	OMAP3_MUX(SYS_NIRQ, OMAP_MUX_MODE0 | OMAP_PIN_INPUT_PULLUP |
+				OMAP_PIN_OFF_INPUT_PULLUP |
+				OMAP_PIN_OFF_WAKEUPENABLE),
+	OMAP3_MUX(MCSPI1_CS1, OMAP_MUX_MODE4 | OMAP_PIN_INPUT_PULLUP |
+				OMAP_PIN_OFF_INPUT_PULLUP |
+				OMAP_PIN_OFF_WAKEUPENABLE),
 	{ .reg_offset = OMAP_MUX_TERMINATOR },
 };
 #else

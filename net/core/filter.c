@@ -543,6 +543,7 @@ int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk)
 		sk_filter_delayed_uncharge(sk, old_fp);
 	return 0;
 }
+EXPORT_SYMBOL_GPL(sk_attach_filter);
 
 int sk_detach_filter(struct sock *sk)
 {
@@ -559,3 +560,4 @@ int sk_detach_filter(struct sock *sk)
 	rcu_read_unlock_bh();
 	return ret;
 }
+EXPORT_SYMBOL_GPL(sk_detach_filter);
