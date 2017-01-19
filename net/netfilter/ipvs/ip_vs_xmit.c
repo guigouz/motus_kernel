@@ -321,7 +321,7 @@ ip_vs_bypass_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	mtu = dst_mtu(&rt->u.dst);
 	if (__mtu_check_toobig_v6(skb, mtu)) {
 		dst_release(&rt->u.dst);
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
 		goto tx_error;
 	}
@@ -464,7 +464,7 @@ ip_vs_nat_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	mtu = dst_mtu(&rt->u.dst);
 	if (__mtu_check_toobig_v6(skb, mtu)) {
 		dst_release(&rt->u.dst);
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 		IP_VS_DBG_RL_PKT(0, pp, skb, 0,
 				 "ip_vs_nat_xmit_v6(): frag needed for");
 		goto tx_error;
@@ -976,7 +976,7 @@ ip_vs_icmp_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	mtu = dst_mtu(&rt->u.dst);
 	if (__mtu_check_toobig_v6(skb, mtu)) {
 		dst_release(&rt->u.dst);
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
 		goto tx_error;
 	}
