@@ -129,6 +129,8 @@ struct ceph_client {
 
 	int auth_err;
 
+	int min_caps;                  /* min caps i added */
+
 	struct ceph_messenger *msgr;   /* messenger instance */
 	struct ceph_mon_client monc;
 	struct ceph_mds_client mdsc;
@@ -557,11 +559,12 @@ extern int __ceph_caps_mds_wanted(struct ceph_inode_info *ci);
 
 extern void ceph_caps_init(void);
 extern void ceph_caps_finalize(void);
+extern void ceph_adjust_min_caps(int delta);
 extern int ceph_reserve_caps(struct ceph_cap_reservation *ctx, int need);
 extern int ceph_unreserve_caps(struct ceph_cap_reservation *ctx);
 extern void ceph_reservation_status(struct ceph_client *client,
 				    int *total, int *avail, int *used,
-				    int *reserved);
+				    int *reserved, int *min);
 
 static inline struct ceph_client *ceph_inode_to_client(struct inode *inode)
 {
@@ -792,15 +795,15 @@ extern int ceph_add_cap(struct inode *inode,
 			int fmode, unsigned issued, unsigned wanted,
 			unsigned cap, unsigned seq, u64 realmino, int flags,
 			struct ceph_cap_reservation *caps_reservation);
-extern void __ceph_remove_cap(struct ceph_cap *cap,
-			      struct ceph_cap_reservation *ctx);
+extern void __ceph_remove_cap(struct ceph_cap *cap);
 static inline void ceph_remove_cap(struct ceph_cap *cap)
 {
 	struct inode *inode = &cap->ci->vfs_inode;
 	spin_lock(&inode->i_lock);
-	__ceph_remove_cap(cap, NULL);
+	__ceph_remove_cap(cap);
 	spin_unlock(&inode->i_lock);
 }
+extern void ceph_put_cap(struct ceph_cap *cap);
 
 extern void ceph_queue_caps_release(struct inode *inode);
 extern int ceph_write_inode(struct inode *inode, int unused);

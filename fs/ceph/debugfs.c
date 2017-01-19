@@ -78,6 +78,7 @@ static int osdmap_show(struct seq_file *s, void *p)
 {
 	int i;
 	struct ceph_client *client = s->private;
+	struct rb_node *n;
 
 	if (client->osdc.osdmap == NULL)
 		return 0;
@@ -87,11 +88,11 @@ static int osdmap_show(struct seq_file *s, void *p)
 		   " NEARFULL" : "",
 		   (client->osdc.osdmap->flags & CEPH_OSDMAP_FULL) ?
 		   " FULL" : "");
-	for (i = 0; i < client->osdc.osdmap->num_pools; i++) {
+	for (n = rb_first(&client->osdc.osdmap->pg_pools); n; n = rb_next(n)) {
 		struct ceph_pg_pool_info *pool =
-			&client->osdc.osdmap->pg_pool[i];
+			rb_entry(n, struct ceph_pg_pool_info, node);
 		seq_printf(s, "pg_pool %d pg_num %d / %d, lpg_num %d / %d\n",
-			   i, pool->v.pg_num, pool->pg_num_mask,
+			   pool->id, pool->v.pg_num, pool->pg_num_mask,
 			   pool->v.lpg_num, pool->lpg_num_mask);
 	}
 	for (i = 0; i < client->osdc.osdmap->max_osd; i++) {
@@ -255,14 +256,15 @@ static int osdc_show(struct seq_file *s, void *pp)
 static int caps_show(struct seq_file *s, void *p)
 {
 	struct ceph_client *client = p;
-	int total, avail, used, reserved;
+	int total, avail, used, reserved, min;
 
-	ceph_reservation_status(client, &total, &avail, &used, &reserved);
+	ceph_reservation_status(client, &total, &avail, &used, &reserved, &min);
 	seq_printf(s, "total\t\t%d\n"
-		      "avail\t\t%d\n"
-		      "used\t\t%d\n"
-		      "reserved\t%d\n",
-		   total, avail, used, reserved);
+		   "avail\t\t%d\n"
+		   "used\t\t%d\n"
+		   "reserved\t%d\n"
+		   "min\t%d\n",
+		   total, avail, used, reserved, min);
 	return 0;
 }
 

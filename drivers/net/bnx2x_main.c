@@ -1,6 +1,6 @@
 /* bnx2x_main.c: Broadcom Everest network driver.
  *
- * Copyright (c) 2007-2009 Broadcom Corporation
+ * Copyright (c) 2007-2010 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -57,8 +57,8 @@
 #include "bnx2x_init_ops.h"
 #include "bnx2x_dump.h"
 
-#define DRV_MODULE_VERSION	"1.52.1-5"
-#define DRV_MODULE_RELDATE	"2009/11/09"
+#define DRV_MODULE_VERSION	"1.52.1-6"
+#define DRV_MODULE_RELDATE	"2010/02/16"
 #define BNX2X_BC_VER		0x040200
 
 #include <linux/firmware.h>
@@ -6938,19 +6938,21 @@ static void bnx2x_free_msix_irqs(struct bnx2x *bp)
 	}
 }
 
-static void bnx2x_free_irq(struct bnx2x *bp)
+static void bnx2x_free_irq(struct bnx2x *bp, bool disable_only)
 {
 	if (bp->flags & USING_MSIX_FLAG) {
-		bnx2x_free_msix_irqs(bp);
+		if (!disable_only)
+			bnx2x_free_msix_irqs(bp);
 		pci_disable_msix(bp->pdev);
 		bp->flags &= ~USING_MSIX_FLAG;
 
 	} else if (bp->flags & USING_MSI_FLAG) {
-		free_irq(bp->pdev->irq, bp->dev);
+		if (!disable_only)
+			free_irq(bp->pdev->irq, bp->dev);
 		pci_disable_msi(bp->pdev);
 		bp->flags &= ~USING_MSI_FLAG;
 
-	} else
+	} else if (!disable_only)
 		free_irq(bp->pdev->irq, bp->dev);
 }
 
@@ -7443,8 +7445,10 @@ static int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 
 	rc = bnx2x_set_num_queues(bp);
 
-	if (bnx2x_alloc_mem(bp))
+	if (bnx2x_alloc_mem(bp)) {
+		bnx2x_free_irq(bp, true);
 		return -ENOMEM;
+	}
 
 	for_each_queue(bp, i)
 		bnx2x_fp(bp, i, disable_tpa) =
@@ -7459,7 +7463,7 @@ static int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 	if (bp->flags & USING_MSIX_FLAG) {
 		rc = bnx2x_req_msix_irqs(bp);
 		if (rc) {
-			pci_disable_msix(bp->pdev);
+			bnx2x_free_irq(bp, true);
 			goto load_error1;
 		}
 	} else {
@@ -7471,8 +7475,7 @@ static int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 		rc = bnx2x_req_irq(bp);
 		if (rc) {
 			BNX2X_ERR("IRQ request failed  rc %d, aborting\n", rc);
-			if (bp->flags & USING_MSI_FLAG)
-				pci_disable_msi(bp->pdev);
+			bnx2x_free_irq(bp, true);
 			goto load_error1;
 		}
 		if (bp->flags & USING_MSI_FLAG) {
@@ -7527,6 +7530,9 @@ static int bnx2x_nic_load(struct bnx2x *bp, int load_mode)
 	rc = bnx2x_init_hw(bp, load_code);
 	if (rc) {
 		BNX2X_ERR("HW init failed, aborting\n");
+		bnx2x_fw_command(bp, DRV_MSG_CODE_LOAD_DONE);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_REQ_WOL_MCP);
+		bnx2x_fw_command(bp, DRV_MSG_CODE_UNLOAD_DONE);
 		goto load_error2;
 	}
 
@@ -7664,7 +7670,7 @@ load_error3:
 		bnx2x_free_rx_sge_range(bp, bp->fp + i, NUM_RX_SGE);
 load_error2:
 	/* Release IRQs */
-	bnx2x_free_irq(bp);
+	bnx2x_free_irq(bp, false);
 load_error1:
 	bnx2x_napi_disable(bp);
 	for_each_queue(bp, i)
@@ -7855,7 +7861,7 @@ static int bnx2x_nic_unload(struct bnx2x *bp, int unload_mode)
 	bnx2x_stats_handle(bp, STATS_EVENT_STOP);
 
 	/* Release IRQs */
-	bnx2x_free_irq(bp);
+	bnx2x_free_irq(bp, false);
 
 	/* Wait until tx fastpath tasks complete */
 	for_each_queue(bp, i) {
@@ -9962,12 +9968,14 @@ static int bnx2x_set_flags(struct net_device *dev, u32 data)
 
 	/* TPA requires Rx CSUM offloading */
 	if ((data & ETH_FLAG_LRO) && bp->rx_csum) {
-		if (!(dev->features & NETIF_F_LRO)) {
-			dev->features |= NETIF_F_LRO;
-			bp->flags |= TPA_ENABLE_FLAG;
-			changed = 1;
-		}
-
+		if (!disable_tpa) {
+			if (!(dev->features & NETIF_F_LRO)) {
+				dev->features |= NETIF_F_LRO;
+				bp->flags |= TPA_ENABLE_FLAG;
+				changed = 1;
+			}
+		} else
+			rc = -EINVAL;
 	} else if (dev->features & NETIF_F_LRO) {
 		dev->features &= ~NETIF_F_LRO;
 		bp->flags &= ~TPA_ENABLE_FLAG;
@@ -10425,7 +10433,8 @@ static int bnx2x_test_intr(struct bnx2x *bp)
 
 	config->hdr.length = 0;
 	if (CHIP_IS_E1(bp))
-		config->hdr.offset = (BP_PORT(bp) ? 32 : 0);
+		/* use last unicast entries */
+		config->hdr.offset = (BP_PORT(bp) ? 63 : 31);
 	else
 		config->hdr.offset = BP_FUNC(bp);
 	config->hdr.client_id = bp->fp->cl_id;
@@ -12299,7 +12308,7 @@ static int bnx2x_eeh_nic_unload(struct bnx2x *bp)
 	DP(BNX2X_MSG_STATS, "stats_state - DISABLED\n");
 
 	/* Release IRQs */
-	bnx2x_free_irq(bp);
+	bnx2x_free_irq(bp, false);
 
 	if (CHIP_IS_E1(bp)) {
 		struct mac_configuration_cmd *config =
