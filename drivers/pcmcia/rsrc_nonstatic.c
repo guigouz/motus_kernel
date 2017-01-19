@@ -59,7 +59,6 @@ struct socket_data {
 	unsigned int			rsrc_mem_probe;
 };
 
-static DEFINE_MUTEX(rsrc_mutex);
 #define MEM_PROBE_LOW	(1 << 0)
 #define MEM_PROBE_HIGH	(1 << 1)
 
@@ -125,8 +124,10 @@ static int add_interval(struct resource_map *map, u_long base, u_long num)
 	struct resource_map *p, *q;
 
 	for (p = map; ; p = p->next) {
-		if ((p != map) && (p->base+p->num-1 >= base))
-			return -1;
+		if ((p != map) && (p->base+p->num >= base)) {
+			p->num = max(num + base - p->base, p->num);
+			return 0;
+		}
 		if ((p->next == map) || (p->next->base > base+num-1))
 			break;
 	}
@@ -274,11 +275,20 @@ static int readable(struct pcmcia_socket *s, struct resource *res,
 {
 	int ret = -EINVAL;
 
+	if (s->fake_cis) {
+		dev_dbg(&s->dev, "fake CIS is being used: can't validate mem\n");
+		return 0;
+	}
+
 	s->cis_mem.res = res;
 	s->cis_virt = ioremap(res->start, s->map_size);
 	if (s->cis_virt) {
-		ret = pccard_validate_cis(s, count);
+		mutex_unlock(&s->ops_mutex);
+		/* as we're only called from pcmcia.c, we're safe */
+		if (s->callback->validate)
+			ret = s->callback->validate(s, count);
 		/* invalidate mapping */
+		mutex_lock(&s->ops_mutex);
 		iounmap(s->cis_virt);
 		s->cis_virt = NULL;
 	}
@@ -560,8 +570,6 @@ static int pcmcia_nonstatic_validate_mem(struct pcmcia_socket *s)
 	if (!probe_mem)
 		return 0;
 
-	mutex_lock(&rsrc_mutex);
-
 	if (s->features & SS_CAP_PAGE_REGS)
 		probe_mask = MEM_PROBE_HIGH;
 
@@ -572,8 +580,6 @@ static int pcmcia_nonstatic_validate_mem(struct pcmcia_socket *s)
 				s_data->rsrc_mem_probe |= probe_mask;
 		}
 	}
-
-	mutex_unlock(&rsrc_mutex);
 
 	return ret;
 }
@@ -651,7 +657,6 @@ static int nonstatic_adjust_io_region(struct resource *res, unsigned long r_star
 	struct socket_data *s_data = s->resource_data;
 	int ret = -ENOMEM;
 
-	mutex_lock(&rsrc_mutex);
 	for (m = s_data->io_db.next; m != &s_data->io_db; m = m->next) {
 		unsigned long start = m->base;
 		unsigned long end = m->base + m->num - 1;
@@ -662,7 +667,6 @@ static int nonstatic_adjust_io_region(struct resource *res, unsigned long r_star
 		ret = adjust_resource(res, r_start, r_end - r_start + 1);
 		break;
 	}
-	mutex_unlock(&rsrc_mutex);
 
 	return ret;
 }
@@ -696,7 +700,6 @@ static struct resource *nonstatic_find_io_region(unsigned long base, int num,
 	data.offset = base & data.mask;
 	data.map = &s_data->io_db;
 
-	mutex_lock(&rsrc_mutex);
 #ifdef CONFIG_PCI
 	if (s->cb_dev) {
 		ret = pci_bus_alloc_resource(s->cb_dev->bus, res, num, 1,
@@ -705,7 +708,6 @@ static struct resource *nonstatic_find_io_region(unsigned long base, int num,
 #endif
 		ret = allocate_resource(&ioport_resource, res, num, min, ~0UL,
 					1, pcmcia_align, &data);
-	mutex_unlock(&rsrc_mutex);
 
 	if (ret != 0) {
 		kfree(res);
@@ -738,7 +740,6 @@ static struct resource *nonstatic_find_mem_region(u_long base, u_long num,
 			min = 0x100000UL + base;
 		}
 
-		mutex_lock(&rsrc_mutex);
 #ifdef CONFIG_PCI
 		if (s->cb_dev) {
 			ret = pci_bus_alloc_resource(s->cb_dev->bus, res, num,
@@ -748,7 +749,6 @@ static struct resource *nonstatic_find_mem_region(u_long base, u_long num,
 #endif
 			ret = allocate_resource(&iomem_resource, res, num, min,
 						max, 1, pcmcia_align, &data);
-		mutex_unlock(&rsrc_mutex);
 		if (ret == 0 || low)
 			break;
 		low = 1;
@@ -771,7 +771,6 @@ static int adjust_memory(struct pcmcia_socket *s, unsigned int action, unsigned 
 	if (end < start)
 		return -EINVAL;
 
-	mutex_lock(&rsrc_mutex);
 	switch (action) {
 	case ADD_MANAGED_RESOURCE:
 		ret = add_interval(&data->mem_db, start, size);
@@ -784,7 +783,6 @@ static int adjust_memory(struct pcmcia_socket *s, unsigned int action, unsigned 
 	default:
 		ret = -EINVAL;
 	}
-	mutex_unlock(&rsrc_mutex);
 
 	return ret;
 }
@@ -802,7 +800,6 @@ static int adjust_io(struct pcmcia_socket *s, unsigned int action, unsigned long
 	if (end > IO_SPACE_LIMIT)
 		return -EINVAL;
 
-	mutex_lock(&rsrc_mutex);
 	switch (action) {
 	case ADD_MANAGED_RESOURCE:
 		if (add_interval(&data->io_db, start, size) != 0) {
@@ -821,7 +818,6 @@ static int adjust_io(struct pcmcia_socket *s, unsigned int action, unsigned long
 		ret = -EINVAL;
 		break;
 	}
-	mutex_unlock(&rsrc_mutex);
 
 	return ret;
 }
@@ -919,7 +915,6 @@ static void nonstatic_release_resource_db(struct pcmcia_socket *s)
 	struct socket_data *data = s->resource_data;
 	struct resource_map *p, *q;
 
-	mutex_lock(&rsrc_mutex);
 	for (p = data->mem_db.next; p != &data->mem_db; p = q) {
 		q = p->next;
 		kfree(p);
@@ -928,7 +923,6 @@ static void nonstatic_release_resource_db(struct pcmcia_socket *s)
 		q = p->next;
 		kfree(p);
 	}
-	mutex_unlock(&rsrc_mutex);
 }
 
 
@@ -955,7 +949,7 @@ static ssize_t show_io_db(struct device *dev,
 	struct resource_map *p;
 	ssize_t ret = 0;
 
-	mutex_lock(&rsrc_mutex);
+	mutex_lock(&s->ops_mutex);
 	data = s->resource_data;
 
 	for (p = data->io_db.next; p != &data->io_db; p = p->next) {
@@ -967,7 +961,7 @@ static ssize_t show_io_db(struct device *dev,
 				((unsigned long) p->base + p->num - 1));
 	}
 
-	mutex_unlock(&rsrc_mutex);
+	mutex_unlock(&s->ops_mutex);
 	return ret;
 }
 
@@ -995,9 +989,11 @@ static ssize_t store_io_db(struct device *dev,
 	if (end_addr < start_addr)
 		return -EINVAL;
 
+	mutex_lock(&s->ops_mutex);
 	ret = adjust_io(s, add, start_addr, end_addr);
 	if (!ret)
 		s->resource_setup_new = 1;
+	mutex_unlock(&s->ops_mutex);
 
 	return ret ? ret : count;
 }
@@ -1011,7 +1007,7 @@ static ssize_t show_mem_db(struct device *dev,
 	struct resource_map *p;
 	ssize_t ret = 0;
 
-	mutex_lock(&rsrc_mutex);
+	mutex_lock(&s->ops_mutex);
 	data = s->resource_data;
 
 	for (p = data->mem_db.next; p != &data->mem_db; p = p->next) {
@@ -1023,7 +1019,7 @@ static ssize_t show_mem_db(struct device *dev,
 				((unsigned long) p->base + p->num - 1));
 	}
 
-	mutex_unlock(&rsrc_mutex);
+	mutex_unlock(&s->ops_mutex);
 	return ret;
 }
 
@@ -1051,9 +1047,11 @@ static ssize_t store_mem_db(struct device *dev,
 	if (end_addr < start_addr)
 		return -EINVAL;
 
+	mutex_lock(&s->ops_mutex);
 	ret = adjust_memory(s, add, start_addr, end_addr);
 	if (!ret)
 		s->resource_setup_new = 1;
+	mutex_unlock(&s->ops_mutex);
 
 	return ret ? ret : count;
 }
