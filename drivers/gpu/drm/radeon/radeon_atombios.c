@@ -1134,6 +1134,15 @@ static void radeon_atom_apply_lvds_quirks(struct drm_device *dev,
 			lvds->pll_algo = PLL_ALGO_LEGACY;
 	}
 
+	/* Dell Studio 15 laptop panel doesn't like new pll divider algo */
+	if ((dev->pdev->device == 0x95c4) &&
+	    (dev->pdev->subsystem_vendor == 0x1028) &&
+	    (dev->pdev->subsystem_device == 0x029f)) {
+		if ((lvds->native_mode.hdisplay == 1280) &&
+		    (lvds->native_mode.vdisplay == 800))
+			lvds->pll_algo = PLL_ALGO_LEGACY;
+	}
+
 }
 
 union lvds_info {
@@ -1488,9 +1497,9 @@ void radeon_atombios_get_power_modes(struct radeon_device *rdev)
 						continue;
 					/* skip overclock modes for now */
 					if ((rdev->pm.power_state[state_index].clock_info[0].mclk >
-					     rdev->clock.default_mclk) ||
+					     rdev->clock.default_mclk + RADEON_MODE_OVERCLOCK_MARGIN) ||
 					    (rdev->pm.power_state[state_index].clock_info[0].sclk >
-					     rdev->clock.default_sclk))
+					     rdev->clock.default_sclk + RADEON_MODE_OVERCLOCK_MARGIN))
 						continue;
 					rdev->pm.power_state[state_index].non_clock_info.pcie_lanes =
 						power_info->info.asPowerPlayInfo[i].ucNumPciELanes;
@@ -1553,9 +1562,9 @@ void radeon_atombios_get_power_modes(struct radeon_device *rdev)
 						continue;
 					/* skip overclock modes for now */
 					if ((rdev->pm.power_state[state_index].clock_info[0].mclk >
-					     rdev->clock.default_mclk) ||
+					     rdev->clock.default_mclk + RADEON_MODE_OVERCLOCK_MARGIN) ||
 					    (rdev->pm.power_state[state_index].clock_info[0].sclk >
-					     rdev->clock.default_sclk))
+					     rdev->clock.default_sclk + RADEON_MODE_OVERCLOCK_MARGIN))
 						continue;
 					rdev->pm.power_state[state_index].non_clock_info.pcie_lanes =
 						power_info->info_2.asPowerPlayInfo[i].ucNumPciELanes;
@@ -1622,9 +1631,9 @@ void radeon_atombios_get_power_modes(struct radeon_device *rdev)
 						continue;
 					/* skip overclock modes for now */
 					if ((rdev->pm.power_state[state_index].clock_info[0].mclk >
-					     rdev->clock.default_mclk) ||
+					     rdev->clock.default_mclk + RADEON_MODE_OVERCLOCK_MARGIN) ||
 					    (rdev->pm.power_state[state_index].clock_info[0].sclk >
-					     rdev->clock.default_sclk))
+					     rdev->clock.default_sclk + RADEON_MODE_OVERCLOCK_MARGIN))
 						continue;
 					rdev->pm.power_state[state_index].non_clock_info.pcie_lanes =
 						power_info->info_3.asPowerPlayInfo[i].ucNumPciELanes;
@@ -1718,7 +1727,7 @@ void radeon_atombios_get_power_modes(struct radeon_device *rdev)
 							continue;
 						/* skip overclock modes for now */
 						if (rdev->pm.power_state[state_index].clock_info[mode_index].sclk >
-						    rdev->clock.default_sclk)
+						    rdev->clock.default_sclk + RADEON_MODE_OVERCLOCK_MARGIN)
 							continue;
 						rdev->pm.power_state[state_index].clock_info[mode_index].voltage.type =
 							VOLTAGE_SW;
@@ -1745,9 +1754,9 @@ void radeon_atombios_get_power_modes(struct radeon_device *rdev)
 							continue;
 						/* skip overclock modes for now */
 						if ((rdev->pm.power_state[state_index].clock_info[mode_index].mclk >
-						     rdev->clock.default_mclk) ||
+						     rdev->clock.default_mclk + RADEON_MODE_OVERCLOCK_MARGIN) ||
 						    (rdev->pm.power_state[state_index].clock_info[mode_index].sclk >
-						     rdev->clock.default_sclk))
+						     rdev->clock.default_sclk + RADEON_MODE_OVERCLOCK_MARGIN))
 							continue;
 						rdev->pm.power_state[state_index].clock_info[mode_index].voltage.type =
 							VOLTAGE_SW;
