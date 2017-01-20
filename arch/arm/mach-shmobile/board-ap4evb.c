@@ -197,6 +197,34 @@ static void __init ap4evb_init(void)
 	gpio_request(GPIO_FN_CS5A,	NULL);
 	gpio_request(GPIO_FN_IRQ6_39,	NULL);
 
+	/* enable LED 1 - 4 */
+	gpio_request(GPIO_PORT185, NULL);
+	gpio_request(GPIO_PORT186, NULL);
+	gpio_request(GPIO_PORT187, NULL);
+	gpio_request(GPIO_PORT188, NULL);
+	gpio_direction_output(GPIO_PORT185, 1);
+	gpio_direction_output(GPIO_PORT186, 1);
+	gpio_direction_output(GPIO_PORT187, 1);
+	gpio_direction_output(GPIO_PORT188, 1);
+	gpio_export(GPIO_PORT185, 0);
+	gpio_export(GPIO_PORT186, 0);
+	gpio_export(GPIO_PORT187, 0);
+	gpio_export(GPIO_PORT188, 0);
+
+	/* enable Debug switch (S6) */
+	gpio_request(GPIO_PORT32, NULL);
+	gpio_request(GPIO_PORT33, NULL);
+	gpio_request(GPIO_PORT34, NULL);
+	gpio_request(GPIO_PORT35, NULL);
+	gpio_direction_input(GPIO_PORT32);
+	gpio_direction_input(GPIO_PORT33);
+	gpio_direction_input(GPIO_PORT34);
+	gpio_direction_input(GPIO_PORT35);
+	gpio_export(GPIO_PORT32, 0);
+	gpio_export(GPIO_PORT33, 0);
+	gpio_export(GPIO_PORT34, 0);
+	gpio_export(GPIO_PORT35, 0);
+
 	sh7372_add_standard_devices();
 
 	platform_add_devices(ap4evb_devices, ARRAY_SIZE(ap4evb_devices));
