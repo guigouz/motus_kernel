@@ -32,6 +32,8 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/usb.h>
+#include <linux/usb/audio.h>
+
 #include <sound/core.h>
 #include <sound/control.h>
 #include <sound/hwdep.h>
@@ -284,7 +286,7 @@ static void *find_audio_control_unit(struct mixer_build *state, unsigned char un
 	p = NULL;
 	while ((p = snd_usb_find_desc(state->buffer, state->buflen, p,
 				      USB_DT_CS_INTERFACE)) != NULL) {
-		if (p[0] >= 4 && p[2] >= INPUT_TERMINAL && p[2] <= EXTENSION_UNIT && p[3] == unit)
+		if (p[0] >= 4 && p[2] >= INPUT_TERMINAL && p[2] <= EXTENSION_UNIT_V1 && p[3] == unit)
 			return p;
 	}
 	return NULL;
@@ -605,9 +607,9 @@ static int get_term_name(struct mixer_build *state, struct usb_audio_term *iterm
 		switch (iterm->type >> 16) {
 		case SELECTOR_UNIT:
 			strcpy(name, "Selector"); return 8;
-		case PROCESSING_UNIT:
+		case PROCESSING_UNIT_V1:
 			strcpy(name, "Process Unit"); return 12;
-		case EXTENSION_UNIT:
+		case EXTENSION_UNIT_V1:
 			strcpy(name, "Ext Unit"); return 8;
 		case MIXER_UNIT:
 			strcpy(name, "Mixer"); return 5;
@@ -671,8 +673,8 @@ static int check_input_term(struct mixer_build *state, int id, struct usb_audio_
 			term->id = id;
 			term->name = p1[9 + p1[0] - 1];
 			return 0;
-		case PROCESSING_UNIT:
-		case EXTENSION_UNIT:
+		case PROCESSING_UNIT_V1:
+		case EXTENSION_UNIT_V1:
 			if (p1[6] == 1) {
 				id = p1[7];
 				break; /* continue to parse */
@@ -1086,29 +1088,30 @@ static void build_feature_ctl(struct mixer_build *state, unsigned char *desc,
  *
  * most of controlls are defined here.
  */
-static int parse_audio_feature_unit(struct mixer_build *state, int unitid, unsigned char *ftr)
+static int parse_audio_feature_unit(struct mixer_build *state, int unitid, void *_ftr)
 {
 	int channels, i, j;
 	struct usb_audio_term iterm;
 	unsigned int master_bits, first_ch_bits;
 	int err, csize;
+	struct uac_feature_unit_descriptor *ftr = _ftr;
 
-	if (ftr[0] < 7 || ! (csize = ftr[5]) || ftr[0] < 7 + csize) {
+	if (ftr->bLength < 7 || ! (csize = ftr->bControlSize) || ftr->bLength < 7 + csize) {
 		snd_printk(KERN_ERR "usbaudio: unit %u: invalid FEATURE_UNIT descriptor\n", unitid);
 		return -EINVAL;
 	}
 
 	/* parse the source unit */
-	if ((err = parse_audio_unit(state, ftr[4])) < 0)
+	if ((err = parse_audio_unit(state, ftr->bSourceID)) < 0)
 		return err;
 
 	/* determine the input source type and name */
-	if (check_input_term(state, ftr[4], &iterm) < 0)
+	if (check_input_term(state, ftr->bSourceID, &iterm) < 0)
 		return -EINVAL;
 
-	channels = (ftr[0] - 7) / csize - 1;
+	channels = (ftr->bLength - 7) / csize - 1;
 
-	master_bits = snd_usb_combine_bytes(ftr + 6, csize);
+	master_bits = snd_usb_combine_bytes(ftr->controls, csize);
 	/* master configuration quirks */
 	switch (state->chip->usb_id) {
 	case USB_ID(0x08bb, 0x2702):
@@ -1119,21 +1122,21 @@ static int parse_audio_feature_unit(struct mixer_build *state, int unitid, unsig
 		break;
 	}
 	if (channels > 0)
-		first_ch_bits = snd_usb_combine_bytes(ftr + 6 + csize, csize);
+		first_ch_bits = snd_usb_combine_bytes(ftr->controls + csize, csize);
 	else
 		first_ch_bits = 0;
 	/* check all control types */
 	for (i = 0; i < 10; i++) {
 		unsigned int ch_bits = 0;
 		for (j = 0; j < channels; j++) {
-			unsigned int mask = snd_usb_combine_bytes(ftr + 6 + csize * (j+1), csize);
+			unsigned int mask = snd_usb_combine_bytes(ftr->controls + csize * (j+1), csize);
 			if (mask & (1 << i))
 				ch_bits |= (1 << j);
 		}
 		if (ch_bits & 1) /* the first channel must be set (for ease of programming) */
-			build_feature_ctl(state, ftr, ch_bits, i, &iterm, unitid);
+			build_feature_ctl(state, _ftr, ch_bits, i, &iterm, unitid);
 		if (master_bits & (1 << i))
-			build_feature_ctl(state, ftr, 0, i, &iterm, unitid);
+			build_feature_ctl(state, _ftr, 0, i, &iterm, unitid);
 	}
 
 	return 0;
@@ -1744,9 +1747,9 @@ static int parse_audio_unit(struct mixer_build *state, int unitid)
 		return parse_audio_selector_unit(state, unitid, p1);
 	case FEATURE_UNIT:
 		return parse_audio_feature_unit(state, unitid, p1);
-	case PROCESSING_UNIT:
+	case PROCESSING_UNIT_V1:
 		return parse_audio_processing_unit(state, unitid, p1);
-	case EXTENSION_UNIT:
+	case EXTENSION_UNIT_V1:
 		return parse_audio_extension_unit(state, unitid, p1);
 	default:
 		snd_printk(KERN_ERR "usbaudio: unit %u: unexpected type 0x%02x\n", unitid, p1[2]);
@@ -1780,7 +1783,7 @@ static int snd_usb_mixer_dev_free(struct snd_device *device)
  */
 static int snd_usb_mixer_controls(struct usb_mixer_interface *mixer)
 {
-	unsigned char *desc;
+	struct uac_output_terminal_descriptor_v1 *desc;
 	struct mixer_build state;
 	int err;
 	const struct usbmix_ctl_map *map;
@@ -1805,13 +1808,13 @@ static int snd_usb_mixer_controls(struct usb_mixer_interface *mixer)
 
 	desc = NULL;
 	while ((desc = snd_usb_find_csint_desc(hostif->extra, hostif->extralen, desc, OUTPUT_TERMINAL)) != NULL) {
-		if (desc[0] < 9)
+		if (desc->bLength < 9)
 			continue; /* invalid descriptor? */
-		set_bit(desc[3], state.unitbitmap);  /* mark terminal ID as visited */
-		state.oterm.id = desc[3];
-		state.oterm.type = combine_word(&desc[4]);
-		state.oterm.name = desc[8];
-		err = parse_audio_unit(&state, desc[7]);
+		set_bit(desc->bTerminalID, state.unitbitmap);  /* mark terminal ID as visited */
+		state.oterm.id = desc->bTerminalID;
+		state.oterm.type = le16_to_cpu(desc->wTerminalType);
+		state.oterm.name = desc->iTerminal;
+		err = parse_audio_unit(&state, desc->bSourceID);
 		if (err < 0)
 			return err;
 	}
@@ -2255,7 +2258,8 @@ int snd_usb_create_mixer(struct snd_usb_audio *chip, int ctrlif,
 	};
 	struct usb_mixer_interface *mixer;
 	struct snd_info_entry *entry;
-	int err;
+	struct usb_host_interface *host_iface;
+	int err, protocol;
 
 	strcpy(chip->card->mixername, "USB Mixer");
 
@@ -2270,6 +2274,16 @@ int snd_usb_create_mixer(struct snd_usb_audio *chip, int ctrlif,
 	if (!mixer->id_elems) {
 		kfree(mixer);
 		return -ENOMEM;
+	}
+
+	host_iface = &usb_ifnum_to_if(chip->dev, ctrlif)->altsetting[0];
+	protocol = host_iface->desc.bInterfaceProtocol;
+
+	/* FIXME! */
+	if (protocol != UAC_VERSION_1) {
+		snd_printk(KERN_WARNING "mixer interface protocol 0x%02x not yet supported\n",
+					protocol);
+		return 0;
 	}
 
 	if ((err = snd_usb_mixer_controls(mixer)) < 0 ||

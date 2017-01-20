@@ -46,6 +46,8 @@
 #include <linux/usb.h>
 #include <linux/moduleparam.h>
 #include <linux/mutex.h>
+#include <linux/usb/audio.h>
+
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/pcm.h>
@@ -2420,16 +2422,54 @@ static int is_big_endian_format(struct snd_usb_audio *chip, struct audioformat *
  * @format: the format tag (wFormatTag)
  * @fmt: the format type descriptor
  */
-static int parse_audio_format_i_type(struct snd_usb_audio *chip, struct audioformat *fp,
-				     int format, unsigned char *fmt)
+static int parse_audio_format_i_type(struct snd_usb_audio *chip,
+				     struct audioformat *fp,
+				     int format, void *_fmt,
+				     int protocol)
 {
-	int pcm_format;
+	int pcm_format, i;
 	int sample_width, sample_bytes;
+
+	switch (protocol) {
+	case UAC_VERSION_1: {
+		struct uac_format_type_i_discrete_descriptor *fmt = _fmt;
+		sample_width = fmt->bBitResolution;
+		sample_bytes = fmt->bSubframeSize;
+		break;
+	}
+
+	case UAC_VERSION_2: {
+		struct uac_format_type_i_ext_descriptor *fmt = _fmt;
+		sample_width = fmt->bBitResolution;
+		sample_bytes = fmt->bSubslotSize;
+
+		/*
+		 * FIXME
+		 * USB audio class v2 devices specify a bitmap of possible
+		 * audio formats rather than one fix value. For now, we just
+		 * pick one of them and report that as the only possible
+		 * value for this setting.
+		 * The bit allocation map is in fact compatible to the
+		 * wFormatTag of the v1 AS streaming descriptors, which is why
+		 * we can simply map the matrix.
+		 */
+
+		for (i = 0; i < 5; i++)
+			if (format & (1UL << i)) {
+				format = i + 1;
+				break;
+			}
+
+		break;
+	}
+
+	default:
+		return -EINVAL;
+	}
 
 	/* FIXME: correct endianess and sign? */
 	pcm_format = -1;
-	sample_width = fmt[6];
-	sample_bytes = fmt[5];
+
 	switch (format) {
 	case 0: /* some devices don't define this correctly... */
 		snd_printdd(KERN_INFO "%d:%u:%d : format type 0 is detected, processed as PCM\n",
@@ -2442,7 +2482,8 @@ static int parse_audio_format_i_type(struct snd_usb_audio *chip, struct audiofor
 				   sample_width, sample_bytes);
 		}
 		/* check the format byte size */
-		switch (fmt[5]) {
+		printk(" XXXXX SAMPLE BYTES %d\n", sample_bytes);
+		switch (sample_bytes) {
 		case 1:
 			pcm_format = SNDRV_PCM_FORMAT_S8;
 			break;
@@ -2463,8 +2504,8 @@ static int parse_audio_format_i_type(struct snd_usb_audio *chip, struct audiofor
 			break;
 		default:
 			snd_printk(KERN_INFO "%d:%u:%d : unsupported sample bitwidth %d in %d bytes\n",
-				   chip->dev->devnum, fp->iface,
-				   fp->altsetting, sample_width, sample_bytes);
+				   chip->dev->devnum, fp->iface, fp->altsetting,
+				   sample_width, sample_bytes);
 			break;
 		}
 		break;
@@ -2496,7 +2537,7 @@ static int parse_audio_format_i_type(struct snd_usb_audio *chip, struct audiofor
 
 /*
  * parse the format descriptor and stores the possible sample rates
- * on the audioformat table.
+ * on the audioformat table (audio class v1).
  *
  * @dev: usb device
  * @fp: audioformat record
@@ -2504,8 +2545,8 @@ static int parse_audio_format_i_type(struct snd_usb_audio *chip, struct audiofor
  * @offset: the start offset of descriptor pointing the rate type
  *          (7 for type I and II, 8 for type II)
  */
-static int parse_audio_format_rates(struct snd_usb_audio *chip, struct audioformat *fp,
-				    unsigned char *fmt, int offset)
+static int parse_audio_format_rates_v1(struct snd_usb_audio *chip, struct audioformat *fp,
+				       unsigned char *fmt, int offset)
 {
 	int nr_rates = fmt[offset];
 
@@ -2561,14 +2602,87 @@ static int parse_audio_format_rates(struct snd_usb_audio *chip, struct audioform
 }
 
 /*
+ * parse the format descriptor and stores the possible sample rates
+ * on the audioformat table (audio class v2).
+ */
+static int parse_audio_format_rates_v2(struct snd_usb_audio *chip,
+				       struct audioformat *fp,
+				       struct usb_host_interface *iface)
+{
+	struct usb_device *dev = chip->dev;
+	unsigned char tmp[2], *data;
+	int i, nr_rates, data_size, ret = 0;
+
+	/* get the number of sample rates first by only fetching 2 bytes */
+	ret = snd_usb_ctl_msg(dev, usb_rcvctrlpipe(dev, 0), CS_RANGE,
+			       USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN,
+			       0x0100, chip->clock_id << 8, tmp, sizeof(tmp), 1000);
+
+	if (ret < 0) {
+		snd_printk(KERN_ERR "unable to retrieve number of sample rates\n");
+		goto err;
+	}
+
+	nr_rates = (tmp[1] << 8) | tmp[0];
+	data_size = 2 + 12 * nr_rates;
+	data = kzalloc(data_size, GFP_KERNEL);
+	if (!data) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	/* now get the full information */
+	ret = snd_usb_ctl_msg(dev, usb_rcvctrlpipe(dev, 0), CS_RANGE,
+			       USB_TYPE_CLASS | USB_RECIP_INTERFACE | USB_DIR_IN,
+			       0x0100, chip->clock_id << 8, data, data_size, 1000);
+
+	if (ret < 0) {
+		snd_printk(KERN_ERR "unable to retrieve sample rate range\n");
+		ret = -EINVAL;
+		goto err_free;
+	}
+
+	fp->rate_table = kmalloc(sizeof(int) * nr_rates, GFP_KERNEL);
+	if (!fp->rate_table) {
+		ret = -ENOMEM;
+		goto err_free;
+	}
+
+	fp->nr_rates = 0;
+	fp->rate_min = fp->rate_max = 0;
+
+	for (i = 0; i < nr_rates; i++) {
+		int rate = combine_quad(&data[2 + 12 * i]);
+
+		fp->rate_table[fp->nr_rates] = rate;
+		if (!fp->rate_min || rate < fp->rate_min)
+			fp->rate_min = rate;
+		if (!fp->rate_max || rate > fp->rate_max)
+			fp->rate_max = rate;
+		fp->rates |= snd_pcm_rate_to_rate_bit(rate);
+		fp->nr_rates++;
+	}
+
+err_free:
+	kfree(data);
+err:
+	return ret;
+}
+
+/*
  * parse the format type I and III descriptors
  */
-static int parse_audio_format_i(struct snd_usb_audio *chip, struct audioformat *fp,
-				int format, unsigned char *fmt)
+static int parse_audio_format_i(struct snd_usb_audio *chip,
+				struct audioformat *fp,
+				int format, void *_fmt,
+				struct usb_host_interface *iface)
 {
-	int pcm_format;
+	struct usb_interface_descriptor *altsd = get_iface_desc(iface);
+	struct uac_format_type_i_discrete_descriptor *fmt = _fmt;
+	int protocol = altsd->bInterfaceProtocol;
+	int pcm_format, ret;
 
-	if (fmt[3] == USB_FORMAT_TYPE_III) {
+	if (fmt->bFormatType == USB_FORMAT_TYPE_III) {
 		/* FIXME: the format type is really IECxxx
 		 *        but we give normal PCM format to get the existing
 		 *        apps working...
@@ -2586,27 +2700,50 @@ static int parse_audio_format_i(struct snd_usb_audio *chip, struct audioformat *
 			pcm_format = SNDRV_PCM_FORMAT_S16_LE;
 		}
 	} else {
-		pcm_format = parse_audio_format_i_type(chip, fp, format, fmt);
+		pcm_format = parse_audio_format_i_type(chip, fp, format, fmt, protocol);
 		if (pcm_format < 0)
 			return -1;
 	}
+
 	fp->format = pcm_format;
-	fp->channels = fmt[4];
+
+	/* gather possible sample rates */
+	/* audio class v1 reports possible sample rates as part of the
+	 * proprietary class specific descriptor.
+	 * audio class v2 uses class specific EP0 range requests for that.
+	 */
+	switch (protocol) {
+	case UAC_VERSION_1:
+		fp->channels = fmt->bNrChannels;
+		ret = parse_audio_format_rates_v1(chip, fp, _fmt, 7);
+		break;
+	case UAC_VERSION_2:
+		/* fp->channels is already set in this case */
+		ret = parse_audio_format_rates_v2(chip, fp, iface);
+		break;
+	}
+
 	if (fp->channels < 1) {
 		snd_printk(KERN_ERR "%d:%u:%d : invalid channels %d\n",
 			   chip->dev->devnum, fp->iface, fp->altsetting, fp->channels);
 		return -1;
 	}
-	return parse_audio_format_rates(chip, fp, fmt, 7);
+
+	return ret;
 }
 
 /*
- * prase the format type II descriptor
+ * parse the format type II descriptor
  */
-static int parse_audio_format_ii(struct snd_usb_audio *chip, struct audioformat *fp,
-				 int format, unsigned char *fmt)
+static int parse_audio_format_ii(struct snd_usb_audio *chip,
+				 struct audioformat *fp,
+				 int format, void *_fmt,
+				 struct usb_host_interface *iface)
 {
-	int brate, framesize;
+	int brate, framesize, ret;
+	struct usb_interface_descriptor *altsd = get_iface_desc(iface);
+	int protocol = altsd->bInterfaceProtocol;
+
 	switch (format) {
 	case USB_AUDIO_FORMAT_AC3:
 		/* FIXME: there is no AC3 format defined yet */
@@ -2622,26 +2759,46 @@ static int parse_audio_format_ii(struct snd_usb_audio *chip, struct audioformat 
 		fp->format = SNDRV_PCM_FORMAT_MPEG;
 		break;
 	}
+
 	fp->channels = 1;
-	brate = combine_word(&fmt[4]); 	/* fmt[4,5] : wMaxBitRate (in kbps) */
-	framesize = combine_word(&fmt[6]); /* fmt[6,7]: wSamplesPerFrame */
-	snd_printd(KERN_INFO "found format II with max.bitrate = %d, frame size=%d\n", brate, framesize);
-	fp->frame_size = framesize;
-	return parse_audio_format_rates(chip, fp, fmt, 8); /* fmt[8..] sample rates */
+
+	switch (protocol) {
+	case UAC_VERSION_1: {
+		struct uac_format_type_ii_discrete_descriptor *fmt = _fmt;
+		brate = le16_to_cpu(fmt->wMaxBitRate);
+		framesize = le16_to_cpu(fmt->wSamplesPerFrame);
+		snd_printd(KERN_INFO "found format II with max.bitrate = %d, frame size=%d\n", brate, framesize);
+		fp->frame_size = framesize;
+		ret = parse_audio_format_rates_v1(chip, fp, _fmt, 8); /* fmt[8..] sample rates */
+		break;
+	}
+	case UAC_VERSION_2: {
+		struct uac_format_type_ii_ext_descriptor *fmt = _fmt;
+		brate = le16_to_cpu(fmt->wMaxBitRate);
+		framesize = le16_to_cpu(fmt->wSamplesPerFrame);
+		snd_printd(KERN_INFO "found format II with max.bitrate = %d, frame size=%d\n", brate, framesize);
+		fp->frame_size = framesize;
+		ret = parse_audio_format_rates_v2(chip, fp, iface);
+		break;
+	}
+	}
+
+	return ret;
 }
 
 static int parse_audio_format(struct snd_usb_audio *chip, struct audioformat *fp,
-			      int format, unsigned char *fmt, int stream)
+			      int format, unsigned char *fmt, int stream,
+			      struct usb_host_interface *iface)
 {
 	int err;
 
 	switch (fmt[3]) {
 	case USB_FORMAT_TYPE_I:
 	case USB_FORMAT_TYPE_III:
-		err = parse_audio_format_i(chip, fp, format, fmt);
+		err = parse_audio_format_i(chip, fp, format, fmt, iface);
 		break;
 	case USB_FORMAT_TYPE_II:
-		err = parse_audio_format_ii(chip, fp, format, fmt);
+		err = parse_audio_format_ii(chip, fp, format, fmt, iface);
 		break;
 	default:
 		snd_printd(KERN_INFO "%d:%u:%d : format type %d is not supported yet\n",
@@ -2688,10 +2845,10 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 	struct usb_host_interface *alts;
 	struct usb_interface_descriptor *altsd;
 	int i, altno, err, stream;
-	int format;
+	int format = 0, num_channels = 0;
 	struct audioformat *fp = NULL;
 	unsigned char *fmt, *csep;
-	int num;
+	int num, protocol;
 
 	dev = chip->dev;
 
@@ -2710,6 +2867,7 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 	for (i = 0; i < num; i++) {
 		alts = &iface->altsetting[i];
 		altsd = get_iface_desc(alts);
+		protocol = altsd->bInterfaceProtocol;
 		/* skip invalid one */
 		if ((altsd->bInterfaceClass != USB_CLASS_AUDIO &&
 		     altsd->bInterfaceClass != USB_CLASS_VENDOR_SPEC) ||
@@ -2734,20 +2892,54 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 			continue;
 
 		/* get audio formats */
-		fmt = snd_usb_find_csint_desc(alts->extra, alts->extralen, NULL, AS_GENERAL);
-		if (!fmt) {
-			snd_printk(KERN_ERR "%d:%u:%d : AS_GENERAL descriptor not found\n",
-				   dev->devnum, iface_no, altno);
-			continue;
+		switch (protocol) {
+		case UAC_VERSION_1: {
+			struct uac_as_header_descriptor_v1 *as =
+				snd_usb_find_csint_desc(alts->extra, alts->extralen, NULL, AS_GENERAL);
+
+			if (!as) {
+				snd_printk(KERN_ERR "%d:%u:%d : AS_GENERAL descriptor not found\n",
+					   dev->devnum, iface_no, altno);
+				continue;
+			}
+
+			if (as->bLength < sizeof(*as)) {
+				snd_printk(KERN_ERR "%d:%u:%d : invalid AS_GENERAL desc\n",
+					   dev->devnum, iface_no, altno);
+				continue;
+			}
+
+			format = le16_to_cpu(as->wFormatTag); /* remember the format value */
+			break;
 		}
 
-		if (fmt[0] < 7) {
-			snd_printk(KERN_ERR "%d:%u:%d : invalid AS_GENERAL desc\n",
-				   dev->devnum, iface_no, altno);
-			continue;
+		case UAC_VERSION_2: {
+			struct uac_as_header_descriptor_v2 *as =
+				snd_usb_find_csint_desc(alts->extra, alts->extralen, NULL, AS_GENERAL);
+
+			if (!as) {
+				snd_printk(KERN_ERR "%d:%u:%d : AS_GENERAL descriptor not found\n",
+					   dev->devnum, iface_no, altno);
+				continue;
+			}
+
+			if (as->bLength < sizeof(*as)) {
+				snd_printk(KERN_ERR "%d:%u:%d : invalid AS_GENERAL desc\n",
+					   dev->devnum, iface_no, altno);
+				continue;
+			}
+
+			num_channels = as->bNrChannels;
+			format = le32_to_cpu(as->bmFormats);
+
+			break;
 		}
 
-		format = (fmt[6] << 8) | fmt[5]; /* remember the format value */
+		default:
+			snd_printk(KERN_ERR "%d:%u:%d : unknown interface protocol %04x\n",
+				   dev->devnum, iface_no, altno, protocol);
+			continue;
+		}
 
 		/* get format type */
 		fmt = snd_usb_find_csint_desc(alts->extra, alts->extralen, NULL, FORMAT_TYPE);
@@ -2756,7 +2948,8 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 				   dev->devnum, iface_no, altno);
 			continue;
 		}
-		if (fmt[0] < 8) {
+		if (((protocol == UAC_VERSION_1) && (fmt[0] < 8)) ||
+		    ((protocol == UAC_VERSION_2) && (fmt[0] != 6))) {
 			snd_printk(KERN_ERR "%d:%u:%d : invalid FORMAT_TYPE desc\n",
 				   dev->devnum, iface_no, altno);
 			continue;
@@ -2770,6 +2963,7 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 		if (fmt[4] == 1 && fmt[5] == 2 && altno == 2 && num == 3 &&
 		    fp && fp->altsetting == 1 && fp->channels == 1 &&
 		    fp->format == SNDRV_PCM_FORMAT_S16_LE &&
+		    protocol == UAC_VERSION_1 &&
 		    le16_to_cpu(get_endpoint(alts, 0)->wMaxPacketSize) ==
 							fp->maxpacksize * 2)
 			continue;
@@ -2798,6 +2992,8 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 		fp->ep_attr = get_endpoint(alts, 0)->bmAttributes;
 		fp->datainterval = parse_datainterval(chip, alts);
 		fp->maxpacksize = le16_to_cpu(get_endpoint(alts, 0)->wMaxPacketSize);
+		/* num_channels is only set for v2 interfaces */
+		fp->channels = num_channels;
 		if (snd_usb_get_speed(dev) == USB_SPEED_HIGH)
 			fp->maxpacksize = (((fp->maxpacksize >> 11) & 3) + 1)
 					* (fp->maxpacksize & 0x7ff);
@@ -2833,7 +3029,7 @@ static int parse_audio_endpoints(struct snd_usb_audio *chip, int iface_no)
 		}
 
 		/* ok, let's parse further... */
-		if (parse_audio_format(chip, fp, format, fmt, stream) < 0) {
+		if (parse_audio_format(chip, fp, format, fmt, stream, alts) < 0) {
 			kfree(fp->rate_table);
 			kfree(fp);
 			continue;
@@ -2875,6 +3071,65 @@ static void snd_usb_stream_disconnect(struct list_head *head)
 	}
 }
 
+static int snd_usb_create_stream(struct snd_usb_audio *chip, int ctrlif, int interface)
+{
+	struct usb_device *dev = chip->dev;
+	struct usb_host_interface *alts;
+	struct usb_interface_descriptor *altsd;
+	struct usb_interface *iface = usb_ifnum_to_if(dev, interface);
+
+	if (!iface) {
+		snd_printk(KERN_ERR "%d:%u:%d : does not exist\n",
+			   dev->devnum, ctrlif, interface);
+		return -EINVAL;
+	}
+
+	if (usb_interface_claimed(iface)) {
+		snd_printdd(KERN_INFO "%d:%d:%d: skipping, already claimed\n",
+						dev->devnum, ctrlif, interface);
+		return -EINVAL;
+	}
+
+	alts = &iface->altsetting[0];
+	altsd = get_iface_desc(alts);
+	if ((altsd->bInterfaceClass == USB_CLASS_AUDIO ||
+	     altsd->bInterfaceClass == USB_CLASS_VENDOR_SPEC) &&
+	    altsd->bInterfaceSubClass == USB_SUBCLASS_MIDI_STREAMING) {
+		int err = snd_usbmidi_create(chip->card, iface,
+					     &chip->midi_list, NULL);
+		if (err < 0) {
+			snd_printk(KERN_ERR "%d:%u:%d: cannot create sequencer device\n",
+						dev->devnum, ctrlif, interface);
+			return -EINVAL;
+		}
+		usb_driver_claim_interface(&usb_audio_driver, iface, (void *)-1L);
+
+		return 0;
+	}
+
+	if ((altsd->bInterfaceClass != USB_CLASS_AUDIO &&
+	     altsd->bInterfaceClass != USB_CLASS_VENDOR_SPEC) ||
+	    altsd->bInterfaceSubClass != USB_SUBCLASS_AUDIO_STREAMING) {
+		snd_printdd(KERN_ERR "%d:%u:%d: skipping non-supported interface %d\n",
+					dev->devnum, ctrlif, interface, altsd->bInterfaceClass);
+		/* skip non-supported classes */
+		return -EINVAL;
+	}
+
+	if (snd_usb_get_speed(dev) == USB_SPEED_LOW) {
+		snd_printk(KERN_ERR "low speed audio streaming not supported\n");
+		return -EINVAL;
+	}
+
+	if (! parse_audio_endpoints(chip, interface)) {
+		usb_set_interface(dev, interface, 0); /* reset the current interface */
+		usb_driver_claim_interface(&usb_audio_driver, iface, (void *)-1L);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 /*
  * parse audio control descriptor and create pcm/midi streams
  */
@@ -2882,67 +3137,81 @@ static int snd_usb_create_streams(struct snd_usb_audio *chip, int ctrlif)
 {
 	struct usb_device *dev = chip->dev;
 	struct usb_host_interface *host_iface;
-	struct usb_interface *iface;
-	unsigned char *p1;
-	int i, j;
+	struct usb_interface_descriptor *altsd;
+	void *control_header;
+	int i, protocol;
 
 	/* find audiocontrol interface */
 	host_iface = &usb_ifnum_to_if(dev, ctrlif)->altsetting[0];
-	if (!(p1 = snd_usb_find_csint_desc(host_iface->extra, host_iface->extralen, NULL, HEADER))) {
+	control_header = snd_usb_find_csint_desc(host_iface->extra,
+						 host_iface->extralen,
+						 NULL, HEADER);
+	altsd = get_iface_desc(host_iface);
+	protocol = altsd->bInterfaceProtocol;
+
+	if (!control_header) {
 		snd_printk(KERN_ERR "cannot find HEADER\n");
 		return -EINVAL;
 	}
-	if (! p1[7] || p1[0] < 8 + p1[7]) {
-		snd_printk(KERN_ERR "invalid HEADER\n");
-		return -EINVAL;
+
+	switch (protocol) {
+	case UAC_VERSION_1: {
+		struct uac_ac_header_descriptor_v1 *h1 = control_header;
+
+		if (!h1->bInCollection) {
+			snd_printk(KERN_INFO "skipping empty audio interface (v1)\n");
+			return -EINVAL;
+		}
+
+		if (h1->bLength < sizeof(*h1) + h1->bInCollection) {
+			snd_printk(KERN_ERR "invalid HEADER (v1)\n");
+			return -EINVAL;
+		}
+
+		for (i = 0; i < h1->bInCollection; i++)
+			snd_usb_create_stream(chip, ctrlif, h1->baInterfaceNr[i]);
+
+		break;
 	}
 
-	/*
-	 * parse all USB audio streaming interfaces
-	 */
-	for (i = 0; i < p1[7]; i++) {
-		struct usb_host_interface *alts;
-		struct usb_interface_descriptor *altsd;
-		j = p1[8 + i];
-		iface = usb_ifnum_to_if(dev, j);
-		if (!iface) {
-			snd_printk(KERN_ERR "%d:%u:%d : does not exist\n",
-				   dev->devnum, ctrlif, j);
-			continue;
+	case UAC_VERSION_2: {
+		struct uac_clock_source_descriptor *cs;
+		struct usb_interface_assoc_descriptor *assoc =
+			usb_ifnum_to_if(dev, ctrlif)->intf_assoc;
+
+		if (!assoc) {
+			snd_printk(KERN_ERR "Audio class v2 interfaces need an interface association\n");
+			return -EINVAL;
 		}
-		if (usb_interface_claimed(iface)) {
-			snd_printdd(KERN_INFO "%d:%d:%d: skipping, already claimed\n", dev->devnum, ctrlif, j);
-			continue;
+
+		/* FIXME: for now, we expect there is at least one clock source
+		 * descriptor and we always take the first one.
+		 * We should properly support devices with multiple clock sources,
+		 * clock selectors and sample rate conversion units. */
+
+		cs = snd_usb_find_csint_desc(host_iface->extra, host_iface->extralen,
+						NULL, CLOCK_SOURCE);
+
+		if (!cs) {
+			snd_printk(KERN_ERR "CLOCK_SOURCE descriptor not found\n");
+			return -EINVAL;
 		}
-		alts = &iface->altsetting[0];
-		altsd = get_iface_desc(alts);
-		if ((altsd->bInterfaceClass == USB_CLASS_AUDIO ||
-		     altsd->bInterfaceClass == USB_CLASS_VENDOR_SPEC) &&
-		    altsd->bInterfaceSubClass == USB_SUBCLASS_MIDI_STREAMING) {
-			int err = snd_usbmidi_create(chip->card, iface,
-						     &chip->midi_list, NULL);
-			if (err < 0) {
-				snd_printk(KERN_ERR "%d:%u:%d: cannot create sequencer device\n", dev->devnum, ctrlif, j);
-				continue;
-			}
-			usb_driver_claim_interface(&usb_audio_driver, iface, (void *)-1L);
-			continue;
+
+		chip->clock_id = cs->bClockID;
+
+		for (i = 0; i < assoc->bInterfaceCount; i++) {
+			int intf = assoc->bFirstInterface + i;
+
+			if (intf != ctrlif)
+				snd_usb_create_stream(chip, ctrlif, intf);
 		}
-		if ((altsd->bInterfaceClass != USB_CLASS_AUDIO &&
-		     altsd->bInterfaceClass != USB_CLASS_VENDOR_SPEC) ||
-		    altsd->bInterfaceSubClass != USB_SUBCLASS_AUDIO_STREAMING) {
-			snd_printdd(KERN_ERR "%d:%u:%d: skipping non-supported interface %d\n", dev->devnum, ctrlif, j, altsd->bInterfaceClass);
-			/* skip non-supported classes */
-			continue;
-		}
-		if (snd_usb_get_speed(dev) == USB_SPEED_LOW) {
-			snd_printk(KERN_ERR "low speed audio streaming not supported\n");
-			continue;
-		}
-		if (! parse_audio_endpoints(chip, j)) {
-			usb_set_interface(dev, j, 0); /* reset the current interface */
-			usb_driver_claim_interface(&usb_audio_driver, iface, (void *)-1L);
-		}
+
+		break;
+	}
+
+	default:
+		snd_printk(KERN_ERR "unknown protocol version 0x%02x\n", protocol);
+		return -EINVAL;
 	}
 
 	return 0;
@@ -3607,7 +3876,6 @@ static void *snd_usb_audio_probe(struct usb_device *dev,
 	ifnum = get_iface_desc(alts)->bInterfaceNumber;
 	id = USB_ID(le16_to_cpu(dev->descriptor.idVendor),
 		    le16_to_cpu(dev->descriptor.idProduct));
-
 	if (quirk && quirk->ifnum >= 0 && ifnum != quirk->ifnum)
 		goto __err_val;
 
