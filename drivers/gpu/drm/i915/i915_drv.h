@@ -324,6 +324,7 @@ typedef struct drm_i915_private {
 	u32 saveVBLANK_A;
 	u32 saveVSYNC_A;
 	u32 saveBCLRPAT_A;
+	u32 saveTRANSACONF;
 	u32 saveTRANS_HTOTAL_A;
 	u32 saveTRANS_HBLANK_A;
 	u32 saveTRANS_HSYNC_A;
@@ -354,6 +355,7 @@ typedef struct drm_i915_private {
 	u32 saveVBLANK_B;
 	u32 saveVSYNC_B;
 	u32 saveBCLRPAT_B;
+	u32 saveTRANSBCONF;
 	u32 saveTRANS_HTOTAL_B;
 	u32 saveTRANS_HBLANK_B;
 	u32 saveTRANS_HSYNC_B;
@@ -440,6 +442,17 @@ typedef struct drm_i915_private {
 	u32 savePFB_WIN_SZ;
 	u32 savePFA_WIN_POS;
 	u32 savePFB_WIN_POS;
+	u32 savePCH_DREF_CONTROL;
+	u32 saveDISP_ARB_CTL;
+	u32 savePIPEA_DATA_M1;
+	u32 savePIPEA_DATA_N1;
+	u32 savePIPEA_LINK_M1;
+	u32 savePIPEA_LINK_N1;
+	u32 savePIPEB_DATA_M1;
+	u32 savePIPEB_DATA_N1;
+	u32 savePIPEB_LINK_M1;
+	u32 savePIPEB_LINK_N1;
+	u32 saveRSTDBYCTL;
 
 	struct {
 		struct drm_mm gtt_space;
@@ -578,7 +591,12 @@ typedef struct drm_i915_private {
 	int child_dev_num;
 	struct child_device_config *child_dev;
 	struct drm_connector *int_lvds_connector;
+
 	bool mchbar_need_disable;
+
+	u8 cur_delay;
+	u8 min_delay;
+	u8 max_delay;
 } drm_i915_private_t;
 
 /** driver private structure attached to each drm_gem_object */
