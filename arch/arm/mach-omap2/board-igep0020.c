@@ -16,6 +16,7 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
+#include <linux/leds.h>
 #include <linux/interrupt.h>
 
 #include <linux/regulator/machine.h>
@@ -33,6 +34,7 @@
 
 #include "mux.h"
 #include "hsmmc.h"
+#include "sdram-numonyx-m65kxxxxam.h"
 
 #define IGEP2_SMSC911X_CS       5
 #define IGEP2_SMSC911X_GPIO     176
@@ -41,6 +43,8 @@
 #define IGEP2_GPIO_LED0_GREEN 	27
 #define IGEP2_GPIO_LED1_RED   	28
 #define IGEP2_GPIO_DVI_PUP	170
+#define IGEP2_GPIO_WIFI_NPD 	94
+#define IGEP2_GPIO_WIFI_NRESET 	95
 
 #if defined(CONFIG_MTD_ONENAND_OMAP2) || \
 	defined(CONFIG_MTD_ONENAND_OMAP2_MODULE)
@@ -208,6 +212,10 @@ static struct regulator_consumer_supply igep2_vmmc1_supply = {
 	.supply		= "vmmc",
 };
 
+static struct regulator_consumer_supply igep2_vmmc2_supply = {
+	.supply		= "vmmc",
+};
+
 /* VMMC1 for OMAP VDD_MMC1 (i/o) and MMC1 card */
 static struct regulator_init_data igep2_vmmc1 = {
 	.constraints = {
@@ -221,6 +229,21 @@ static struct regulator_init_data igep2_vmmc1 = {
 	},
 	.num_consumer_supplies  = 1,
 	.consumer_supplies      = &igep2_vmmc1_supply,
+};
+
+/* VMMC2 for OMAP VDD_MMC2 (i/o) and MMC2 WIFI */
+static struct regulator_init_data igep2_vmmc2 = {
+	.constraints = {
+		.min_uV			= 1850000,
+		.max_uV			= 3150000,
+		.valid_modes_mask	= REGULATOR_MODE_NORMAL
+					| REGULATOR_MODE_STANDBY,
+		.valid_ops_mask		= REGULATOR_CHANGE_VOLTAGE
+					| REGULATOR_CHANGE_MODE
+					| REGULATOR_CHANGE_STATUS,
+	},
+	.num_consumer_supplies  = 1,
+	.consumer_supplies      = &igep2_vmmc2_supply,
 };
 
 static struct omap2_hsmmc_info mmc[] = {
@@ -250,6 +273,7 @@ static int igep2_twl_gpio_setup(struct device *dev,
 	 * regulators will be set up only *after* we return.
 	*/
 	igep2_vmmc1_supply.dev = mmc[0].dev;
+	igep2_vmmc2_supply.dev = mmc[1].dev;
 
 	return 0;
 };
@@ -331,16 +355,41 @@ static void __init igep2_display_init(void)
 	    gpio_direction_output(IGEP2_GPIO_DVI_PUP, 1))
 		pr_err("IGEP v2: Could not obtain gpio GPIO_DVI_PUP\n");
 }
+#ifdef CONFIG_LEDS_TRIGGERS
+static struct gpio_led gpio_leds[] = {
+	{
+		.name = "GPIO_LED1_RED",
+		.default_trigger = "heartbeat",
+		.gpio = IGEP2_GPIO_LED1_RED,
+	},
+};
+
+static struct gpio_led_platform_data gpio_leds_info = {
+	.leds           = gpio_leds,
+	.num_leds       = ARRAY_SIZE(gpio_leds),
+};
+
+static struct platform_device leds_gpio = {
+	 .name   = "leds-gpio",
+	 .id     = -1,
+	 .dev    = {
+		 .platform_data  =  &gpio_leds_info,
+	},
+};
+#endif
 
 static struct platform_device *igep2_devices[] __initdata = {
 	&igep2_dss_device,
+#ifdef CONFIG_LEDS_TRIGGERS
+	&leds_gpio,
+#endif
 };
 
 static void __init igep2_init_irq(void)
 {
 	omap_board_config = igep2_config;
 	omap_board_config_size = ARRAY_SIZE(igep2_config);
-	omap2_init_common_hw(NULL, NULL);
+	omap2_init_common_hw(m65kxxxxam_sdrc_params, m65kxxxxam_sdrc_params);
 	omap_init_irq();
 	omap_gpio_init();
 }
@@ -363,6 +412,7 @@ static struct twl4030_platform_data igep2_twldata = {
 	.codec		= &igep2_codec_data,
 	.gpio		= &igep2_gpio_data,
 	.vmmc1          = &igep2_vmmc1,
+	.vmmc2		= &igep2_vmmc2,
 	.vpll2		= &igep2_vpll2,
 
 };
@@ -385,6 +435,12 @@ static int __init igep2_i2c_init(void)
 	omap_register_i2c_bus(3, 100, NULL, 0);
 	return 0;
 }
+
+static struct omap_musb_board_data musb_board_data = {
+	.interface_type		= MUSB_INTERFACE_ULPI,
+	.mode			= MUSB_OTG,
+	.power			= 100,
+};
 
 static struct ehci_hcd_omap_platform_data ehci_pdata __initconst = {
 	.port_mode[0] = EHCI_HCD_OMAP_MODE_UNKNOWN,
@@ -411,7 +467,7 @@ static void __init igep2_init(void)
 	igep2_i2c_init();
 	platform_add_devices(igep2_devices, ARRAY_SIZE(igep2_devices));
 	omap_serial_init();
-	usb_musb_init();
+	usb_musb_init(&musb_board_data);
 	usb_ehci_init(&ehci_pdata);
 
 	igep2_flash_init();
@@ -432,13 +488,30 @@ static void __init igep2_init(void)
 		gpio_set_value(IGEP2_GPIO_LED0_GREEN, 0);
 	} else
 		pr_warning("IGEP v2: Could not obtain gpio GPIO_LED0_GREEN\n");
-
+#ifndef CONFIG_LEDS_TRIGGERS
 	if ((gpio_request(IGEP2_GPIO_LED1_RED, "GPIO_LED1_RED") == 0) &&
 	    (gpio_direction_output(IGEP2_GPIO_LED1_RED, 1) == 0)) {
 		gpio_export(IGEP2_GPIO_LED1_RED, 0);
 		gpio_set_value(IGEP2_GPIO_LED1_RED, 0);
 	} else
 		pr_warning("IGEP v2: Could not obtain gpio GPIO_LED1_RED\n");
+#endif
+	/* GPIO W-LAN + Bluetooth combo module */
+	if ((gpio_request(IGEP2_GPIO_WIFI_NPD, "GPIO_WIFI_NPD") == 0) &&
+	    (gpio_direction_output(IGEP2_GPIO_WIFI_NPD, 1) == 0)) {
+		gpio_export(IGEP2_GPIO_WIFI_NPD, 0);
+/* 		gpio_set_value(IGEP2_GPIO_WIFI_NPD, 0); */
+	} else
+		pr_warning("IGEP v2: Could not obtain gpio GPIO_WIFI_NPD\n");
+
+	if ((gpio_request(IGEP2_GPIO_WIFI_NRESET, "GPIO_WIFI_NRESET") == 0) &&
+	    (gpio_direction_output(IGEP2_GPIO_WIFI_NRESET, 1) == 0)) {
+		gpio_export(IGEP2_GPIO_WIFI_NRESET, 0);
+		gpio_set_value(IGEP2_GPIO_WIFI_NRESET, 0);
+		udelay(10);
+		gpio_set_value(IGEP2_GPIO_WIFI_NRESET, 1);
+	} else
+		pr_warning("IGEP v2: Could not obtain gpio GPIO_WIFI_NRESET\n");
 }
 
 static void __init igep2_map_io(void)

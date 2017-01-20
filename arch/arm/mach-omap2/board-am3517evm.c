@@ -20,6 +20,7 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/i2c/pca953x.h>
 
 #include <mach/hardware.h>
 #include <mach/am35xx.h>
@@ -37,6 +38,83 @@
 #define LCD_PANEL_PWR		176
 #define LCD_PANEL_BKLIGHT_PWR	182
 #define LCD_PANEL_PWM		181
+
+static struct i2c_board_info __initdata am3517evm_i2c_boardinfo[] = {
+	{
+		I2C_BOARD_INFO("s35390a", 0x30),
+		.type		= "s35390a",
+	},
+};
+
+/*
+ * RTC - S35390A
+ */
+#define GPIO_RTCS35390A_IRQ	55
+
+static void __init am3517_evm_rtc_init(void)
+{
+	int r;
+
+	omap_mux_init_gpio(GPIO_RTCS35390A_IRQ, OMAP_PIN_INPUT_PULLUP);
+	r = gpio_request(GPIO_RTCS35390A_IRQ, "rtcs35390a-irq");
+	if (r < 0) {
+		printk(KERN_WARNING "failed to request GPIO#%d\n",
+				GPIO_RTCS35390A_IRQ);
+		return;
+	}
+	r = gpio_direction_input(GPIO_RTCS35390A_IRQ);
+	if (r < 0) {
+		printk(KERN_WARNING "GPIO#%d cannot be configured as input\n",
+				GPIO_RTCS35390A_IRQ);
+		gpio_free(GPIO_RTCS35390A_IRQ);
+		return;
+	}
+	am3517evm_i2c_boardinfo[0].irq = gpio_to_irq(GPIO_RTCS35390A_IRQ);
+}
+
+/*
+ * I2C GPIO Expander - TCA6416
+ */
+
+/* Mounted on Base-Board */
+static struct pca953x_platform_data am3517evm_gpio_expander_info_0 = {
+	.gpio_base	= OMAP_MAX_GPIO_LINES,
+};
+static struct i2c_board_info __initdata am3517evm_tca6516_info_0[] = {
+	{
+		I2C_BOARD_INFO("tca6416", 0x21),
+		.platform_data = &am3517evm_gpio_expander_info_0,
+	},
+};
+
+/* Mounted on UI Card */
+static struct pca953x_platform_data am3517evm_ui_gpio_expander_info_1 = {
+	.gpio_base	= OMAP_MAX_GPIO_LINES + 16,
+};
+static struct pca953x_platform_data am3517evm_ui_gpio_expander_info_2 = {
+	.gpio_base	= OMAP_MAX_GPIO_LINES + 32,
+};
+static struct i2c_board_info __initdata am3517evm_ui_tca6516_info[] = {
+	{
+		I2C_BOARD_INFO("tca6416", 0x20),
+		.platform_data = &am3517evm_ui_gpio_expander_info_1,
+	},
+	{
+		I2C_BOARD_INFO("tca6416", 0x21),
+		.platform_data = &am3517evm_ui_gpio_expander_info_2,
+	},
+};
+
+static int __init am3517_evm_i2c_init(void)
+{
+	omap_register_i2c_bus(1, 400, NULL, 0);
+	omap_register_i2c_bus(2, 400, am3517evm_tca6516_info_0,
+			ARRAY_SIZE(am3517evm_tca6516_info_0));
+	omap_register_i2c_bus(3, 400, am3517evm_ui_tca6516_info,
+			ARRAY_SIZE(am3517evm_ui_tca6516_info));
+
+	return 0;
+}
 
 static int lcd_enabled;
 static int dvi_enabled;
@@ -216,6 +294,8 @@ static struct omap_board_mux board_mux[] __initdata = {
 
 static void __init am3517_evm_init(void)
 {
+	am3517_evm_i2c_init();
+
 	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
 	platform_add_devices(am3517_evm_devices,
 				ARRAY_SIZE(am3517_evm_devices));
@@ -224,6 +304,12 @@ static void __init am3517_evm_init(void)
 	usb_ehci_init(&ehci_pdata);
 	/* DSS */
 	am3517_evm_display_init();
+
+	/* RTC - S35390A */
+	am3517_evm_rtc_init();
+
+	i2c_register_board_info(1, am3517evm_i2c_boardinfo,
+				ARRAY_SIZE(am3517evm_i2c_boardinfo));
 }
 
 static void __init am3517_evm_map_io(void)
