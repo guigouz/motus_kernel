@@ -459,7 +459,6 @@ static int soc_pcm_open(struct snd_pcm_substream *substream)
 	else
 		cpu_dai->capture.active = codec_dai->capture.active = 1;
 	cpu_dai->active = codec_dai->active = 1;
-	cpu_dai->runtime = runtime;
 	card->codec->active++;
 	mutex_unlock(&pcm_mutex);
 	return 0;
@@ -559,7 +558,6 @@ static int soc_codec_close(struct snd_pcm_substream *substream)
 
 	if (platform->pcm_ops->close)
 		platform->pcm_ops->close(substream);
-	cpu_dai->runtime = NULL;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		/* start delayed pop wq here for playback streams */
@@ -854,7 +852,7 @@ static int soc_suspend(struct device *dev)
 		if (cpu_dai->suspend && !cpu_dai->ac97_control)
 			cpu_dai->suspend(cpu_dai);
 		if (platform->suspend)
-			platform->suspend(cpu_dai);
+			platform->suspend(&card->dai_link[i]);
 	}
 
 	/* close any waiting streams and save state */
@@ -943,7 +941,7 @@ static void soc_resume_deferred(struct work_struct *work)
 		if (cpu_dai->resume && !cpu_dai->ac97_control)
 			cpu_dai->resume(cpu_dai);
 		if (platform->resume)
-			platform->resume(cpu_dai);
+			platform->resume(&card->dai_link[i]);
 	}
 
 	if (card->resume_post)
@@ -962,6 +960,12 @@ static int soc_resume(struct device *dev)
 	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
 	struct snd_soc_card *card = socdev->card;
 	struct snd_soc_dai *cpu_dai = card->dai_link[0].cpu_dai;
+
+	/* If the initialization of this soc device failed, there is no codec
+	 * associated with it. Just bail out in this case.
+	 */
+	if (!card->codec)
+		return 0;
 
 	/* AC97 devices might have other drivers hanging off them so
 	 * need to resume immediately.  Other drivers don't have that
