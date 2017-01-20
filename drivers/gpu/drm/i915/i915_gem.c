@@ -2540,6 +2540,12 @@ i915_gem_object_put_fence_reg(struct drm_gem_object *obj)
 	if (obj_priv->fence_reg == I915_FENCE_REG_NONE)
 		return 0;
 
+	/* If we've changed tiling, GTT-mappings of the object
+	 * need to re-fault to ensure that the correct fence register
+	 * setup is in place.
+	 */
+	i915_gem_release_mmap(obj);
+
 	/* On the i915, GPU access to tiled buffers is via a fence,
 	 * therefore we must wait for any outstanding access to complete
 	 * before clearing the fence.
@@ -2548,12 +2554,12 @@ i915_gem_object_put_fence_reg(struct drm_gem_object *obj)
 		int ret;
 
 		i915_gem_object_flush_gpu_write_domain(obj);
-		i915_gem_object_flush_gtt_write_domain(obj);
 		ret = i915_gem_object_wait_rendering(obj);
 		if (ret != 0)
 			return ret;
 	}
 
+	i915_gem_object_flush_gtt_write_domain(obj);
 	i915_gem_clear_fence_reg (obj);
 
 	return 0;
@@ -3243,7 +3249,8 @@ i915_gem_object_pin_and_relocate(struct drm_gem_object *obj,
 	             obj_priv->tiling_mode != I915_TILING_NONE;
 
 	/* Check fence reg constraints and rebind if necessary */
-	if (need_fence && !i915_obj_fenceable(dev, obj))
+	if (need_fence && !i915_gem_object_fence_offset_ok(obj,
+	    obj_priv->tiling_mode))
 		i915_gem_object_unbind(obj);
 
 	/* Choose the GTT offset for our buffer and put it there. */
