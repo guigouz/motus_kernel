@@ -22,6 +22,7 @@
  */
 #include "drmP.h"
 #include "radeon.h"
+#include "avivod.h"
 
 #define RADEON_IDLE_LOOP_MS 100
 #define RADEON_RECLOCK_DELAY_MS 200
@@ -142,50 +143,50 @@ static void radeon_get_power_state(struct radeon_device *rdev,
 				   enum radeon_pm_action action)
 {
 	switch (action) {
-	case PM_ACTION_NONE:
-	default:
-		rdev->pm.requested_power_state = rdev->pm.current_power_state;
-		rdev->pm.requested_power_state->requested_clock_mode =
-			rdev->pm.requested_power_state->current_clock_mode;
-		break;
 	case PM_ACTION_MINIMUM:
 		rdev->pm.requested_power_state = radeon_pick_power_state(rdev, POWER_STATE_TYPE_BATTERY);
-		rdev->pm.requested_power_state->requested_clock_mode =
+		rdev->pm.requested_clock_mode =
 			radeon_pick_clock_mode(rdev, rdev->pm.requested_power_state, POWER_MODE_TYPE_LOW);
 		break;
 	case PM_ACTION_DOWNCLOCK:
 		rdev->pm.requested_power_state = radeon_pick_power_state(rdev, POWER_STATE_TYPE_POWERSAVE);
-		rdev->pm.requested_power_state->requested_clock_mode =
+		rdev->pm.requested_clock_mode =
 			radeon_pick_clock_mode(rdev, rdev->pm.requested_power_state, POWER_MODE_TYPE_MID);
 		break;
 	case PM_ACTION_UPCLOCK:
 		rdev->pm.requested_power_state = radeon_pick_power_state(rdev, POWER_STATE_TYPE_DEFAULT);
-		rdev->pm.requested_power_state->requested_clock_mode =
+		rdev->pm.requested_clock_mode =
 			radeon_pick_clock_mode(rdev, rdev->pm.requested_power_state, POWER_MODE_TYPE_HIGH);
 		break;
+	case PM_ACTION_NONE:
+	default:
+		DRM_ERROR("Requested mode for not defined action\n");
+		return;
 	}
 	DRM_INFO("Requested: e: %d m: %d p: %d\n",
-		 rdev->pm.requested_power_state->requested_clock_mode->sclk,
-		 rdev->pm.requested_power_state->requested_clock_mode->mclk,
+		 rdev->pm.requested_clock_mode->sclk,
+		 rdev->pm.requested_clock_mode->mclk,
 		 rdev->pm.requested_power_state->non_clock_info.pcie_lanes);
 }
 
 static void radeon_set_power_state(struct radeon_device *rdev)
 {
-	if (rdev->pm.requested_power_state == rdev->pm.current_power_state)
+	/* if *_clock_mode are the same, *_power_state are as well */
+	if (rdev->pm.requested_clock_mode == rdev->pm.current_clock_mode)
 		return;
 
 	DRM_INFO("Setting: e: %d m: %d p: %d\n",
-		 rdev->pm.requested_power_state->requested_clock_mode->sclk,
-		 rdev->pm.requested_power_state->requested_clock_mode->mclk,
+		 rdev->pm.requested_clock_mode->sclk,
+		 rdev->pm.requested_clock_mode->mclk,
 		 rdev->pm.requested_power_state->non_clock_info.pcie_lanes);
 	/* set pcie lanes */
 	/* set voltage */
 	/* set engine clock */
-	radeon_set_engine_clock(rdev, rdev->pm.requested_power_state->requested_clock_mode->sclk);
+	radeon_set_engine_clock(rdev, rdev->pm.requested_clock_mode->sclk);
 	/* set memory clock */
 
 	rdev->pm.current_power_state = rdev->pm.requested_power_state;
+	rdev->pm.current_clock_mode = rdev->pm.requested_clock_mode;
 }
 
 int radeon_pm_init(struct radeon_device *rdev)
@@ -283,6 +284,28 @@ void radeon_pm_compute_clocks(struct radeon_device *rdev)
 	mutex_unlock(&rdev->pm.mutex);
 }
 
+static bool radeon_pm_debug_check_in_vbl(struct radeon_device *rdev, bool finish)
+{
+	u32 stat_crtc1 = 0, stat_crtc2 = 0;
+	bool in_vbl = true;
+
+	if (ASIC_IS_AVIVO(rdev)) {
+		if (rdev->pm.active_crtcs & (1 << 0)) {
+			stat_crtc1 = RREG32(D1CRTC_STATUS);
+			if (!(stat_crtc1 & 1))
+				in_vbl = false;
+		}
+		if (rdev->pm.active_crtcs & (1 << 1)) {
+			stat_crtc2 = RREG32(D2CRTC_STATUS);
+			if (!(stat_crtc2 & 1))
+				in_vbl = false;
+		}
+	}
+	if (in_vbl == false)
+		DRM_INFO("not in vbl for pm change %08x %08x at %s\n", stat_crtc1,
+			 stat_crtc2, finish ? "exit" : "entry");
+	return in_vbl;
+}
 static void radeon_pm_set_clocks_locked(struct radeon_device *rdev)
 {
 	/*radeon_fence_wait_last(rdev);*/
@@ -299,7 +322,11 @@ static void radeon_pm_set_clocks_locked(struct radeon_device *rdev)
 		DRM_ERROR("%s: PM_ACTION_NONE\n", __func__);
 		break;
 	}
+
+	/* check if we are in vblank */
+	radeon_pm_debug_check_in_vbl(rdev, false);
 	radeon_set_power_state(rdev);
+	radeon_pm_debug_check_in_vbl(rdev, true);
 	rdev->pm.planned_action = PM_ACTION_NONE;
 }
 
