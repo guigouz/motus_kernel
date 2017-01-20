@@ -187,6 +187,33 @@ enum pci_bus_flags {
 	PCI_BUS_FLAGS_NO_MMRBC = (__force pci_bus_flags_t) 2,
 };
 
+/* Based on the PCI Hotplug Spec, but some values are made up by us */
+enum pci_bus_speed {
+	PCI_SPEED_33MHz			= 0x00,
+	PCI_SPEED_66MHz			= 0x01,
+	PCI_SPEED_66MHz_PCIX		= 0x02,
+	PCI_SPEED_100MHz_PCIX		= 0x03,
+	PCI_SPEED_133MHz_PCIX		= 0x04,
+	PCI_SPEED_66MHz_PCIX_ECC	= 0x05,
+	PCI_SPEED_100MHz_PCIX_ECC	= 0x06,
+	PCI_SPEED_133MHz_PCIX_ECC	= 0x07,
+	PCI_SPEED_66MHz_PCIX_266	= 0x09,
+	PCI_SPEED_100MHz_PCIX_266	= 0x0a,
+	PCI_SPEED_133MHz_PCIX_266	= 0x0b,
+	AGP_UNKNOWN			= 0x0c,
+	AGP_1X				= 0x0d,
+	AGP_2X				= 0x0e,
+	AGP_4X				= 0x0f,
+	AGP_8X				= 0x10,
+	PCI_SPEED_66MHz_PCIX_533	= 0x11,
+	PCI_SPEED_100MHz_PCIX_533	= 0x12,
+	PCI_SPEED_133MHz_PCIX_533	= 0x13,
+	PCIE_SPEED_2_5GT		= 0x14,
+	PCIE_SPEED_5_0GT		= 0x15,
+	PCIE_SPEED_8_0GT		= 0x16,
+	PCI_SPEED_UNKNOWN		= 0xff,
+};
+
 struct pci_cap_saved_state {
 	struct hlist_node next;
 	char cap_nr;
@@ -359,6 +386,8 @@ struct pci_bus {
 	unsigned char	primary;	/* number of primary bridge */
 	unsigned char	secondary;	/* number of secondary bridge */
 	unsigned char	subordinate;	/* max number of subordinate buses */
+	unsigned char	max_bus_speed;	/* enum pci_bus_speed */
+	unsigned char	cur_bus_speed;	/* enum pci_bus_speed */
 
 	char		name[48];
 
@@ -563,7 +592,8 @@ int __must_check pcibios_enable_device(struct pci_dev *, int mask);
 char *pcibios_setup(char *str);
 
 /* Used only when drivers/pci/setup.c is used */
-void pcibios_align_resource(void *, struct resource *, resource_size_t,
+resource_size_t pcibios_align_resource(void *, const struct resource *,
+				resource_size_t,
 				resource_size_t);
 void pcibios_update_irq(struct pci_dev *, int irq);
 
@@ -589,6 +619,7 @@ struct pci_bus *pci_create_bus(struct device *parent, int bus,
 			       struct pci_ops *ops, void *sysdata);
 struct pci_bus *pci_add_new_bus(struct pci_bus *parent, struct pci_dev *dev,
 				int busnr);
+void pcie_update_link_speed(struct pci_bus *bus, u16 link_status);
 struct pci_slot *pci_create_slot(struct pci_bus *parent, int slot_nr,
 				 const char *name,
 				 struct hotplug_slot *hotplug);
@@ -802,8 +833,10 @@ int __must_check pci_bus_alloc_resource(struct pci_bus *bus,
 			struct resource *res, resource_size_t size,
 			resource_size_t align, resource_size_t min,
 			unsigned int type_mask,
-			void (*alignf)(void *, struct resource *,
-				resource_size_t, resource_size_t),
+			resource_size_t (*alignf)(void *,
+						  const struct resource *,
+						  resource_size_t,
+						  resource_size_t),
 			void *alignf_data);
 void pci_enable_bridges(struct pci_bus *bus);
 
@@ -1254,8 +1287,12 @@ enum pci_fixup_pass {
 	DECLARE_PCI_FIXUP_SECTION(.pci_fixup_suspend,			\
 			suspend##vendor##device##hook, vendor, device, hook)
 
-
+#ifdef CONFIG_PCI_QUIRKS
 void pci_fixup_device(enum pci_fixup_pass pass, struct pci_dev *dev);
+#else
+static inline void pci_fixup_device(enum pci_fixup_pass pass,
+				    struct pci_dev *dev) {}
+#endif
 
 void __iomem *pcim_iomap(struct pci_dev *pdev, int bar, unsigned long maxlen);
 void pcim_iounmap(struct pci_dev *pdev, void __iomem *addr);

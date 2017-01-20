@@ -6,18 +6,8 @@
 
 obj-y				:=
 obj-m				:=
-obj-n				:=
+obj-n				:= dummy.o
 obj-				:=
 
 # Core support for all Samsung SoCs
 
-obj-y				+= init.o
-obj-y				+= time.o
-
-# DMA support
-
-obj-$(CONFIG_S3C_DMA)		+= dma.o
-
-# PM support
-
-obj-$(CONFIG_PM)		+= pm.o

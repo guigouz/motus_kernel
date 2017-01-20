@@ -590,8 +590,8 @@ struct pcmcia_align_data {
 	struct resource_map	*map;
 };
 
-static void
-pcmcia_common_align(void *align_data, struct resource *res,
+static resource_size_t
+pcmcia_common_align(void *align_data, const struct resource *res,
 			resource_size_t size, resource_size_t align)
 {
 	struct pcmcia_align_data *data = align_data;
@@ -602,17 +602,18 @@ pcmcia_common_align(void *align_data, struct resource *res,
 	start = (res->start & ~data->mask) + data->offset;
 	if (start < res->start)
 		start += data->mask + 1;
-	res->start = start;
+	return start;
 }
 
-static void
-pcmcia_align(void *align_data, struct resource *res, resource_size_t size,
-		resource_size_t align)
+static resource_size_t
+pcmcia_align(void *align_data, const struct resource *res,
+	resource_size_t size, resource_size_t align)
 {
 	struct pcmcia_align_data *data = align_data;
 	struct resource_map *m;
+	resource_size_t start;
 
-	pcmcia_common_align(data, res, size, align);
+	start = pcmcia_common_align(data, res, size, align);
 
 	for (m = data->map->next; m != data->map; m = m->next) {
 		unsigned long start = m->base;
@@ -624,8 +625,7 @@ pcmcia_align(void *align_data, struct resource *res, resource_size_t size,
 		 * fit here.
 		 */
 		if (res->start < start) {
-			res->start = start;
-			pcmcia_common_align(data, res, size, align);
+			start = pcmcia_common_align(data, res, size, align);
 		}
 
 		/*
@@ -643,7 +643,9 @@ pcmcia_align(void *align_data, struct resource *res, resource_size_t size,
 	 * If we failed to find something suitable, ensure we fail.
 	 */
 	if (m == data->map)
-		res->start = res->end;
+		start = res->end;
+
+	return start;
 }
 
 /*

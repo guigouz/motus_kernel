@@ -387,9 +387,145 @@ static struct pci_bus * pci_alloc_bus(void)
 		INIT_LIST_HEAD(&b->children);
 		INIT_LIST_HEAD(&b->devices);
 		INIT_LIST_HEAD(&b->slots);
+		b->max_bus_speed = PCI_SPEED_UNKNOWN;
+		b->cur_bus_speed = PCI_SPEED_UNKNOWN;
 	}
 	return b;
 }
+
+static unsigned char pcix_bus_speed[] = {
+	PCI_SPEED_UNKNOWN,		/* 0 */
+	PCI_SPEED_66MHz_PCIX,		/* 1 */
+	PCI_SPEED_100MHz_PCIX,		/* 2 */
+	PCI_SPEED_133MHz_PCIX,		/* 3 */
+	PCI_SPEED_UNKNOWN,		/* 4 */
+	PCI_SPEED_66MHz_PCIX_ECC,	/* 5 */
+	PCI_SPEED_100MHz_PCIX_ECC,	/* 6 */
+	PCI_SPEED_133MHz_PCIX_ECC,	/* 7 */
+	PCI_SPEED_UNKNOWN,		/* 8 */
+	PCI_SPEED_66MHz_PCIX_266,	/* 9 */
+	PCI_SPEED_100MHz_PCIX_266,	/* A */
+	PCI_SPEED_133MHz_PCIX_266,	/* B */
+	PCI_SPEED_UNKNOWN,		/* C */
+	PCI_SPEED_66MHz_PCIX_533,	/* D */
+	PCI_SPEED_100MHz_PCIX_533,	/* E */
+	PCI_SPEED_133MHz_PCIX_533	/* F */
+};
+
+static unsigned char pcie_link_speed[] = {
+	PCI_SPEED_UNKNOWN,		/* 0 */
+	PCIE_SPEED_2_5GT,		/* 1 */
+	PCIE_SPEED_5_0GT,		/* 2 */
+	PCIE_SPEED_8_0GT,		/* 3 */
+	PCI_SPEED_UNKNOWN,		/* 4 */
+	PCI_SPEED_UNKNOWN,		/* 5 */
+	PCI_SPEED_UNKNOWN,		/* 6 */
+	PCI_SPEED_UNKNOWN,		/* 7 */
+	PCI_SPEED_UNKNOWN,		/* 8 */
+	PCI_SPEED_UNKNOWN,		/* 9 */
+	PCI_SPEED_UNKNOWN,		/* A */
+	PCI_SPEED_UNKNOWN,		/* B */
+	PCI_SPEED_UNKNOWN,		/* C */
+	PCI_SPEED_UNKNOWN,		/* D */
+	PCI_SPEED_UNKNOWN,		/* E */
+	PCI_SPEED_UNKNOWN		/* F */
+};
+
+void pcie_update_link_speed(struct pci_bus *bus, u16 linksta)
+{
+	bus->cur_bus_speed = pcie_link_speed[linksta & 0xf];
+}
+EXPORT_SYMBOL_GPL(pcie_update_link_speed);
+
+static unsigned char agp_speeds[] = {
+	AGP_UNKNOWN,
+	AGP_1X,
+	AGP_2X,
+	AGP_4X,
+	AGP_8X
+};
+
+static enum pci_bus_speed agp_speed(int agp3, int agpstat)
+{
+	int index = 0;
+
+	if (agpstat & 4)
+		index = 3;
+	else if (agpstat & 2)
+		index = 2;
+	else if (agpstat & 1)
+		index = 1;
+	else
+		goto out;
+	
+	if (agp3) {
+		index += 2;
+		if (index == 5)
+			index = 0;
+	}
+
+ out:
+	return agp_speeds[index];
+}
+
+
+static void pci_set_bus_speed(struct pci_bus *bus)
+{
+	struct pci_dev *bridge = bus->self;
+	int pos;
+
+	pos = pci_find_capability(bridge, PCI_CAP_ID_AGP);
+	if (!pos)
+		pos = pci_find_capability(bridge, PCI_CAP_ID_AGP3);
+	if (pos) {
+		u32 agpstat, agpcmd;
+
+		pci_read_config_dword(bridge, pos + PCI_AGP_STATUS, &agpstat);
+		bus->max_bus_speed = agp_speed(agpstat & 8, agpstat & 7);
+
+		pci_read_config_dword(bridge, pos + PCI_AGP_COMMAND, &agpcmd);
+		bus->cur_bus_speed = agp_speed(agpstat & 8, agpcmd & 7);
+	}
+
+	pos = pci_find_capability(bridge, PCI_CAP_ID_PCIX);
+	if (pos) {
+		u16 status;
+		enum pci_bus_speed max;
+		pci_read_config_word(bridge, pos + 2, &status);
+
+		if (status & 0x8000) {
+			max = PCI_SPEED_133MHz_PCIX_533;
+		} else if (status & 0x4000) {
+			max = PCI_SPEED_133MHz_PCIX_266;
+		} else if (status & 0x0002) {
+			if (((status >> 12) & 0x3) == 2) {
+				max = PCI_SPEED_133MHz_PCIX_ECC;
+			} else {
+				max = PCI_SPEED_133MHz_PCIX;
+			}
+		} else {
+			max = PCI_SPEED_66MHz_PCIX;
+		}
+
+		bus->max_bus_speed = max;
+		bus->cur_bus_speed = pcix_bus_speed[(status >> 6) & 0xf];
+
+		return;
+	}
+
+	pos = pci_find_capability(bridge, PCI_CAP_ID_EXP);
+	if (pos) {
+		u32 linkcap;
+		u16 linksta;
+
+		pci_read_config_dword(bridge, pos + PCI_EXP_LNKCAP, &linkcap);
+		bus->max_bus_speed = pcie_link_speed[linkcap & 0xf];
+
+		pci_read_config_word(bridge, pos + PCI_EXP_LNKSTA, &linksta);
+		pcie_update_link_speed(bus, linksta);
+	}
+}
+
 
 static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 					   struct pci_dev *bridge, int busnr)
@@ -429,6 +565,8 @@ static struct pci_bus *pci_alloc_child_bus(struct pci_bus *parent,
 
 	child->self = bridge;
 	child->bridge = get_device(&bridge->dev);
+
+	pci_set_bus_speed(child);
 
 	/* Set up default resource pointers and names.. */
 	for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; i++) {
@@ -1081,6 +1219,37 @@ struct pci_dev *__ref pci_scan_single_device(struct pci_bus *bus, int devfn)
 }
 EXPORT_SYMBOL(pci_scan_single_device);
 
+static unsigned next_ari_fn(struct pci_dev *dev, unsigned fn)
+{
+	u16 cap;
+	unsigned pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ARI);
+	if (!pos)
+		return 0;
+	pci_read_config_word(dev, pos + 4, &cap);
+	return cap >> 8;
+}
+
+static unsigned next_trad_fn(struct pci_dev *dev, unsigned fn)
+{
+	return (fn + 1) % 8;
+}
+
+static unsigned no_next_fn(struct pci_dev *dev, unsigned fn)
+{
+	return 0;
+}
+
+static int only_one_child(struct pci_bus *bus)
+{
+	struct pci_dev *parent = bus->self;
+	if (!parent || !pci_is_pcie(parent))
+		return 0;
+	if (parent->pcie_type == PCI_EXP_TYPE_ROOT_PORT ||
+	    parent->pcie_type == PCI_EXP_TYPE_DOWNSTREAM)
+		return 1;
+	return 0;
+}
+
 /**
  * pci_scan_slot - scan a PCI slot on a bus for devices.
  * @bus: PCI bus to scan
@@ -1094,21 +1263,28 @@ EXPORT_SYMBOL(pci_scan_single_device);
  */
 int pci_scan_slot(struct pci_bus *bus, int devfn)
 {
-	int fn, nr = 0;
+	unsigned fn, nr = 0;
 	struct pci_dev *dev;
+	unsigned (*next_fn)(struct pci_dev *, unsigned) = no_next_fn;
+
+	if (only_one_child(bus) && (devfn > 0))
+		return 0; /* Already scanned the entire slot */
 
 	dev = pci_scan_single_device(bus, devfn);
 	if (dev && !dev->is_added)	/* new device? */
 		nr++;
 
-	if (dev && dev->multifunction) {
-		for (fn = 1; fn < 8; fn++) {
-			dev = pci_scan_single_device(bus, devfn + fn);
-			if (dev) {
-				if (!dev->is_added)
-					nr++;
-				dev->multifunction = 1;
-			}
+	if (pci_ari_enabled(bus))
+		next_fn = next_ari_fn;
+	else if (dev && dev->multifunction)
+		next_fn = next_trad_fn;
+
+	for (fn = next_fn(dev, 0); fn > 0; fn = next_fn(dev, fn)) {
+		dev = pci_scan_single_device(bus, devfn + fn);
+		if (dev) {
+			if (!dev->is_added)
+				nr++;
+			dev->multifunction = 1;
 		}
 	}
 

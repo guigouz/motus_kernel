@@ -91,14 +91,24 @@ static struct radeon_power_state * radeon_pick_power_state(struct radeon_device 
 	default:
 		return rdev->pm.default_power_state;
 	case POWER_STATE_TYPE_POWERSAVE:
-		wanted_types[0] = POWER_STATE_TYPE_POWERSAVE;
-		wanted_types[1] = POWER_STATE_TYPE_BATTERY;
-		wanted_count = 2;
+		if (rdev->flags & RADEON_IS_MOBILITY) {
+			wanted_types[0] = POWER_STATE_TYPE_POWERSAVE;
+			wanted_types[1] = POWER_STATE_TYPE_BATTERY;
+			wanted_count = 2;
+		} else {
+			wanted_types[0] = POWER_STATE_TYPE_PERFORMANCE;
+			wanted_count = 1;
+		}
 		break;
 	case POWER_STATE_TYPE_BATTERY:
-		wanted_types[0] = POWER_STATE_TYPE_BATTERY;
-		wanted_types[1] = POWER_STATE_TYPE_POWERSAVE;
-		wanted_count = 2;
+		if (rdev->flags & RADEON_IS_MOBILITY) {
+			wanted_types[0] = POWER_STATE_TYPE_BATTERY;
+			wanted_types[1] = POWER_STATE_TYPE_POWERSAVE;
+			wanted_count = 2;
+		} else {
+			wanted_types[0] = POWER_STATE_TYPE_PERFORMANCE;
+			wanted_count = 1;
+		}
 		break;
 	case POWER_STATE_TYPE_BALANCED:
 	case POWER_STATE_TYPE_PERFORMANCE:
@@ -432,6 +442,8 @@ static int radeon_debugfs_pm_info(struct seq_file *m, void *data)
 	seq_printf(m, "default memory clock: %u0 kHz\n", rdev->clock.default_mclk);
 	if (rdev->asic->get_memory_clock)
 		seq_printf(m, "current memory clock: %u0 kHz\n", radeon_get_memory_clock(rdev));
+	if (rdev->asic->get_pcie_lanes)
+		seq_printf(m, "PCIE lanes: %d\n", radeon_get_pcie_lanes(rdev));
 
 	return 0;
 }

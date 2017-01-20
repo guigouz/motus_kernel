@@ -316,8 +316,10 @@ int __weak page_is_ram(unsigned long pfn)
 static int find_resource(struct resource *root, struct resource *new,
 			 resource_size_t size, resource_size_t min,
 			 resource_size_t max, resource_size_t align,
-			 void (*alignf)(void *, struct resource *,
-					resource_size_t, resource_size_t),
+			 resource_size_t (*alignf)(void *,
+						   const struct resource *,
+						   resource_size_t,
+						   resource_size_t),
 			 void *alignf_data)
 {
 	struct resource *this = root->child;
@@ -343,7 +345,7 @@ static int find_resource(struct resource *root, struct resource *new,
 			tmp.end = max;
 		tmp.start = ALIGN(tmp.start, align);
 		if (alignf)
-			alignf(alignf_data, &tmp, size, align);
+			tmp.start = alignf(alignf_data, &tmp, size, align);
 		if (tmp.start < tmp.end && tmp.end - tmp.start >= size - 1) {
 			new->start = tmp.start;
 			new->end = tmp.start + size - 1;
@@ -371,8 +373,10 @@ static int find_resource(struct resource *root, struct resource *new,
 int allocate_resource(struct resource *root, struct resource *new,
 		      resource_size_t size, resource_size_t min,
 		      resource_size_t max, resource_size_t align,
-		      void (*alignf)(void *, struct resource *,
-				     resource_size_t, resource_size_t),
+		      resource_size_t (*alignf)(void *,
+						const struct resource *,
+						resource_size_t,
+						resource_size_t),
 		      void *alignf_data)
 {
 	int err;
