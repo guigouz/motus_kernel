@@ -1188,25 +1188,30 @@ static void intel_update_fbc(struct drm_crtc *crtc,
 	if (intel_fb->obj->size > dev_priv->cfb_size) {
 		DRM_DEBUG_KMS("framebuffer too large, disabling "
 				"compression\n");
+		dev_priv->no_fbc_reason = FBC_STOLEN_TOO_SMALL;
 		goto out_disable;
 	}
 	if ((mode->flags & DRM_MODE_FLAG_INTERLACE) ||
 	    (mode->flags & DRM_MODE_FLAG_DBLSCAN)) {
 		DRM_DEBUG_KMS("mode incompatible with compression, "
 				"disabling\n");
+		dev_priv->no_fbc_reason = FBC_UNSUPPORTED_MODE;
 		goto out_disable;
 	}
 	if ((mode->hdisplay > 2048) ||
 	    (mode->vdisplay > 1536)) {
 		DRM_DEBUG_KMS("mode too large for compression, disabling\n");
+		dev_priv->no_fbc_reason = FBC_MODE_TOO_LARGE;
 		goto out_disable;
 	}
 	if ((IS_I915GM(dev) || IS_I945GM(dev)) && plane != 0) {
 		DRM_DEBUG_KMS("plane not 0, disabling compression\n");
+		dev_priv->no_fbc_reason = FBC_BAD_PLANE;
 		goto out_disable;
 	}
 	if (obj_priv->tiling_mode != I915_TILING_X) {
 		DRM_DEBUG_KMS("framebuffer not tiled, disabling compression\n");
+		dev_priv->no_fbc_reason = FBC_NOT_TILED;
 		goto out_disable;
 	}
 
@@ -4059,18 +4064,17 @@ void intel_mark_busy(struct drm_device *dev, struct drm_gem_object *obj)
 	if (!drm_core_check_feature(dev, DRIVER_MODESET))
 		return;
 
-	if (IS_I945G(dev) || IS_I945GM(dev)) {
-		u32 fw_blc_self;
+	if (!dev_priv->busy) {
+		if (IS_I945G(dev) || IS_I945GM(dev)) {
+			u32 fw_blc_self;
 
-		DRM_DEBUG_DRIVER("disable memory self refresh on 945\n");
-		fw_blc_self = I915_READ(FW_BLC_SELF);
-		fw_blc_self &= ~FW_BLC_SELF_EN;
-		I915_WRITE(FW_BLC_SELF, fw_blc_self | FW_BLC_SELF_EN_MASK);
-	}
-
-	if (!dev_priv->busy)
+			DRM_DEBUG_DRIVER("disable memory self refresh on 945\n");
+			fw_blc_self = I915_READ(FW_BLC_SELF);
+			fw_blc_self &= ~FW_BLC_SELF_EN;
+			I915_WRITE(FW_BLC_SELF, fw_blc_self | FW_BLC_SELF_EN_MASK);
+		}
 		dev_priv->busy = true;
-	else
+	} else
 		mod_timer(&dev_priv->idle_timer, jiffies +
 			  msecs_to_jiffies(GPU_IDLE_TIMEOUT));
 
@@ -4082,6 +4086,14 @@ void intel_mark_busy(struct drm_device *dev, struct drm_gem_object *obj)
 		intel_fb = to_intel_framebuffer(crtc->fb);
 		if (intel_fb->obj == obj) {
 			if (!intel_crtc->busy) {
+				if (IS_I945G(dev) || IS_I945GM(dev)) {
+					u32 fw_blc_self;
+
+					DRM_DEBUG_DRIVER("disable memory self refresh on 945\n");
+					fw_blc_self = I915_READ(FW_BLC_SELF);
+					fw_blc_self &= ~FW_BLC_SELF_EN;
+					I915_WRITE(FW_BLC_SELF, fw_blc_self | FW_BLC_SELF_EN_MASK);
+				}
 				/* Non-busy -> busy, upclock */
 				intel_increase_pllclock(crtc, true);
 				intel_crtc->busy = true;
@@ -4687,7 +4699,7 @@ void ironlake_disable_drps(struct drm_device *dev)
 	fstart = (I915_READ(MEMMODECTL) & MEMMODE_FSTART_MASK) >>
 		MEMMODE_FSTART_SHIFT;
 	rgvswctl = (MEMCTL_CMD_CHFREQ << MEMCTL_CMD_SHIFT) |
-		(fstart << MEMCTL_FREQ_SHIFT);
+		(fstart << MEMCTL_FREQ_SHIFT) | MEMCTL_SFCAVM;
 	I915_WRITE(MEMSWCTL, rgvswctl);
 	msleep(1);
 	rgvswctl |= MEMCTL_CMD_STS;
@@ -4765,8 +4777,8 @@ void intel_init_clock_gating(struct drm_device *dev)
 
 		if (obj_priv) {
 			I915_WRITE(PWRCTXA, obj_priv->gtt_offset | PWRCTX_EN);
-			I915_WRITE(RSTDBYCTL, I915_READ(RSTDBYCTL) &
-				   ~RCX_SW_EXIT);
+			I915_WRITE(MCHBAR_RENDER_STANDBY,
+				   I915_READ(MCHBAR_RENDER_STANDBY) & ~RCX_SW_EXIT);
 		}
 	}
 }

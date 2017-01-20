@@ -477,6 +477,74 @@ static int i915_drpc_info(struct seq_file *m, void *unused)
 	return 0;
 }
 
+static int i915_fbc_status(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	struct drm_crtc *crtc;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	bool fbc_enabled = false;
+
+	if (!dev_priv->display.fbc_enabled) {
+		seq_printf(m, "FBC unsupported on this chipset\n");
+		return 0;
+	}
+
+	list_for_each_entry(crtc, &dev->mode_config.crtc_list, head) {
+		if (!crtc->enabled)
+			continue;
+		if (dev_priv->display.fbc_enabled(crtc))
+			fbc_enabled = true;
+	}
+
+	if (fbc_enabled) {
+		seq_printf(m, "FBC enabled\n");
+	} else {
+		seq_printf(m, "FBC disabled: ");
+		switch (dev_priv->no_fbc_reason) {
+		case FBC_STOLEN_TOO_SMALL:
+			seq_printf(m, "not enough stolen memory");
+			break;
+		case FBC_UNSUPPORTED_MODE:
+			seq_printf(m, "mode not supported");
+			break;
+		case FBC_MODE_TOO_LARGE:
+			seq_printf(m, "mode too large");
+			break;
+		case FBC_BAD_PLANE:
+			seq_printf(m, "FBC unsupported on plane");
+			break;
+		case FBC_NOT_TILED:
+			seq_printf(m, "scanout buffer not tiled");
+			break;
+		default:
+			seq_printf(m, "unknown reason");
+		}
+		seq_printf(m, "\n");
+	}
+	return 0;
+}
+
+static int i915_sr_status(struct seq_file *m, void *unused)
+{
+	struct drm_info_node *node = (struct drm_info_node *) m->private;
+	struct drm_device *dev = node->minor->dev;
+	drm_i915_private_t *dev_priv = dev->dev_private;
+	bool sr_enabled = false;
+
+	if (IS_I965G(dev) || IS_I945G(dev) || IS_I945GM(dev))
+		sr_enabled = I915_READ(FW_BLC_SELF) & FW_BLC_SELF_EN;
+	else if (IS_I915GM(dev))
+		sr_enabled = I915_READ(INSTPM) & INSTPM_SELF_EN;
+	else if (IS_PINEVIEW(dev))
+		sr_enabled = I915_READ(DSPFW3) & PINEVIEW_SELF_REFRESH_EN;
+
+	seq_printf(m, "self-refresh: %s\n", sr_enabled ? "enabled" :
+		   "disabled");
+
+	return 0;
+}
+
 static int
 i915_wedged_open(struct inode *inode,
 		 struct file *filp)
@@ -599,6 +667,8 @@ static struct drm_info_list i915_debugfs_list[] = {
 	{"i915_delayfreq_table", i915_delayfreq_table, 0},
 	{"i915_inttoext_table", i915_inttoext_table, 0},
 	{"i915_drpc_info", i915_drpc_info, 0},
+	{"i915_fbc_status", i915_fbc_status, 0},
+	{"i915_sr_status", i915_sr_status, 0},
 };
 #define I915_DEBUGFS_ENTRIES ARRAY_SIZE(i915_debugfs_list)
 
