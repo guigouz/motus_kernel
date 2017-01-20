@@ -110,9 +110,10 @@ extern void __init dmi_check_skip_isa_align(void);
 
 /* some common used subsys_initcalls */
 extern int __init pci_acpi_init(void);
-extern int __init pcibios_irq_init(void);
+extern void __init pcibios_irq_init(void);
 extern int __init pcibios_init(void);
 extern int pci_legacy_init(void);
+extern void pcibios_fixup_irqs(void);
 
 /* pci-mmconfig.c */
 
@@ -187,6 +188,10 @@ static inline void mmio_config_writel(void __iomem *pos, u32 val)
 # else
 #  define x86_default_pci_init		pci_legacy_init
 # endif
+# define x86_default_pci_init_irq	pcibios_irq_init
+# define x86_default_pci_fixup_irqs	pcibios_fixup_irqs
 #else
 # define x86_default_pci_init		NULL
+# define x86_default_pci_init_irq	NULL
+# define x86_default_pci_fixup_irqs	NULL
 #endif
