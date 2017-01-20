@@ -53,12 +53,22 @@ static bool pcie_pme_disabled;
  */
 static bool pcie_pme_force_enable;
 
+/*
+ * If this switch is set, MSI will not be used for PCIe PME signaling.  This
+ * causes the PCIe port driver to use INTx interrupts only, but it turns out
+ * that using MSI for PCIe PME signaling doesn't play well with PCIe PME-based
+ * wake-up from system sleep states.
+ */
+bool pcie_pme_msi_disabled;
+
 static int __init pcie_pme_setup(char *str)
 {
 	if (!strcmp(str, "off"))
 		pcie_pme_disabled = true;
 	else if (!strcmp(str, "force"))
 		pcie_pme_force_enable = true;
+	else if (!strcmp(str, "nomsi"))
+		pcie_pme_msi_disabled = true;
 	return 1;
 }
 __setup("pcie_pme=", pcie_pme_setup);
@@ -73,7 +83,9 @@ __setup("pcie_pme=", pcie_pme_setup);
  */
 static bool pcie_pme_platform_setup(struct pcie_device *srv)
 {
-	return !pcie_pme_platform_notify(srv) || pcie_pme_force_enable;
+	if (!pcie_pme_platform_notify(srv))
+		return true;
+	return pcie_pme_force_enable;
 }
 
 struct pcie_pme_service_data {
@@ -93,7 +105,7 @@ static void pcie_pme_interrupt_enable(struct pci_dev *dev, bool enable)
 	int rtctl_pos;
 	u16 rtctl;
 
-	rtctl_pos = pci_find_capability(dev, PCI_CAP_ID_EXP) + PCI_EXP_RTCTL;
+	rtctl_pos = pci_pcie_cap(dev) + PCI_EXP_RTCTL;
 
 	pci_read_config_word(dev, rtctl_pos, &rtctl);
 	if (enable)
@@ -112,7 +124,7 @@ static void pcie_pme_clear_status(struct pci_dev *dev)
 	int rtsta_pos;
 	u32 rtsta;
 
-	rtsta_pos = pci_find_capability(dev, PCI_CAP_ID_EXP) + PCI_EXP_RTSTA;
+	rtsta_pos = pci_pcie_cap(dev) + PCI_EXP_RTSTA;
 
 	pci_read_config_dword(dev, rtsta_pos, &rtsta);
 	rtsta |= PCI_EXP_RTSTA_PME;
@@ -132,7 +144,7 @@ static bool pcie_pme_walk_bus(struct pci_bus *bus)
 
 	list_for_each_entry(dev, &bus->devices, bus_list) {
 		/* Skip PCIe devices in case we started from a root port. */
-		if (!dev->is_pcie && pci_check_pme_status(dev)) {
+		if (!pci_is_pcie(dev) && pci_check_pme_status(dev)) {
 			pm_request_resume(&dev->dev);
 			ret = true;
 		}
@@ -165,7 +177,7 @@ static bool pcie_pme_from_pci_bridge(struct pci_bus *bus, u8 devfn)
 	if (!dev)
 		return false;
 
-	if (dev->is_pcie && dev->pcie_type == PCI_EXP_TYPE_PCI_BRIDGE) {
+	if (pci_is_pcie(dev) && dev->pcie_type == PCI_EXP_TYPE_PCI_BRIDGE) {
 		down_read(&pci_bus_sem);
 		if (pcie_pme_walk_bus(bus))
 			found = true;
@@ -266,7 +278,7 @@ static void pcie_pme_work_fn(struct work_struct *work)
 	int rtsta_pos;
 	u32 rtsta;
 
-	rtsta_pos = pci_find_capability(port, PCI_CAP_ID_EXP) + PCI_EXP_RTSTA;
+	rtsta_pos = pci_pcie_cap(port) + PCI_EXP_RTSTA;
 
 	spin_lock_irq(&data->lock);
 
@@ -320,7 +332,7 @@ static irqreturn_t pcie_pme_irq(int irq, void *context)
 	port = ((struct pcie_device *)context)->port;
 	data = get_service_data((struct pcie_device *)context);
 
-	rtsta_pos = pci_find_capability(port, PCI_CAP_ID_EXP) + PCI_EXP_RTSTA;
+	rtsta_pos = pci_pcie_cap(port) + PCI_EXP_RTSTA;
 
 	spin_lock_irqsave(&data->lock, flags);
 	pci_read_config_dword(port, rtsta_pos, &rtsta);
@@ -377,7 +389,7 @@ static void pcie_pme_mark_devices(struct pci_dev *port)
 
 		down_read(&pci_bus_sem);
 		list_for_each_entry(dev, &bus->devices, bus_list)
-			if (dev->is_pcie
+			if (pci_is_pcie(dev)
 			    && dev->pcie_type == PCI_EXP_TYPE_RC_END)
 				pcie_pme_set_native(dev, NULL);
 		up_read(&pci_bus_sem);
