@@ -1,4 +1,4 @@
-/* arch/arm/plat-s3c64xx/include/plat/s3c6400.h
+/* arch/arm/mach-s3c64xx/include/macht/s3c6400.h
  *
  * Copyright 2008 Openmoko, Inc.
  * Copyright 2008 Simtec Electronics
@@ -15,8 +15,9 @@
 /* Common init code for S3C6400 related SoCs */
 
 extern void s3c6400_common_init_uarts(struct s3c2410_uartcfg *cfg, int no);
-extern void s3c6400_register_clocks(unsigned armclk_divlimit);
 extern void s3c6400_setup_clocks(void);
+
+extern void s3c64xx_register_clocks(unsigned long xtal, unsigned armclk_limit);
 
 #ifdef CONFIG_CPU_S3C6400
 
@@ -33,4 +34,3 @@ extern void s3c6400_init_clocks(int xtal);
 #define s3c6400_map_io NULL
 #define s3c6400_init NULL
 #endif
-
