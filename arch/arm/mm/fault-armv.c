@@ -99,7 +99,8 @@ static int adjust_pte(struct vm_area_struct *vma, unsigned long address,
 }
 
 static void
-make_coherent(struct address_space *mapping, struct vm_area_struct *vma, unsigned long addr, unsigned long pfn)
+make_coherent(struct address_space *mapping, struct vm_area_struct *vma,
+	unsigned long addr, pte_t *ptep, unsigned long pfn)
 {
 	struct mm_struct *mm = vma->vm_mm;
 	struct vm_area_struct *mpnt;
@@ -131,7 +132,7 @@ make_coherent(struct address_space *mapping, struct vm_area_struct *vma, unsigne
 	}
 	flush_dcache_mmap_unlock(mapping);
 	if (aliases)
-		adjust_pte(vma, addr, pfn);
+		do_adjust_pte(vma, addr, pfn, ptep);
 	else
 		flush_cache_page(vma, addr, pfn);
 }
@@ -149,9 +150,10 @@ make_coherent(struct address_space *mapping, struct vm_area_struct *vma, unsigne
  *
  * Note that the pte lock will be held.
  */
-void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr, pte_t pte)
+void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr,
+	pte_t *ptep)
 {
-	unsigned long pfn = pte_pfn(pte);
+	unsigned long pfn = pte_pfn(*ptep);
 	struct address_space *mapping;
 	struct page *page;
 
@@ -173,7 +175,7 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr, pte_t pte)
 #endif
 	if (mapping) {
 		if (cache_is_vivt())
-			make_coherent(mapping, vma, addr, pfn);
+			make_coherent(mapping, vma, addr, ptep, pfn);
 		else if (vma->vm_flags & VM_EXEC)
 			__flush_icache_all();
 	}

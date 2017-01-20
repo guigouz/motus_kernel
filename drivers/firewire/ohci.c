@@ -38,7 +38,6 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 
-#include <asm/atomic.h>
 #include <asm/byteorder.h>
 #include <asm/page.h>
 #include <asm/system.h>
@@ -187,7 +186,6 @@ struct fw_ohci {
 	int node_id;
 	int generation;
 	int request_generation;	/* for timestamping incoming requests */
-	atomic_t bus_seconds;
 
 	bool use_dualbuffer;
 	bool old_uninorth;
@@ -276,7 +274,7 @@ static void log_irqs(u32 evt)
 	    !(evt & OHCI1394_busReset))
 		return;
 
-	fw_notify("IRQ %08x%s%s%s%s%s%s%s%s%s%s%s%s%s%s\n", evt,
+	fw_notify("IRQ %08x%s%s%s%s%s%s%s%s%s%s%s%s%s\n", evt,
 	    evt & OHCI1394_selfIDComplete	? " selfID"		: "",
 	    evt & OHCI1394_RQPkt		? " AR_req"		: "",
 	    evt & OHCI1394_RSPkt		? " AR_resp"		: "",
@@ -286,7 +284,6 @@ static void log_irqs(u32 evt)
 	    evt & OHCI1394_isochTx		? " IT"			: "",
 	    evt & OHCI1394_postedWriteErr	? " postedWriteErr"	: "",
 	    evt & OHCI1394_cycleTooLong		? " cycleTooLong"	: "",
-	    evt & OHCI1394_cycle64Seconds	? " cycle64Seconds"	: "",
 	    evt & OHCI1394_cycleInconsistent	? " cycleInconsistent"	: "",
 	    evt & OHCI1394_regAccessFail	? " regAccessFail"	: "",
 	    evt & OHCI1394_busReset		? " busReset"		: "",
@@ -294,8 +291,7 @@ static void log_irqs(u32 evt)
 		    OHCI1394_RSPkt | OHCI1394_reqTxComplete |
 		    OHCI1394_respTxComplete | OHCI1394_isochRx |
 		    OHCI1394_isochTx | OHCI1394_postedWriteErr |
-		    OHCI1394_cycleTooLong | OHCI1394_cycle64Seconds |
-		    OHCI1394_cycleInconsistent |
+		    OHCI1394_cycleTooLong | OHCI1394_cycleInconsistent |
 		    OHCI1394_regAccessFail | OHCI1394_busReset)
 						? " ?"			: "");
 }
@@ -1421,7 +1417,7 @@ static void bus_reset_tasklet(unsigned long data)
 static irqreturn_t irq_handler(int irq, void *data)
 {
 	struct fw_ohci *ohci = data;
-	u32 event, iso_event, cycle_time;
+	u32 event, iso_event;
 	int i;
 
 	event = reg_read(ohci, OHCI1394_IntEventClear);
@@ -1489,12 +1485,6 @@ static irqreturn_t irq_handler(int irq, void *data)
 		 */
 		if (printk_ratelimit())
 			fw_notify("isochronous cycle inconsistent\n");
-	}
-
-	if (event & OHCI1394_cycle64Seconds) {
-		cycle_time = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-		if ((cycle_time & 0x80000000) == 0)
-			atomic_inc(&ohci->bus_seconds);
 	}
 
 	return IRQ_HANDLED;
@@ -1590,8 +1580,7 @@ static int ohci_enable(struct fw_card *card,
 		  OHCI1394_reqTxComplete | OHCI1394_respTxComplete |
 		  OHCI1394_isochRx | OHCI1394_isochTx |
 		  OHCI1394_postedWriteErr | OHCI1394_cycleTooLong |
-		  OHCI1394_cycleInconsistent |
-		  OHCI1394_cycle64Seconds | OHCI1394_regAccessFail |
+		  OHCI1394_cycleInconsistent | OHCI1394_regAccessFail |
 		  OHCI1394_masterIntEnable);
 	if (param_debug & OHCI_PARAM_DEBUG_BUSRESETS)
 		reg_write(ohci, OHCI1394_IntMaskSet, OHCI1394_busReset);
@@ -1831,60 +1820,61 @@ static int ohci_enable_phys_dma(struct fw_card *card,
 #endif /* CONFIG_FIREWIRE_OHCI_REMOTE_DMA */
 }
 
-static inline u32 cycle_timer_ticks(u32 cycle_timer)
+static u32 cycle_timer_ticks(u32 cycle_timer)
 {
 	u32 ticks;
 
 	ticks = cycle_timer & 0xfff;
 	ticks += 3072 * ((cycle_timer >> 12) & 0x1fff);
 	ticks += (3072 * 8000) * (cycle_timer >> 25);
+
 	return ticks;
 }
 
-static u64 ohci_get_bus_time(struct fw_card *card)
+/*
+ * Some controllers exhibit one or more of the following bugs when updating the
+ * iso cycle timer register:
+ *  - When the lowest six bits are wrapping around to zero, a read that happens
+ *    at the same time will return garbage in the lowest ten bits.
+ *  - When the cycleOffset field wraps around to zero, the cycleCount field is
+ *    not incremented for about 60 ns.
+ *  - Occasionally, the entire register reads zero.
+ *
+ * To catch these, we read the register three times and ensure that the
+ * difference between each two consecutive reads is approximately the same, i.e.
+ * less than twice the other.  Furthermore, any negative difference indicates an
+ * error.  (A PCI read should take at least 20 ticks of the 24.576 MHz timer to
+ * execute, so we have enough precision to compute the ratio of the differences.)
+ */
+static u32 ohci_get_cycle_time(struct fw_card *card)
 {
 	struct fw_ohci *ohci = fw_ohci(card);
 	u32 c0, c1, c2;
 	u32 t0, t1, t2;
 	s32 diff01, diff12;
-	u64 bus_time;
+	int i;
 
-	if (!ohci->iso_cycle_timer_quirk) {
+	c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+
+	if (ohci->iso_cycle_timer_quirk) {
+		i = 0;
+		c1 = c2;
 		c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-	} else {
-		/*
-		 * Some controllers exhibit one or more of the following bugs
-		 * when updating the iso cycle timer register:
-		 *  - When the lowest six bits are wrapping around to zero,
-		 *    a read that happens at the same time will return garbage
-		 *    in the lowest ten bits.
-		 *  - When the cycleOffset field wraps around to zero, the
-		 *    cycleCount field is not incremented for about 60 ns.
-		 *  - Occasionally, the entire register reads zero.
-		 *
-		 * To catch these, we read the register three times and ensure
-		 * that the difference between each two consecutive reads is
-		 * approximately the same, i.e., less than twice the other.
-		 * Furthermore, any negative difference indicates an error.
-		 * (A PCI read should take at least 20 ticks of the 24.576 MHz
-		 * timer to execute, so we have enough precision to compute the
-		 * ratio of the differences.)
-		 */
 		do {
-			c0 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
-			c1 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
+			c0 = c1;
+			c1 = c2;
 			c2 = reg_read(ohci, OHCI1394_IsochronousCycleTimer);
 			t0 = cycle_timer_ticks(c0);
 			t1 = cycle_timer_ticks(c1);
 			t2 = cycle_timer_ticks(c2);
 			diff01 = t1 - t0;
 			diff12 = t2 - t1;
-		} while (diff01 <= 0 || diff12 <= 0 ||
-			 diff01 / diff12 >= 2 || diff12 / diff01 >= 2);
+		} while ((diff01 <= 0 || diff12 <= 0 ||
+			  diff01 / diff12 >= 2 || diff12 / diff01 >= 2)
+			 && i++ < 20);
 	}
-	bus_time = ((u64)atomic_read(&ohci->bus_seconds) << 32) | c2;
 
-	return bus_time;
+	return c2;
 }
 
 static void copy_iso_headers(struct iso_context *ctx, void *p)
@@ -2464,7 +2454,7 @@ static const struct fw_card_driver ohci_driver = {
 	.send_response		= ohci_send_response,
 	.cancel_packet		= ohci_cancel_packet,
 	.enable_phys_dma	= ohci_enable_phys_dma,
-	.get_bus_time		= ohci_get_bus_time,
+	.get_cycle_time		= ohci_get_cycle_time,
 
 	.allocate_iso_context	= ohci_allocate_iso_context,
 	.free_iso_context	= ohci_free_iso_context,
