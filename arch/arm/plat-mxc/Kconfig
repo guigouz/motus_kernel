@@ -9,45 +9,32 @@ choice
 config ARCH_MX1
 	bool "MX1-based"
 	select CPU_ARM920T
-	select COMMON_CLKDEV
 	help
 	  This enables support for systems based on the Freescale i.MX1 family
 
 config ARCH_MX2
 	bool "MX2-based"
 	select CPU_ARM926T
-	select COMMON_CLKDEV
 	help
 	  This enables support for systems based on the Freescale i.MX2 family
 
 config ARCH_MX25
 	bool "MX25-based"
 	select CPU_ARM926T
-	select COMMON_CLKDEV
-	select HAVE_FB_IMX
 	help
 	  This enables support for systems based on the Freescale i.MX25 family
 
 config ARCH_MX3
 	bool "MX3-based"
 	select CPU_V6
-	select COMMON_CLKDEV
 	help
 	  This enables support for systems based on the Freescale i.MX3 family
 
 config ARCH_MXC91231
 	bool "MXC91231-based"
 	select CPU_V6
-	select COMMON_CLKDEV
 	help
 	  This enables support for systems based on the Freescale MXC91231 family
-
-config ARCH_MX5
-	bool "MX5-based"
-	select CPU_V7
-	select COMMON_CLKDEV
-	help
-	  This enables support for systems based on the Freescale i.MX51 family
 
 endchoice
 
@@ -56,7 +43,6 @@ source "arch/arm/mach-mx2/Kconfig"
 source "arch/arm/mach-mx3/Kconfig"
 source "arch/arm/mach-mx25/Kconfig"
 source "arch/arm/mach-mxc91231/Kconfig"
-source "arch/arm/mach-mx5/Kconfig"
 
 endmenu
 
@@ -70,14 +56,6 @@ config MXC_IRQ_PRIOR
 	  This may be useful in embedded applications, where are strong
 	  requirements for timing.
 	  Say N here, unless you have a specialized requirement.
-
-config MXC_TZIC
-	bool "Enable TrustZone Interrupt Controller"
-	depends on ARCH_MX51
-	help
-	  This will be automatically selected for all processors
-	  containing this interrupt controller.
-	  Say N here only if you are really sure.
 
 config MXC_PWM
 	tristate "Enable PWM driver"
