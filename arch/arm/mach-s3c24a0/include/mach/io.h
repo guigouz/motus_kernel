@@ -1,9 +1,9 @@
-/* arch/arm/plat-s3c/include/mach/io.h
+/* arch/arm/mach-s3c24a0/include/mach/io.h
  *
  * Copyright 2008 Simtec Electronics
  *	Ben Dooks <ben-linux@fluff.org>
  *
- * Default IO routines for plat-s3c based systems, such as S3C24A0
+ * Default IO routines for S3C24A0
  */
 
 #ifndef __ASM_ARM_ARCH_IO_H
