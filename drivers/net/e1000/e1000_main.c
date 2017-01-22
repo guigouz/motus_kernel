@@ -2192,8 +2192,7 @@ static void e1000_set_rx_mode(struct net_device *netdev)
 			hash_bit = hash_value & 0x1F;
 			mta = (1 << hash_bit);
 			mcarray[hash_reg] |= mta;
-		}
-		else {
+		} else {
 			e1000_rar_set(hw, mc_ptr->da_addr, i++);
 		}
 	}
@@ -4028,11 +4027,21 @@ check_page:
 			}
 		}
 
-		if (!buffer_info->dma)
+		if (!buffer_info->dma) {
 			buffer_info->dma = pci_map_page(pdev,
 			                                buffer_info->page, 0,
 			                                buffer_info->length,
 			                                PCI_DMA_FROMDEVICE);
+			if (pci_dma_mapping_error(pdev, buffer_info->dma)) {
+				put_page(buffer_info->page);
+				dev_kfree_skb(skb);
+				buffer_info->page = NULL;
+				buffer_info->skb = NULL;
+				buffer_info->dma = 0;
+				adapter->alloc_rx_buff_failed++;
+				break; /* while !buffer_info->skb */
+			}
+		}
 
 		rx_desc = E1000_RX_DESC(*rx_ring, i);
 		rx_desc->buffer_addr = cpu_to_le64(buffer_info->dma);
@@ -4123,6 +4132,13 @@ map_skb:
 						  skb->data,
 						  buffer_info->length,
 						  PCI_DMA_FROMDEVICE);
+		if (pci_dma_mapping_error(pdev, buffer_info->dma)) {
+			dev_kfree_skb(skb);
+			buffer_info->skb = NULL;
+			buffer_info->dma = 0;
+			adapter->alloc_rx_buff_failed++;
+			break; /* while !buffer_info->skb */
+		}
 
 		/*
 		 * XXX if it was allocated cleanly it will never map to a
