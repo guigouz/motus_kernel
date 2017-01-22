@@ -167,12 +167,12 @@ static int omapfb_update_window_nolock(struct fb_info *fbi,
 	if (w == 0 || h == 0)
 		return 0;
 
-	display->get_resolution(display, &dw, &dh);
+	display->driver->get_resolution(display, &dw, &dh);
 
 	if (x + w > dw || y + h > dh)
 		return -EINVAL;
 
-	return display->update(display, x, y, w, h);
+	return display->driver->update(display, x, y, w, h);
 }
 
 /* This function is exported for SGX driver use */
@@ -202,7 +202,7 @@ static int omapfb_set_update_mode(struct fb_info *fbi,
 	enum omap_dss_update_mode um;
 	int r;
 
-	if (!display || !display->set_update_mode)
+	if (!display || !display->driver->set_update_mode)
 		return -EINVAL;
 
 	switch (mode) {
@@ -222,7 +222,7 @@ static int omapfb_set_update_mode(struct fb_info *fbi,
 		return -EINVAL;
 	}
 
-	r = display->set_update_mode(display, um);
+	r = display->driver->set_update_mode(display, um);
 
 	return r;
 }
@@ -233,10 +233,15 @@ static int omapfb_get_update_mode(struct fb_info *fbi,
 	struct omap_dss_device *display = fb2display(fbi);
 	enum omap_dss_update_mode m;
 
-	if (!display || !display->get_update_mode)
+	if (!display)
 		return -EINVAL;
 
-	m = display->get_update_mode(display);
+	if (!display->driver->get_update_mode) {
+		*mode = OMAPFB_AUTO_UPDATE;
+		return 0;
+	}
+
+	m = display->driver->get_update_mode(display);
 
 	switch (m) {
 	case OMAP_DSS_UPDATE_DISABLED:
@@ -374,7 +379,7 @@ static int omapfb_memory_read(struct fb_info *fbi,
 	void *buf;
 	int r;
 
-	if (!display || !display->memory_read)
+	if (!display || !display->driver->memory_read)
 		return -ENOENT;
 
 	if (!access_ok(VERIFY_WRITE, mr->buffer, mr->buffer_size))
@@ -389,7 +394,7 @@ static int omapfb_memory_read(struct fb_info *fbi,
 		return -ENOMEM;
 	}
 
-	r = display->memory_read(display, buf, mr->buffer_size,
+	r = display->driver->memory_read(display, buf, mr->buffer_size,
 			mr->x, mr->y, mr->w, mr->h);
 
 	if (r > 0) {
@@ -491,18 +496,18 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 	switch (cmd) {
 	case OMAPFB_SYNC_GFX:
 		DBG("ioctl SYNC_GFX\n");
-		if (!display || !display->sync) {
+		if (!display || !display->driver->sync) {
 			/* DSS1 never returns an error here, so we neither */
 			/*r = -EINVAL;*/
 			break;
 		}
 
-		r = display->sync(display);
+		r = display->driver->sync(display);
 		break;
 
 	case OMAPFB_UPDATE_WINDOW_OLD:
 		DBG("ioctl UPDATE_WINDOW_OLD\n");
-		if (!display || !display->update) {
+		if (!display || !display->driver->update) {
 			r = -EINVAL;
 			break;
 		}
@@ -520,7 +525,7 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 
 	case OMAPFB_UPDATE_WINDOW:
 		DBG("ioctl UPDATE_WINDOW\n");
-		if (!display || !display->update) {
+		if (!display || !display->driver->update) {
 			r = -EINVAL;
 			break;
 		}
@@ -649,7 +654,7 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		r = display->wait_vsync(display);
+		r = display->manager->wait_for_vsync(display->manager);
 		break;
 
 	case OMAPFB_WAITFORGO:
@@ -670,12 +675,12 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 			r = -EFAULT;
 			break;
 		}
-		if (!display || !display->run_test) {
+		if (!display || !display->driver->run_test) {
 			r = -EINVAL;
 			break;
 		}
 
-		r = display->run_test(display, p.test_num);
+		r = display->driver->run_test(display, p.test_num);
 
 		break;
 
@@ -685,12 +690,12 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 			r = -EFAULT;
 			break;
 		}
-		if (!display || !display->run_test) {
+		if (!display || !display->driver->run_test) {
 			r = -EINVAL;
 			break;
 		}
 
-		r = display->run_test(display, p.test_num);
+		r = display->driver->run_test(display, p.test_num);
 
 		break;
 
@@ -732,12 +737,13 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		if (!display->enable_te) {
+		if (!display->driver->enable_te) {
 			r = -ENODEV;
 			break;
 		}
 
-		r = display->enable_te(display, !!p.tearsync_info.enabled);
+		r = display->driver->enable_te(display,
+				!!p.tearsync_info.enabled);
 
 		break;
 	}
@@ -752,7 +758,7 @@ int omapfb_ioctl(struct fb_info *fbi, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
-		display->get_resolution(display, &xres, &yres);
+		display->driver->get_resolution(display, &xres, &yres);
 
 		p.display_info.xres = xres;
 		p.display_info.yres = yres;
