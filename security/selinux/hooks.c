@@ -2039,10 +2039,6 @@ static int selinux_sysctl(ctl_table *table, int op)
 	u32 tsid, sid;
 	int rc;
 
-	rc = secondary_ops->sysctl(table, op);
-	if (rc)
-		return rc;
-
 	sid = current_sid();
 
 	rc = selinux_sysctl_get_sid(table, (op == 0001) ?

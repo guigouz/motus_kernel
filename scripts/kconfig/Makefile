@@ -30,6 +30,7 @@ oldconfig: $(obj)/conf
 	$< -o $(Kconfig)
 
 silentoldconfig: $(obj)/conf
+	$(Q)mkdir -p include/generated
 	$< -s $(Kconfig)
 
 # if no path is given, then use src directory to find file

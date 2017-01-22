@@ -935,7 +935,7 @@ void tracing_start(void)
 	}
 
 	/* Prevent the buffers from switching */
-	__raw_spin_lock(&ftrace_max_lock);
+	arch_spin_lock(&ftrace_max_lock);
 
 	buffer = global_trace.buffer;
 	if (buffer)
@@ -945,7 +945,7 @@ void tracing_start(void)
 	if (buffer)
 		ring_buffer_record_enable(buffer);
 
-	__raw_spin_unlock(&ftrace_max_lock);
+	arch_spin_unlock(&ftrace_max_lock);
 
 	ftrace_start();
  out:
@@ -969,7 +969,7 @@ void tracing_stop(void)
 		goto out;
 
 	/* Prevent the buffers from switching */
-	__raw_spin_lock(&ftrace_max_lock);
+	arch_spin_lock(&ftrace_max_lock);
 
 	buffer = global_trace.buffer;
 	if (buffer)
@@ -979,7 +979,7 @@ void tracing_stop(void)
 	if (buffer)
 		ring_buffer_record_disable(buffer);
 
-	__raw_spin_unlock(&ftrace_max_lock);
+	arch_spin_unlock(&ftrace_max_lock);
 
  out:
 	spin_unlock_irqrestore(&tracing_start_lock, flags);

@@ -36,7 +36,7 @@
 #include <mach/board.h>
 #include <mach/vreg.h>
 
-#include <asm-arm/mach-types.h>
+#include <asm/mach-types.h>
 
 
 #include "board-mot.h"

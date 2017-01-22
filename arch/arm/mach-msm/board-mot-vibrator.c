@@ -16,7 +16,7 @@
 #include <linux/hrtimer.h>
 #include <linux/err.h>
 #include <mach/gpio.h>
-#include <asm-arm/mach-types.h>
+#include <asm/mach-types.h>
 
 #include <linux/workqueue.h>
 #include "timed_vibrator.h"
