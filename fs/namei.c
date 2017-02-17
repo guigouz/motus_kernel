@@ -435,6 +435,24 @@ static struct dentry * cached_lookup(struct dentry * parent, struct qstr * name,
 	return dentry;
 }
 
+/**
+ * path_connected - Verify that a path->dentry is below path->mnt.mnt_root
+ * @path: nameidate to verify
+ *
+ * Rename can sometimes move a file or directory outside of a bind
+ * mount, path_connected allows those cases to be detected.
+ */
+static bool path_connected(const struct path *path)
+{
+	struct vfsmount *mnt = path->mnt;
+
+	/* Only bind mounts can have disconnected paths */
+	if (mnt->mnt_root == mnt->mnt_sb->s_root)
+		return true;
+
+	return is_subdir(path->dentry, mnt->mnt_root);
+}
+
 /*
  * Short-cut version of permission(), for calling by
  * path_walk(), when dcache lock is held.  Combines parts
@@ -755,7 +773,7 @@ int follow_down(struct path *path)
 	return 0;
 }
 
-static __always_inline void follow_dotdot(struct nameidata *nd)
+static __always_inline int follow_dotdot(struct nameidata *nd)
 {
 	set_root(nd);
 
@@ -772,6 +790,8 @@ static __always_inline void follow_dotdot(struct nameidata *nd)
 			nd->path.dentry = dget(nd->path.dentry->d_parent);
 			spin_unlock(&dcache_lock);
 			dput(old);
+			if (unlikely(!path_connected(&nd->path)))
+				return -ENOENT;
 			break;
 		}
 		spin_unlock(&dcache_lock);
@@ -789,6 +809,7 @@ static __always_inline void follow_dotdot(struct nameidata *nd)
 		nd->path.mnt = parent;
 	}
 	follow_mount(&nd->path);
+	return 0;
 }
 
 /*
@@ -906,7 +927,9 @@ static int __link_path_walk(const char *name, struct nameidata *nd)
 			case 2:	
 				if (this.name[1] != '.')
 					break;
-				follow_dotdot(nd);
+				err = follow_dotdot(nd);
+				if (err < 0)
+					goto out_nd_path_put;
 				inode = nd->path.dentry->d_inode;
 				/* fallthrough */
 			case 1:
@@ -961,7 +984,9 @@ last_component:
 			case 2:	
 				if (this.name[1] != '.')
 					break;
-				follow_dotdot(nd);
+				err = follow_dotdot(nd);
+				if (err < 0)
+					goto out_nd_path_put;
 				inode = nd->path.dentry->d_inode;
 				/* fallthrough */
 			case 1:
@@ -1023,6 +1048,7 @@ out_dput:
 		path_put_conditional(&next, nd);
 		break;
 	}
+out_nd_path_put:
 	path_put(&nd->path);
 return_err:
 	return err;

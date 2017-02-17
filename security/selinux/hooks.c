@@ -1901,8 +1901,8 @@ static int selinux_binder_transfer_file(struct task_struct *from, struct task_st
 	struct common_audit_data ad;
 	int rc;
 
-	COMMON_AUDIT_DATA_INIT(&ad, PATH);
-	ad.u.path = file->f_path;
+	COMMON_AUDIT_DATA_INIT(&ad, FS);
+	ad.u.fs.path = file->f_path;
 
 	if (sid != fsec->sid) {
 		rc = avc_has_perm(sid, fsec->sid,
@@ -2116,10 +2116,6 @@ static int selinux_quota_on(struct dentry *dentry)
 static int selinux_syslog(int type)
 {
 	int rc;
-
-	rc = cap_syslog(type);
-	if (rc)
-		return rc;
 
 	switch (type) {
 	case 3:		/* Read last kernel messages */

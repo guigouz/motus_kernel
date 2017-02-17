@@ -33,6 +33,8 @@ struct tracepoint {
 					 * Keep in sync with vmlinux.lds.h.
 					 */
 
+#ifndef DECLARE_TRACE
+
 #define TP_PROTO(args...)	args
 #define TP_ARGS(args...)	args
 
@@ -121,6 +123,7 @@ static inline void tracepoint_update_probe_range(struct tracepoint *begin,
 	struct tracepoint *end)
 { }
 #endif /* CONFIG_TRACEPOINTS */
+#endif /* DECLARE_TRACE */
 
 /*
  * Connect a probe to a tracepoint.

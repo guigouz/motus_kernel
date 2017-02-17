@@ -10,6 +10,9 @@
 #include <linux/file.h>
 #include <asm/uaccess.h>
 
+#define CREATE_TRACE_POINTS
+#include <trace/events/kmem.h>
+
 /**
  * kstrdup - allocate space for and copy an existing string
  * @s: the string to duplicate
@@ -321,14 +324,6 @@ SYSCALL_DEFINE6(mmap_pgoff, unsigned long, addr, unsigned long, len,
 out:
 	return retval;
 }
-
-/* Tracepoints definitions. */
-DEFINE_TRACE(kmalloc);
-DEFINE_TRACE(kmem_cache_alloc);
-DEFINE_TRACE(kmalloc_node);
-DEFINE_TRACE(kmem_cache_alloc_node);
-DEFINE_TRACE(kfree);
-DEFINE_TRACE(kmem_cache_free);
 
 EXPORT_TRACEPOINT_SYMBOL(kmalloc);
 EXPORT_TRACEPOINT_SYMBOL(kmem_cache_alloc);

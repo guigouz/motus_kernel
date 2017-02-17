@@ -333,14 +333,26 @@ struct module
 	/* The command line arguments (may be mangled).  People like
 	   keeping pointers to this stuff */
 	char *args;
+
 #ifdef CONFIG_TRACEPOINTS
 	struct tracepoint *tracepoints;
 	unsigned int num_tracepoints;
 #endif
-
+#ifdef HAVE_JUMP_LABEL
+	struct jump_entry *jump_entries;
+	unsigned int num_jump_entries;
+#endif
 #ifdef CONFIG_TRACING
 	const char **trace_bprintk_fmt_start;
 	unsigned int num_trace_bprintk_fmt;
+#endif
+#ifdef CONFIG_EVENT_TRACING
+	struct ftrace_event_call **trace_events;
+	unsigned int num_trace_events;
+#endif
+#ifdef CONFIG_FTRACE_MCOUNT_RECORD
+	unsigned int num_ftrace_callsites;
+	unsigned long *ftrace_callsites;
 #endif
 
 #ifdef CONFIG_MODULE_UNLOAD
